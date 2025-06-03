@@ -177,7 +177,7 @@ export default function KnowledgeGraphVisualization() {
   }, [selectedAssignment]);
 
   // Handle node click to show details
-  const handleNodeClick = async (node: GraphNode) => {
+  const handleNodeClick = async (node: any) => {
     // If it's a concept node, fetch concept relationships
     if (node.type === 'Concept') {
       try {
