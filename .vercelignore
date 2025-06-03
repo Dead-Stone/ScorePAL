@@ -1,0 +1,14 @@
+# Exclude backend files from Vercel deployment
+backend/
+*.py
+requirements.txt
+app_v2.py
+api.py
+
+# Exclude other non-frontend files
+*.md
+.git/
+node_modules/
+.next/
+.env
+.env.local 

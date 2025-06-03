@@ -5,14 +5,16 @@ This project consists of:
 - **Frontend**: Next.js app (React + TypeScript)
 - **Backend**: FastAPI (Python)
 
-## Option 1: Deploy to Vercel (Recommended)
+## Option 1: Split Deployment (Recommended)
 
 ### Prerequisites
 1. GitHub account
-2. Vercel account (free)
-3. Push your code to GitHub
+2. Vercel account (free) for frontend
+3. Railway account (free) for backend
 
 ### Steps:
+
+#### **Frontend Deployment (Vercel):**
 
 1. **Push to GitHub**:
    ```bash
@@ -21,17 +23,40 @@ This project consists of:
    git push origin main
    ```
 
-2. **Deploy on Vercel**:
+2. **Deploy Frontend on Vercel**:
    - Go to [vercel.com](https://vercel.com)
    - Click "New Project"
    - Import your GitHub repository
-   - Vercel will auto-detect Next.js and deploy
+   - Set build settings:
+     - Build Command: `cd frontend && npm run build`
+     - Output Directory: `frontend/.next`
+     - Install Command: `cd frontend && npm install`
 
-3. **Configure Environment Variables**:
-   In Vercel dashboard → Settings → Environment Variables, add:
-   - `NEXT_PUBLIC_API_URL`: Your backend URL
-   - `BACKEND_URL`: Your backend URL
-   - Add any API keys needed
+#### **Backend Deployment (Railway):**
+
+1. **Deploy Backend on Railway**:
+   - Go to [railway.app](https://railway.app)
+   - Click "Deploy from GitHub repo"
+   - Select your repository
+   - Choose "Deploy from the root directory"
+   - Railway will auto-detect Python and use the `railway.toml` config
+
+2. **Configure Environment Variables**:
+   In Railway dashboard → Variables, add:
+   - `GEMINI_API_KEY`: Your Google Gemini API key
+   - `NEO4J_URI`: Your Neo4j database URI (if using)
+   - `NEO4J_USERNAME`: Neo4j username
+   - `NEO4J_PASSWORD`: Neo4j password
+
+3. **Get Backend URL**:
+   - After deployment, Railway will provide a public URL like:
+   - `https://your-app-name.railway.app`
+
+#### **Connect Frontend to Backend:**
+
+1. **Update Frontend Environment Variables** in Vercel:
+   - `NEXT_PUBLIC_API_URL`: `https://your-backend-url.railway.app`
+   - `BACKEND_URL`: `https://your-backend-url.railway.app`
 
 ### Environment Variables Needed:
 ```env

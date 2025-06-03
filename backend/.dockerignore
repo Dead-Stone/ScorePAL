@@ -1,0 +1,27 @@
+# Exclude from Docker build
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.env.local
+
+# Exclude temporary files
+temp/
+uploads/
+grading_results/
+synced_submissions/
+
+# Exclude development files
+.git/
+.gitignore
+README.md
+.pytest_cache/
+.coverage
+
+# Exclude frontend files
+../frontend/ 

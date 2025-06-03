@@ -174,10 +174,17 @@ const CanvasPage = () => {
       });
       
       if (response.data.status === 'success' && response.data.assignments) {
-        // Filter only published assignments
-        const publishedAssignments = response.data.assignments.filter(assignment => 
-          assignment.published === true && assignment.workflow_state === 'published'
-        );
+        // Filter only published assignments with more robust checking
+        const publishedAssignments = response.data.assignments.filter(assignment => {
+          // Check multiple conditions for published state
+          const isPublished = assignment.published === true;
+          const workflowPublished = assignment.workflow_state === 'published';
+          const notUnpublished = assignment.workflow_state !== 'unpublished';
+          const notDeleted = assignment.workflow_state !== 'deleted';
+          
+          // Must be published AND have a valid workflow state
+          return (isPublished && workflowPublished) || (workflowPublished && notUnpublished && notDeleted);
+        });
         setAssignments(publishedAssignments);
         
         if (publishedAssignments.length > 0) {
@@ -372,7 +379,7 @@ const CanvasPage = () => {
                 ))}
               </Select>
               <FormHelperText>
-                {selectedCourseId ? `${assignments.length} assignment(s) in course` : 'Select a course first'}
+                {selectedCourseId ? `${assignments.length} published assignment(s) in course` : 'Select a course first'}
               </FormHelperText>
             </FormControl>
           </Grid>
