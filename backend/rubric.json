@@ -1,0 +1,175 @@
+{
+  "total_points": 20,
+  "sections": [
+    {
+      "name": "Implementation",
+      "max_points": 14,
+      "criteria": [
+        {
+          "name": "Text Preprocessing and Feature Extraction",
+          "points": 5,
+          "description": "Effectiveness of techniques used for cleaning, normalizing, and representing the medical text data (e.g., tokenization, stop word removal, stemming/lemmatization, TF-IDF, Word Embeddings).",
+          "grading_scale": [
+            {
+              "level": "Excellent",
+              "points": 5,
+              "description": "Demonstrates sophisticated text preprocessing techniques, resulting in a clean and informative feature set, well-justified choices for each step."
+            },
+            {
+              "level": "Good",
+              "points": 4,
+              "description": "Implements common text preprocessing techniques, producing a reasonably clean feature set with a rationale provided."
+            },
+            {
+              "level": "Fair",
+              "points": 3,
+              "description": "Applies basic text preprocessing but may miss opportunities for improvement, resulting in a somewhat noisy feature set. Rationale is weak or missing."
+            },
+            {
+              "level": "Poor",
+              "points": 1,
+              "description": "Minimal or ineffective text preprocessing, leading to a poorly represented feature set.  No justification provided."
+            }
+          ]
+        },
+        {
+          "name": "Classification Model Development",
+          "points": 6,
+          "description": "Appropriateness and performance of the classification model(s) selected and trained on the medical text data, including model selection, hyperparameter tuning, and handling imbalanced data.",
+          "grading_scale": [
+            {
+              "level": "Excellent",
+              "points": 6,
+              "description": "Selects and implements an appropriate classification model, employs effective hyperparameter tuning, and addresses the imbalanced dataset issue with suitable techniques (e.g., class weighting, oversampling, undersampling).  Demonstrates high performance."
+            },
+            {
+              "level": "Good",
+              "points": 4,
+              "description": "Chooses a suitable classification model, performs some hyperparameter tuning, and attempts to address the imbalanced data challenge, but improvements are possible."
+            },
+            {
+              "level": "Fair",
+              "points": 3,
+              "description": "Selects a basic classification model with limited or no hyperparameter tuning, and does not adequately address the imbalanced data problem.  Performance is mediocre."
+            },
+            {
+              "level": "Poor",
+              "points": 1,
+              "description": "Selects an inappropriate classification model, performs no hyperparameter tuning, and ignores the imbalanced data issue.  Very poor performance."
+            }
+          ]
+        },
+        {
+          "name": "Code Quality and Execution",
+          "points": 3,
+          "description": "Clarity, readability, and efficiency of the submitted code. Ability to execute the code and reproduce the results.",
+          "grading_scale": [
+            {
+              "level": "Excellent",
+              "points": 3,
+              "description": "Code is well-documented, easy to understand, and executes without errors.  Results are easily reproducible."
+            },
+            {
+              "level": "Good",
+              "points": 2,
+              "description": "Code is mostly readable and executes with minimal errors.  Results are reproducible with some effort."
+            },
+            {
+              "level": "Fair",
+              "points": 1,
+              "description": "Code is difficult to understand and/or executes with errors. Reproducing results requires significant effort or debugging."
+            },
+            {
+              "level": "Poor",
+              "points": 0,
+              "description": "Code is unreadable, does not execute, or does not produce the required output.  Results are not reproducible."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Report",
+      "max_points": 4,
+      "criteria": [
+        {
+          "name": "Clarity and Completeness",
+          "points": 2,
+          "description": "The report is well-written, organized, and covers all required aspects: name, SJSU ID, rank & F1-score, approach, methodology, and special instructions.",
+          "grading_scale": [
+            {
+              "level": "Excellent",
+              "points": 2,
+              "description": "Report is exceptionally clear, concise, and covers all required information in a well-organized manner.  Demonstrates a strong understanding of the project."
+            },
+            {
+              "level": "Good",
+              "points": 1.5,
+              "description": "Report is generally clear and covers most of the required information, though some areas may lack detail or clarity."
+            },
+            {
+              "level": "Fair",
+              "points": 1,
+              "description": "Report is somewhat unclear, missing key information, or poorly organized."
+            },
+            {
+              "level": "Poor",
+              "points": 0,
+              "description": "Report is unreadable, incomplete, or fails to address the required topics."
+            }
+          ]
+        },
+        {
+          "name": "Justification and Explanation",
+          "points": 2,
+          "description": "Provides a clear and well-reasoned justification for the chosen approach and parameters, demonstrating a strong understanding of the underlying concepts.",
+          "grading_scale": [
+            {
+              "level": "Excellent",
+              "points": 2,
+              "description": "Provides a compelling and insightful justification for all key decisions, demonstrating a deep understanding of the trade-offs involved."
+            },
+            {
+              "level": "Good",
+              "points": 1.5,
+              "description": "Offers a reasonable justification for the chosen approach and parameters, but may lack depth or critical analysis."
+            },
+            {
+              "level": "Fair",
+              "points": 1,
+              "description": "Provides a superficial or weak justification for the chosen approach and parameters, with limited evidence of understanding."
+            },
+            {
+              "level": "Poor",
+              "points": 0,
+              "description": "Fails to provide a meaningful justification for the chosen approach and parameters, demonstrating a lack of understanding."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ranking Submissions",
+      "max_points": 2,
+      "criteria": [
+        {
+          "name": "Submission Frequency & Adherence to Rules",
+          "points": 2,
+          "description": "Adherence to the submission rules (5 submissions per day max). This component is assessed as a binary condition: Compliance or Non-Compliance. Submitting less than 5 times is fine.",
+          "grading_scale": [
+            {
+              "level": "Compliant",
+              "points": 2,
+              "description": "Complied with all submission rules. Submitted output and code on leaderboard website correctly. Output matched submitted code."
+            },
+            {
+              "level": "Non-Compliant",
+              "points": 0,
+              "description": "Did not comply with the submission rules. Submitted output and code on leaderboard website were incorrect. Output did not match submitted code."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

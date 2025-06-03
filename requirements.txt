@@ -1,0 +1,2 @@
+# This file is just a wrapper to install dependencies from the backend directory
+-r backend/requirements.txt 

@@ -1,0 +1,7 @@
+/.env
+/.venv
+/data
+/Neo4j-f8d136eb-Created-2025-05-27.txt
+/run.py
+/start_new.py
+/test_neo4j.py
