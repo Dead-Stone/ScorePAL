@@ -33,8 +33,8 @@ The project is organized into two main directories:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/scorepal.git
-   cd scorepal
+   git clone https://github.com/Dead-Stone/ScorePAL.git
+   cd ScorePAL
    ```
 
 2. Install Python dependencies:

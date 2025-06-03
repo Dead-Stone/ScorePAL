@@ -142,7 +142,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
       <Divider />
       <List>
         <ListItem disablePadding>
-          <ListItemButton component="a" href="https://github.com/yourusername/scorepal" target="_blank">
+          <ListItemButton component="a" href="https://github.com/Dead-Stone/ScorePAL" target="_blank">
             <ListItemIcon>
               <GitHubIcon />
             </ListItemIcon>
