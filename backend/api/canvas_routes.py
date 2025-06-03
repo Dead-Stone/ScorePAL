@@ -89,6 +89,102 @@ async def connect_to_canvas(request: Request):
         logger.error(f"Error connecting to Canvas: {e}")
         raise HTTPException(status_code=500, detail=f"Error connecting to Canvas: {str(e)}")
 
+@router.post("/get-ta-courses")
+async def get_ta_courses(request: Request):
+    """
+    Get TA courses from Canvas API.
+    Expected request body: {"api_key": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        
+        if not api_key:
+            raise HTTPException(
+                status_code=400, 
+                detail="API key is required"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Clean up the API key (remove Bearer prefix if present)
+        clean_api_key = api_key.replace("Bearer ", "").strip()
+        
+        # Create a Canvas connector
+        canvas = CanvasConnector(canvas_url, clean_api_key)
+        
+        # Make direct API call to get TA courses
+        headers = {"Authorization": f"Bearer {clean_api_key}"}
+        response = requests.get(f"{canvas_url}/api/v1/courses?enrollment_type=ta", headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+            return {
+                "status": "error",
+                "message": f"Failed to fetch courses from Canvas: {response.status_code}"
+            }
+        
+        courses = response.json()
+        
+        return {
+            "status": "success",
+            "courses": courses
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching TA courses: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching TA courses: {str(e)}")
+
+@router.post("/get-assignments")
+async def get_assignments(request: Request):
+    """
+    Get assignments for a specific course from Canvas API.
+    Expected request body: {"api_key": "...", "course_id": 123}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        
+        if not api_key or not course_id:
+            raise HTTPException(
+                status_code=400, 
+                detail="API key and course ID are required"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Clean up the API key (remove Bearer prefix if present)
+        clean_api_key = api_key.replace("Bearer ", "").strip()
+        
+        # Make direct API call to get assignments
+        headers = {"Authorization": f"Bearer {clean_api_key}"}
+        response = requests.get(f"{canvas_url}/api/v1/courses/{course_id}/assignments", headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+            return {
+                "status": "error",
+                "message": f"Failed to fetch assignments from Canvas: {response.status_code}"
+            }
+        
+        assignments = response.json()
+        
+        return {
+            "status": "success",
+            "assignments": assignments
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching assignments: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching assignments: {str(e)}")
+
 @router.post("/get-submissions")
 async def get_canvas_submissions(request: Request):
     """

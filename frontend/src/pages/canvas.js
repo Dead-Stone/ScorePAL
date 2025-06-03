@@ -30,14 +30,16 @@ const CanvasPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  // Hard-coded values for course and assignment
-  const COURSE_ID = 1589225;
-  const ASSIGNMENT_ID = 7133587;
-  const COURSE_NAME = "SJSU CS Department";
-  const ASSIGNMENT_NAME = "Assignment Submission";
+  // Course and assignment selection
+  const [courses, setCourses] = useState([]);
+  const [selectedCourseId, setSelectedCourseId] = useState('');
+  const [assignments, setAssignments] = useState([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState('');
+  const [selectedCourseName, setSelectedCourseName] = useState('');
+  const [selectedAssignmentName, setSelectedAssignmentName] = useState('');
   
   // Workflow states
-  const [currentStep, setCurrentStep] = useState(0); // 0: connect, 1: sync, 2: select, 3: grade, 4: results
+  const [currentStep, setCurrentStep] = useState(0); // 0: connect, 1: select-course, 2: sync, 3: select, 4: grade, 5: results
   const [activeView, setActiveView] = useState('connect');
   const [showApiKey, setShowApiKey] = useState(false);
   
@@ -85,7 +87,7 @@ const CanvasPage = () => {
     return cleanKey;
   };
 
-  // Connect to Canvas
+  // Connect to Canvas and fetch TA courses
   const handleConnect = async () => {
     setLoading(true);
     setError(null);
@@ -103,8 +105,12 @@ const CanvasPage = () => {
       
       if (response.data.status === 'success') {
         setConnected(true);
+        
+        // Fetch TA courses
+        await fetchTACourses(processedApiKey);
+        
         setCurrentStep(1);
-        setActiveView('sync');
+        setActiveView('select-course');
       } else {
         setError(response.data.message || 'Failed to connect to Canvas');
       }
@@ -116,8 +122,107 @@ const CanvasPage = () => {
     }
   };
 
+  // Fetch TA courses from Canvas through backend
+  const fetchTACourses = async (processedApiKey) => {
+    try {
+      const response = await axios.post('/api/canvas/get-ta-courses', {
+        api_key: processedApiKey
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.data.status === 'success' && response.data.courses) {
+        // Filter only active courses
+        const activeCourses = response.data.courses.filter(course => 
+          course.workflow_state === 'available' && 
+          course.enrollments?.some(enrollment => enrollment.type === 'ta' && enrollment.enrollment_state === 'active')
+        );
+        setCourses(activeCourses);
+        
+        if (activeCourses.length > 0) {
+          setSelectedCourseId(activeCourses[0].id.toString());
+          setSelectedCourseName(activeCourses[0].name);
+        }
+      } else {
+        setError(response.data.message || 'Failed to fetch TA courses');
+      }
+    } catch (err) {
+      console.error('Error fetching TA courses:', err);
+      setError('Failed to fetch your TA courses. Please check your API key permissions.');
+    }
+  };
+
+  // Fetch assignments for selected course
+  const fetchAssignments = async () => {
+    if (!selectedCourseId) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const processedApiKey = processApiKey(apiKey);
+      
+      const response = await axios.post('/api/canvas/get-assignments', {
+        api_key: processedApiKey,
+        course_id: parseInt(selectedCourseId)
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.data.status === 'success' && response.data.assignments) {
+        // Filter only published assignments
+        const publishedAssignments = response.data.assignments.filter(assignment => 
+          assignment.published === true && assignment.workflow_state === 'published'
+        );
+        setAssignments(publishedAssignments);
+        
+        if (publishedAssignments.length > 0) {
+          setSelectedAssignmentId(publishedAssignments[0].id.toString());
+          setSelectedAssignmentName(publishedAssignments[0].name);
+        }
+      } else {
+        setError(response.data.message || 'Failed to fetch assignments');
+      }
+    } catch (err) {
+      console.error('Error fetching assignments:', err);
+      setError('Failed to fetch assignments for this course.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle course selection
+  const handleCourseChange = (courseId) => {
+    setSelectedCourseId(courseId);
+    const course = courses.find(c => c.id.toString() === courseId);
+    if (course) {
+      setSelectedCourseName(course.name);
+    }
+    setAssignments([]);
+    setSelectedAssignmentId('');
+    setSelectedAssignmentName('');
+  };
+
+  // Handle assignment selection
+  const handleAssignmentChange = (assignmentId) => {
+    setSelectedAssignmentId(assignmentId);
+    const assignment = assignments.find(a => a.id.toString() === assignmentId);
+    if (assignment) {
+      setSelectedAssignmentName(assignment.name);
+    }
+  };
+
   // Sync submissions from Canvas
   const handleSyncSubmissions = async (forceSync = false) => {
+    if (!selectedCourseId || !selectedAssignmentId) {
+      setError('Please select a course and assignment first');
+      return;
+    }
+    
     setLoading(true);
     setError(null);
     
@@ -126,8 +231,8 @@ const CanvasPage = () => {
       
       const response = await axios.post('/api/canvas/sync-submissions', {
         api_key: processedApiKey,
-        course_id: COURSE_ID,
-        assignment_id: ASSIGNMENT_ID,
+        course_id: parseInt(selectedCourseId),
+        assignment_id: parseInt(selectedAssignmentId),
         force_sync: forceSync
       });
       
@@ -135,7 +240,7 @@ const CanvasPage = () => {
         setSyncJobId(response.data.sync_job_id);
         setSyncSummary(response.data.summary);
         setSyncedSubmissions(response.data.summary.submissions || []);
-        setCurrentStep(2);
+        setCurrentStep(3);
         setActiveView('select');
         
         // Show different message based on whether it was existing data or fresh sync
@@ -181,7 +286,7 @@ const CanvasPage = () => {
       if (response.data.status === 'success') {
         setGradingJobId(response.data.grading_job_id);
         setGradingResults(response.data.results || []);
-        setCurrentStep(4);
+        setCurrentStep(5);
         setActiveView('results');
       } else {
         setError(response.data.message || 'Failed to grade submissions');
@@ -214,6 +319,106 @@ const CanvasPage = () => {
       setSelectedSubmissions(new Set(validSubmissions.map(s => s.user_id)));
     }
   };
+
+  // Render course and assignment selection screen
+  const renderCourseSelectionScreen = () => (
+    <Card>
+      <CardContent>
+        <Typography variant="h5" gutterBottom>
+          Select Course and Assignment
+        </Typography>
+        
+        <Typography variant="body1" paragraph>
+          Choose the course and assignment you want to grade.
+        </Typography>
+        
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth margin="normal">
+              <InputLabel id="course-select-label">Select Course</InputLabel>
+              <Select
+                labelId="course-select-label"
+                value={selectedCourseId}
+                label="Select Course"
+                onChange={(e) => handleCourseChange(e.target.value)}
+                disabled={loading}
+              >
+                {courses.map((course) => (
+                  <MenuItem key={course.id} value={course.id.toString()}>
+                    {course.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                {courses.length} TA course(s) found
+              </FormHelperText>
+            </FormControl>
+          </Grid>
+          
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth margin="normal">
+              <InputLabel id="assignment-select-label">Select Assignment</InputLabel>
+              <Select
+                labelId="assignment-select-label"
+                value={selectedAssignmentId}
+                label="Select Assignment"
+                onChange={(e) => handleAssignmentChange(e.target.value)}
+                disabled={loading || !selectedCourseId}
+              >
+                {assignments.map((assignment) => (
+                  <MenuItem key={assignment.id} value={assignment.id.toString()}>
+                    {assignment.name}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                {selectedCourseId ? `${assignments.length} assignment(s) in course` : 'Select a course first'}
+              </FormHelperText>
+            </FormControl>
+          </Grid>
+        </Grid>
+        
+        <Box sx={{ mt: 3 }}>
+          <Button 
+            variant="outlined" 
+            onClick={fetchAssignments}
+            disabled={loading || !selectedCourseId}
+            startIcon={loading ? <CircularProgress size={20} /> : <SyncIcon />}
+            sx={{ mr: 2 }}
+          >
+            {loading ? 'Loading...' : 'Load Assignments'}
+          </Button>
+          
+          <Button 
+            variant="contained" 
+            color="primary" 
+            onClick={() => {
+              setCurrentStep(2);
+              setActiveView('sync');
+            }}
+            disabled={!selectedCourseId || !selectedAssignmentId}
+            size="large"
+          >
+            Continue to Sync
+          </Button>
+        </Box>
+        
+        {selectedCourseId && selectedAssignmentId && (
+          <Paper sx={{ mt: 3, p: 2, bgcolor: 'primary.50' }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Selected:
+            </Typography>
+            <Typography variant="body2">
+              <strong>Course:</strong> {selectedCourseName}
+            </Typography>
+            <Typography variant="body2">
+              <strong>Assignment:</strong> {selectedAssignmentName}
+            </Typography>
+          </Paper>
+        )}
+      </CardContent>
+    </Card>
+  );
 
   // Render connection screen
   const renderConnectScreen = () => (
@@ -278,10 +483,10 @@ const CanvasPage = () => {
         
         <Box sx={{ mt: 3, mb: 3 }}>
           <Typography variant="subtitle1" gutterBottom>
-            <strong>Course:</strong> {COURSE_NAME}
+            <strong>Course:</strong> {selectedCourseName}
           </Typography>
           <Typography variant="subtitle1" gutterBottom>
-            <strong>Assignment:</strong> {ASSIGNMENT_NAME}
+            <strong>Assignment:</strong> {selectedAssignmentName}
           </Typography>
         </Box>
         
@@ -293,8 +498,8 @@ const CanvasPage = () => {
         <Button 
           variant="outlined" 
             onClick={() => {
-              setCurrentStep(0);
-              setActiveView('connect');
+              setCurrentStep(1);
+              setActiveView('select-course');
             }}
         >
           Back
@@ -482,7 +687,7 @@ const CanvasPage = () => {
             <Button 
               variant="outlined" 
               onClick={() => {
-                setCurrentStep(1);
+                setCurrentStep(2);
                 setActiveView('sync');
               }}
             >
@@ -613,7 +818,7 @@ const CanvasPage = () => {
           <Button 
             variant="outlined" 
             onClick={() => {
-              setCurrentStep(2);
+              setCurrentStep(3);
               setActiveView('select');
             }}
           >
@@ -749,7 +954,7 @@ const CanvasPage = () => {
             <Button 
               variant="outlined" 
               onClick={() => {
-                setCurrentStep(2);
+                setCurrentStep(3);
                 setActiveView('select');
               }}
             >
@@ -766,7 +971,7 @@ const CanvasPage = () => {
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  a.download = `grading_results_${ASSIGNMENT_ID}_${new Date().toISOString().split('T')[0]}.json`;
+                  a.download = `grading_results_${selectedAssignmentId}_${new Date().toISOString().split('T')[0]}.json`;
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
@@ -790,7 +995,7 @@ const CanvasPage = () => {
   };
 
   // Step labels
-  const steps = ['Connect', 'Sync', 'Select', 'Grade', 'Results'];
+  const steps = ['Connect', 'Select Course', 'Sync', 'Select', 'Grade', 'Results'];
 
   return (
     <Container maxWidth="lg">
@@ -819,6 +1024,7 @@ const CanvasPage = () => {
       
         {/* Main Content */}
         {activeView === 'connect' && renderConnectScreen()}
+        {activeView === 'select-course' && renderCourseSelectionScreen()}
         {activeView === 'sync' && renderSyncScreen()}
         {activeView === 'select' && renderSelectionScreen()}
         {activeView === 'grade' && renderGradingScreen()}
