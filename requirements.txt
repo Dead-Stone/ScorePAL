@@ -1,2 +1,25 @@
 # This file is just a wrapper to install dependencies from the backend directory
--r backend/requirements.txt 
+-r backend/requirements.txt
+
+# Core FastAPI
+fastapi==0.103.1
+uvicorn==0.23.2
+python-multipart==0.0.6
+requests==2.31.0
+
+# Data Processing - Lightweight versions for serverless
+numpy==1.24.3
+pandas==2.0.3
+pydantic==2.3.0
+pydantic-settings==2.0.3
+
+# Document Processing - Essential only
+python-docx==0.8.11
+pypdf==3.16.0
+python-dotenv==1.0.0
+
+# AI/ML - Lightweight
+langchain==0.0.300
+
+# Utilities
+python-dateutil==2.8.2 
