@@ -651,6 +651,7 @@ const RubricPage = () => {
         onClose={() => !generating && setGenerateDialogOpen(false)}
         maxWidth="md"
         fullWidth
+        scroll="paper"
       >
         <DialogTitle sx={{ 
           background: 'linear-gradient(45deg, #FF6B6B, #FF8E53)',
@@ -662,7 +663,7 @@ const RubricPage = () => {
           <AssistantIcon />
           Generate Rubric with AI
         </DialogTitle>
-        <DialogContent dividers sx={{ p: 3 }}>
+        <DialogContent dividers sx={{ p: 3, maxHeight: '70vh', overflow: 'auto' }}>
           <Typography variant="body2" color="text.secondary" paragraph>
             Let our AI assistant create a detailed grading rubric based on your specific requirements and context.
           </Typography>
@@ -747,7 +748,8 @@ const RubricPage = () => {
         }}
         maxWidth="lg"
         fullWidth
-        PaperProps={{ sx: { height: '90vh' } }}
+        scroll="paper"
+        PaperProps={{ sx: { height: '90vh', display: 'flex', flexDirection: 'column' } }}
       >
         <DialogTitle>
           {createDialogOpen ? 'Create New Rubric' : `Edit: ${selectedRubric?.name}`}
@@ -761,7 +763,7 @@ const RubricPage = () => {
           </Tabs>
         </Box>
         
-        <DialogContent dividers sx={{ p: 0, overflow: 'hidden' }}>
+        <DialogContent dividers sx={{ p: 0, overflow: 'auto', flex: 1 }}>
           <TabPanel value={dialogTab} index={0}>
             <Grid container spacing={3}>
               <Grid item xs={12}>
@@ -1057,6 +1059,7 @@ const RubricPage = () => {
         onClose={() => setViewDialogOpen(false)}
         maxWidth="md"
         fullWidth
+        scroll="paper"
       >
         <DialogTitle>
           <Box display="flex" alignItems="center" gap={2}>
@@ -1065,7 +1068,7 @@ const RubricPage = () => {
             <Chip label={`${selectedRubric?.total_points} points`} />
           </Box>
         </DialogTitle>
-        <DialogContent dividers>
+        <DialogContent dividers sx={{ maxHeight: '70vh', overflow: 'auto' }}>
           {selectedRubric && (
             <Grid container spacing={3}>
               <Grid item xs={12}>

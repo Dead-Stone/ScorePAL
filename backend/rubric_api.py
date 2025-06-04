@@ -125,7 +125,7 @@ async def create_rubric(rubric_data: Dict[str, Any] = Body(...)):
         logger.error(f"Error creating rubric: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating rubric: {str(e)}")
 
-@router.post("/generate-rubric")
+@router.post("/rubrics/generate")
 async def generate_rubric(data: Dict[str, Any] = Body(...)):
     """Generate a rubric using AI based on the provided context"""
     try:

@@ -1,5 +1,4 @@
 import axios from 'axios';
-import { normalizeCanvasUrl } from '../../../utils/canvas';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -7,26 +6,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get Canvas URL and API key from query parameters
-    let { canvas_url, api_key } = req.query;
-
-    if (!canvas_url || !api_key) {
-      return res.status(400).json({ 
-        status: 'error',
-        message: 'Canvas URL and API key are required' 
-      });
-    }
-    
-    // Normalize the Canvas URL
-    canvas_url = normalizeCanvasUrl(canvas_url);
-
-    // Forward request to backend with query parameters
-    // Use the /api/canvas/courses endpoint that works with the session-based canvas_service_global
+    // Forward request to backend using session-based authentication
+    // No need to pass canvas_url and api_key since they're stored after initialization
     const response = await axios.get(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/courses`,
-      {
-        // No need to pass canvas_url and api_key here as they're already stored in the session
-      }
+      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/courses`
     );
 
     return res.status(response.status).json(response.data);
@@ -35,7 +18,7 @@ export default async function handler(req, res) {
     
     return res.status(error.response?.status || 500).json({
       status: 'error',
-      message: error.response?.data?.detail || 'Error fetching Canvas courses',
+      message: error.response?.data?.detail || error.response?.data?.message || 'Error fetching Canvas courses',
     });
   }
 } 

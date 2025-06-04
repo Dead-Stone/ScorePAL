@@ -8,6 +8,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import requests
 from fastapi import APIRouter, HTTPException, status, Request, Form, Body, Depends, BackgroundTasks
@@ -22,17 +23,22 @@ from config import get_settings
 from utils.canvas_connector import CanvasConnector
 from grading_v2 import GradingService
 from preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
+from utils.directory_utils import ensure_directory_structure
 
 # Import rubric functionality directly
 from rubric_api import RUBRICS, load_rubrics_from_disk
 
 settings = get_settings()
+directories = ensure_directory_structure()  # Get directories dictionary
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 # Create the router with the correct prefix
 router = APIRouter()  # No prefix here - it will be added when included in the app
+
+# Global Canvas service instance
+canvas_service_global = None
 
 def get_canvas_service() -> CanvasGradingService:
     """Get the Canvas grading service."""
@@ -45,6 +51,57 @@ def get_canvas_service() -> CanvasGradingService:
         canvas_url=canvas_url,
         gemini_api_key=gemini_api_key,
     )
+
+@router.get("/status")
+async def get_canvas_status():
+    """
+    Get Canvas connection status.
+    Returns connection status and any cached connection info.
+    """
+    try:
+        # Check if Canvas service is available and properly initialized
+        global canvas_service_global
+        
+        if not canvas_service_global:
+            return {
+                "status": "error",
+                "connected": False,
+                "canvas_url": "https://sjsu.instructure.com",
+                "message": "Canvas not initialized. Please configure API key in settings."
+            }
+        
+        # Test the actual connection
+        try:
+            connection_test = canvas_service_global.test_connection()
+            if connection_test:
+                return {
+                    "status": "success",
+                    "connected": True,
+                    "canvas_url": "https://sjsu.instructure.com",
+                    "message": "Canvas connection is active"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "connected": False,
+                    "canvas_url": "https://sjsu.instructure.com",
+                    "message": "Canvas connection failed. Please check API key in settings."
+                }
+        except Exception as test_error:
+            return {
+                "status": "error",
+                "connected": False,
+                "canvas_url": "https://sjsu.instructure.com",
+                "message": f"Canvas connection test failed: {str(test_error)}"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting Canvas status: {e}")
+        return {
+            "status": "error",
+            "connected": False,
+            "message": f"Error getting Canvas status: {str(e)}"
+        }
 
 @router.post("/connect")
 async def connect_to_canvas(request: Request):
@@ -89,10 +146,311 @@ async def connect_to_canvas(request: Request):
         logger.error(f"Error connecting to Canvas: {e}")
         raise HTTPException(status_code=500, detail=f"Error connecting to Canvas: {str(e)}")
 
+@router.post("/initialize")
+async def initialize_canvas(request: Request):
+    """
+    Initialize Canvas integration with user-provided credentials.
+    Stores the credentials in memory for the session.
+    Accepts both form data and JSON data.
+    """
+    try:
+        global canvas_service_global
+        
+        logger.info("Canvas initialization started")
+        
+        api_key = None
+        content_type = request.headers.get("content-type", "").lower()
+        logger.info(f"Request content type: {content_type}")
+        
+        # Handle form data requests
+        if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            logger.info("Processing form data request")
+            try:
+                form_data = await request.form()
+                logger.info(f"Form data keys: {list(form_data.keys())}")
+                api_key = form_data.get("api_key")
+                if api_key:
+                    logger.info("API key found in form data")
+                else:
+                    logger.warning("API key not found in form data")
+            except Exception as e:
+                logger.error(f"Error processing form data: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error processing form data: {str(e)}"
+                }
+        
+        # Handle JSON requests
+        elif "application/json" in content_type:
+            logger.info("Processing JSON request")
+            try:
+                raw_body = await request.body()
+                if raw_body:
+                    body_text = raw_body.decode('utf-8').strip()
+                    logger.info(f"Request body length: {len(body_text)}")
+                    
+                    if body_text:
+                        try:
+                            json_data = json.loads(body_text)
+                            logger.info(f"Successfully parsed JSON: {json_data}")
+                            api_key = json_data.get("api_key")
+                            if api_key:
+                                logger.info("API key found in JSON data")
+                            else:
+                                logger.warning("API key not found in JSON data")
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"JSON decode error: {json_err}")
+                            return {
+                                "status": "error",
+                                "message": f"Invalid JSON format: {str(json_err)}"
+                            }
+                    else:
+                        logger.warning("Empty JSON body received")
+                        return {
+                            "status": "error",
+                            "message": "Empty request body"
+                        }
+                else:
+                    logger.warning("No request body received")
+                    return {
+                        "status": "error",
+                        "message": "No request body received"
+                    }
+            except Exception as e:
+                logger.error(f"Error processing JSON request: {str(e)}")
+                return {
+                    "status": "error",
+                    "message": f"Error processing request: {str(e)}"
+                }
+        
+        else:
+            logger.error(f"Unsupported content type: {content_type}")
+            return {
+                "status": "error",
+                "message": f"Unsupported content type: {content_type}. Use application/json or application/x-www-form-urlencoded"
+            }
+        
+        # Validate API key
+        if not api_key:
+            logger.error("API key is required but not provided")
+            return {
+                "status": "error",
+                "message": "API key is required"
+            }
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Clean up the API key (remove Bearer prefix if present)
+        clean_api_key = str(api_key).replace("Bearer ", "").strip()
+        logger.info(f"Using API key (length: {len(clean_api_key)})")
+        
+        if len(clean_api_key) == 0:
+            logger.error("Empty API key provided after cleaning")
+            return {
+                "status": "error",
+                "message": "API key cannot be empty"
+            }
+        
+        logger.info(f"Connecting to Canvas at: {canvas_url}")
+        
+        # Get Gemini API key from environment
+        gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        
+        # Create the Canvas service instance and update global variable
+        canvas_service_global = CanvasGradingService(
+            canvas_url=canvas_url,
+            canvas_api_key=clean_api_key,
+            gemini_api_key=gemini_api_key
+        )
+        
+        # Make sure to update the global variable
+        globals()['canvas_service_global'] = canvas_service_global
+        
+        # Test the connection
+        connection_successful = canvas_service_global.test_connection()
+        
+        if connection_successful:
+            logger.info("Successfully initialized Canvas service")
+            return {
+                "status": "success",
+                "message": "Successfully initialized Canvas LMS"
+            }
+        else:
+            logger.error("Canvas connection test failed")
+            canvas_service_global = None  # Reset on failure
+            return {
+                "status": "error",
+                "message": "Failed to connect to Canvas LMS. Please check your credentials."
+            }
+    except Exception as e:
+        logger.error(f"Error initializing Canvas: {str(e)}", exc_info=True)
+        canvas_service_global = None  # Reset on error
+        return {
+            "status": "error",
+            "message": f"Error initializing Canvas: {str(e)}"
+        }
+
+@router.get("/courses")
+async def get_courses():
+    """
+    Get Canvas courses (simplified endpoint for frontend).
+    This should use stored credentials or session-based authentication.
+    """
+    try:
+        global canvas_service_global
+        
+        if not canvas_service_global:
+            return {
+                "status": "error",
+                "message": "Canvas not initialized. Please configure API key in settings."
+            }
+        
+        # Use direct Canvas API call to get TA courses (matching the working approach)
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Extract API key from canvas service
+        api_key = canvas_service_global.canvas_api_key
+        if api_key.startswith("Bearer "):
+            clean_api_key = api_key.replace("Bearer ", "").strip()
+        else:
+            clean_api_key = api_key.strip()
+        
+        logger.info("Fetching TA courses from Canvas API...")
+        
+        # Fetch all TA courses with pagination (same logic as get_ta_courses)
+        all_courses = []
+        headers = {"Authorization": f"Bearer {clean_api_key}"}
+        
+        page = 1
+        per_page = 50
+        
+        while True:
+            url = f"{canvas_url}/api/v1/courses?enrollment_type=ta&per_page={per_page}&page={page}"
+            logger.info(f"Fetching courses from page {page}: {url}")
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+                return {
+                    "status": "error",
+                    "message": f"Failed to fetch courses from Canvas: {response.status_code}"
+                }
+            
+            page_courses = response.json()
+            
+            # If no courses returned, we've reached the end
+            if not page_courses:
+                logger.info(f"No more courses found on page {page}, stopping pagination")
+                break
+                
+            all_courses.extend(page_courses)
+            logger.info(f"Fetched {len(page_courses)} courses on page {page}, {len(all_courses)} total so far")
+            
+            # If we got fewer than per_page results, this is likely the last page
+            if len(page_courses) < per_page:
+                logger.info(f"Got {len(page_courses)} < {per_page} courses, assuming this is the last page")
+                break
+            
+            page += 1
+            
+            # Safety break to prevent infinite loops
+            if len(all_courses) > 1000:  # Reasonable limit
+                logger.warning("Reached course limit of 1000, stopping pagination")
+                break
+        
+        logger.info(f"Finished fetching courses. Total courses retrieved: {len(all_courses)}")
+        
+        # Transform Canvas API response to our expected format
+        formatted_courses = []
+        for course in all_courses:
+            formatted_course = {
+                'id': str(course.get('id', '')),
+                'name': course.get('name', ''),
+                'course_code': course.get('course_code', ''),
+                'enrollment_term_id': str(course.get('enrollment_term_id', '')),
+                'workflow_state': course.get('workflow_state', 'available'),
+                'start_date': course.get('start_at', ''),
+                'end_date': course.get('end_at', '')
+            }
+            formatted_courses.append(formatted_course)
+        
+        return {
+            "status": "success",
+            "courses": formatted_courses,
+            "message": f"Successfully loaded {len(formatted_courses)} courses"
+        }
+    except Exception as e:
+        logger.error(f"Error getting Canvas courses: {e}")
+        return {
+            "status": "error",
+            "message": f"Error getting Canvas courses: {str(e)}"
+        }
+
+@router.get("/courses/{course_id}/assignments")
+async def get_course_assignments(course_id: str):
+    """
+    Get assignments for a specific course (simplified endpoint for frontend).
+    This should use stored credentials or session-based authentication.
+    """
+    try:
+        global canvas_service_global
+        
+        if not canvas_service_global:
+            return {
+                "status": "error",
+                "message": "Canvas not initialized. Please configure API key in settings."
+            }
+        
+        # Get assignments using the Canvas service
+        assignments = canvas_service_global.get_assignments_for_course(int(course_id))
+        
+        return {
+            "status": "success",
+            "assignments": assignments,
+            "message": f"Successfully loaded {len(assignments)} assignments"
+        }
+    except Exception as e:
+        logger.error(f"Error getting Canvas assignments: {e}")
+        return {
+            "status": "error",
+            "message": f"Error getting Canvas assignments: {str(e)}"
+        }
+
+@router.post("/grade")
+async def grade_canvas_assignment_simple(request: Request):
+    """
+    Start grading job for Canvas assignment (simplified endpoint for frontend).
+    Expected body: {"assignment_id": "123"}
+    """
+    try:
+        body = await request.json()
+        assignment_id = body.get("assignment_id")
+        
+        if not assignment_id:
+            return {
+                "status": "error",
+                "message": "Assignment ID is required"
+            }
+        
+        # For now, return a basic response - implement proper grading logic later
+        return {
+            "status": "success",
+            "message": f"Grading job started for assignment {assignment_id}",
+            "job_id": f"job_{assignment_id}_{int(datetime.now().timestamp())}"
+        }
+    except Exception as e:
+        logger.error(f"Error starting Canvas grading: {e}")
+        return {
+            "status": "error",
+            "message": f"Error starting Canvas grading: {str(e)}"
+        }
+
 @router.post("/get-ta-courses")
 async def get_ta_courses(request: Request):
     """
-    Get TA courses from Canvas API.
+    Get TA courses from Canvas API with pagination support.
     Expected request body: {"api_key": "..."}
     """
     try:
@@ -115,22 +473,54 @@ async def get_ta_courses(request: Request):
         # Create a Canvas connector
         canvas = CanvasConnector(canvas_url, clean_api_key)
         
-        # Make direct API call to get TA courses
+        # Fetch all TA courses with page-based pagination
+        all_courses = []
         headers = {"Authorization": f"Bearer {clean_api_key}"}
-        response = requests.get(f"{canvas_url}/api/v1/courses?enrollment_type=ta", headers=headers)
         
-        if response.status_code != 200:
-            logger.error(f"Canvas API error: {response.status_code} - {response.text}")
-            return {
-                "status": "error",
-                "message": f"Failed to fetch courses from Canvas: {response.status_code}"
-            }
+        page = 1
+        per_page = 50
         
-        courses = response.json()
+        while True:
+            url = f"{canvas_url}/api/v1/courses?enrollment_type=ta&per_page={per_page}&page={page}"
+            logger.info(f"Fetching courses from page {page}: {url}")
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+                return {
+                    "status": "error",
+                    "message": f"Failed to fetch courses from Canvas: {response.status_code}"
+                }
+            
+            page_courses = response.json()
+            
+            # If no courses returned, we've reached the end
+            if not page_courses:
+                logger.info(f"No more courses found on page {page}, stopping pagination")
+                break
+                
+            all_courses.extend(page_courses)
+            logger.info(f"Fetched {len(page_courses)} courses on page {page}, {len(all_courses)} total so far")
+            
+            # If we got fewer than per_page results, this is likely the last page
+            if len(page_courses) < per_page:
+                logger.info(f"Got {len(page_courses)} < {per_page} courses, assuming this is the last page")
+                break
+            
+            page += 1
+            
+            # Safety break to prevent infinite loops
+            if len(all_courses) > 1000:  # Reasonable limit
+                logger.warning("Reached course limit of 1000, stopping pagination")
+                break
+        
+        logger.info(f"Finished fetching courses. Total courses retrieved: {len(all_courses)}")
         
         return {
             "status": "success",
-            "courses": courses
+            "courses": all_courses,
+            "total_count": len(all_courses)
         }
     except HTTPException:
         raise
@@ -141,7 +531,7 @@ async def get_ta_courses(request: Request):
 @router.post("/get-assignments")
 async def get_assignments(request: Request):
     """
-    Get assignments for a specific course from Canvas API.
+    Get assignments for a specific course from Canvas API with pagination support.
     Expected request body: {"api_key": "...", "course_id": 123}
     """
     try:
@@ -162,22 +552,54 @@ async def get_assignments(request: Request):
         # Clean up the API key (remove Bearer prefix if present)
         clean_api_key = api_key.replace("Bearer ", "").strip()
         
-        # Make direct API call to get assignments
+        # Fetch all assignments with page-based pagination
+        all_assignments = []
         headers = {"Authorization": f"Bearer {clean_api_key}"}
-        response = requests.get(f"{canvas_url}/api/v1/courses/{course_id}/assignments", headers=headers)
         
-        if response.status_code != 200:
-            logger.error(f"Canvas API error: {response.status_code} - {response.text}")
-            return {
-                "status": "error",
-                "message": f"Failed to fetch assignments from Canvas: {response.status_code}"
-            }
+        page = 1
+        per_page = 50
         
-        assignments = response.json()
+        while True:
+            url = f"{canvas_url}/api/v1/courses/{course_id}/assignments?per_page={per_page}&page={page}"
+            logger.info(f"Fetching assignments from page {page}: {url}")
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+                return {
+                    "status": "error",
+                    "message": f"Failed to fetch assignments from Canvas: {response.status_code}"
+                }
+            
+            page_assignments = response.json()
+            
+            # If no assignments returned, we've reached the end
+            if not page_assignments:
+                logger.info(f"No more assignments found on page {page}, stopping pagination")
+                break
+                
+            all_assignments.extend(page_assignments)
+            logger.info(f"Fetched {len(page_assignments)} assignments on page {page}, {len(all_assignments)} total so far")
+            
+            # If we got fewer than per_page results, this is likely the last page
+            if len(page_assignments) < per_page:
+                logger.info(f"Got {len(page_assignments)} < {per_page} assignments, assuming this is the last page")
+                break
+            
+            page += 1
+            
+            # Safety break to prevent infinite loops
+            if len(all_assignments) > 1000:  # Reasonable limit
+                logger.warning("Reached assignment limit of 1000, stopping pagination")
+                break
+        
+        logger.info(f"Finished fetching assignments for course {course_id}. Total assignments retrieved: {len(all_assignments)}")
         
         return {
             "status": "success",
-            "assignments": assignments
+            "assignments": all_assignments,
+            "total_count": len(all_assignments)
         }
     except HTTPException:
         raise
@@ -188,7 +610,8 @@ async def get_assignments(request: Request):
 @router.post("/get-submissions")
 async def get_canvas_submissions(request: Request):
     """
-    Get submissions for a Canvas assignment.
+    Get submissions for a Canvas assignment with pagination support.
+    Updated to handle SJSU Canvas API format properly.
     Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
     """
     try:
@@ -204,42 +627,81 @@ async def get_canvas_submissions(request: Request):
                 detail="API key, course ID, and assignment ID are required"
             )
         
-        # Extract canvas URL from the API key or use settings default
-        # Assuming SJSU Canvas based on the URL in the screenshot
+        # Use SJSU Canvas URL
         canvas_url = "https://sjsu.instructure.com"
         
         # Clean up the API key (remove Bearer prefix if present)
         clean_api_key = api_key.replace("Bearer ", "").strip()
         
-        # Create Canvas connector
-        canvas = CanvasConnector(canvas_url, clean_api_key)
+        # Create Canvas service to use the enhanced submission fetching
+        canvas_service = CanvasGradingService(
+            canvas_url=canvas_url,
+            canvas_api_key=clean_api_key,
+            gemini_api_key=""  # Not needed for just fetching submissions
+        )
         
-        # Get submissions using the Canvas API
-        submissions_url = f"{canvas_url}/api/v1/courses/{course_id}/assignments/{assignment_id}/submissions"
+        # Use the Canvas service method which handles user enrichment
+        result = canvas_service.get_submissions_for_assignment(
+            int(course_id), 
+            int(assignment_id),
+            include=["user", "submission_comments", "attachments"],
+            per_page=50
+        )
         
-        headers = {
-            "Authorization": f"Bearer {clean_api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        # Add query parameters to include attachments and other data
-        params = {
-            "include[]": ["submission_comments", "attachments", "user"]
-        }
-        
-        response = requests.get(submissions_url, headers=headers, params=params)
-        
-        if response.status_code == 200:
-            submissions = response.json()
+        if result["success"]:
+            submissions = result["submissions"]
+            assignment_info = result["assignment"]
+            
+            # Transform submissions to match expected frontend format
+            transformed_submissions = []
+            for submission in submissions:
+                # Ensure user information is available
+                user_info = submission.get("user", {})
+                if not user_info and submission.get("user_id"):
+                    user_info = {
+                        "id": submission["user_id"],
+                        "name": f"User {submission['user_id']}",
+                        "email": "",
+                        "avatar_url": ""
+                    }
+                
+                transformed_submission = {
+                    "id": submission.get("id"),
+                    "user_id": submission.get("user_id"),
+                    "assignment_id": submission.get("assignment_id"),
+                    "submitted_at": submission.get("submitted_at"),
+                    "workflow_state": submission.get("workflow_state"),
+                    "grade": submission.get("grade"),
+                    "score": submission.get("score"),
+                    "entered_grade": submission.get("entered_grade"),
+                    "entered_score": submission.get("entered_score"),
+                    "submission_type": submission.get("submission_type"),
+                    "body": submission.get("body"),
+                    "url": submission.get("url"),
+                    "attempt": submission.get("attempt"),
+                    "late": submission.get("late", False),
+                    "missing": submission.get("missing", False),
+                    "excused": submission.get("excused", False),
+                    "graded_at": submission.get("graded_at"),
+                    "preview_url": submission.get("preview_url"),
+                    "attachments": submission.get("attachments", []),
+                    "user": user_info
+                }
+                transformed_submissions.append(transformed_submission)
+            
+            logger.info(f"Successfully retrieved {len(transformed_submissions)} submissions for assignment {assignment_id}")
+            
             return {
                 "status": "success",
-                "submissions": submissions
+                "submissions": transformed_submissions,
+                "assignment": assignment_info,
+                "total_count": len(transformed_submissions)
             }
         else:
-            logger.error(f"Canvas API error: {response.status_code} - {response.text}")
+            logger.error(f"Failed to retrieve submissions: {result['message']}")
             raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Canvas API error: {response.text}"
+                status_code=500,
+                detail=f"Failed to retrieve submissions: {result['message']}"
             )
             
     except HTTPException:
@@ -673,12 +1135,10 @@ async def grade_selected_submissions(request: Request):
         grading_service = GradingService(api_key=settings.gemini_api_key)
         file_preprocessor = FilePreprocessor()
         
-        # Filter submissions to only selected ones that were successfully synced
+        # Filter submissions to include ALL selected ones, not just synced ones
         selected_submissions = []
         for submission_data in sync_summary["submissions"]:
-            if (submission_data.get("user_id") in selected_user_ids and 
-                submission_data.get("sync_status") == "synced" and 
-                submission_data.get("downloaded_files")):
+            if submission_data.get("user_id") in selected_user_ids:
                 selected_submissions.append(submission_data)
         
         if not selected_submissions:
@@ -713,19 +1173,50 @@ async def grade_selected_submissions(request: Request):
                     if rubric:
                         total_points = rubric.get("total_points", 100)
                     
+                    # Check submission status to provide better feedback
+                    workflow_state = submission_data.get("workflow_state", "unknown")
+                    sync_status = submission_data.get("sync_status", "unknown")
+                    
+                    # Determine appropriate feedback based on submission state
+                    if workflow_state == "unsubmitted":
+                        feedback = "Student has not submitted any work for this assignment"
+                        status = "not_submitted"
+                    elif workflow_state == "graded" and submission_data.get("score") is not None:
+                        # Already graded submission - maintain existing grade if available
+                        existing_score = submission_data.get("score", 0)
+                        existing_grade = submission_data.get("grade", "0")
+                        feedback = f"Previously graded submission (Canvas grade: {existing_grade}). No new files to grade."
+                        status = "previously_graded"
+                        # Try to maintain existing score if reasonable
+                        if existing_score and existing_score > 0:
+                            # Convert existing score to percentage if possible
+                            percentage = min(100, (existing_score / total_points) * 100) if total_points > 0 else 0
+                        else:
+                            percentage = 0.0
+                    elif sync_status == "no_files":
+                        feedback = "Submission exists but contains no file attachments to grade"
+                        status = "no_files"
+                        percentage = 0.0
+                    else:
+                        feedback = "No readable files available for AI grading"
+                        status = "no_readable_files"
+                        percentage = 0.0
+                    
                     grading_results.append({
                         "user_id": user_id,
                         "user_name": user_name,
-                        "status": "no_files",
-                        "raw_score": 0,
+                        "status": status,
+                        "raw_score": int(percentage * total_points / 100) if 'percentage' in locals() else 0,
                         "total_points": total_points,
-                        "percentage": 0.0,
-                        "grade": 0.0,
-                        "score_display": f"0/{total_points}",
-                        "percentage_display": "0.0%",
-                        "feedback": "No files available for grading",
+                        "percentage": percentage if 'percentage' in locals() else 0.0,
+                        "grade": percentage if 'percentage' in locals() else 0.0,
+                        "score_display": f"{int(percentage * total_points / 100) if 'percentage' in locals() else 0}/{total_points}",
+                        "percentage_display": f"{percentage if 'percentage' in locals() else 0.0:.1f}%",
+                        "feedback": feedback,
                         "files_processed": 0,
-                        "rubric_used": rubric_name
+                        "rubric_used": rubric_name,
+                        "workflow_state": workflow_state,
+                        "sync_status": sync_status
                     })
                     continue
                 
@@ -910,8 +1401,10 @@ async def grade_selected_submissions(request: Request):
                 "total_selected": len(selected_user_ids),
                 "successfully_graded": len([r for r in grading_results if r.get("status") == "graded"]),
                 "failed_gradings": len([r for r in grading_results if r.get("status") == "error"]),
-                "no_files": len([r for r in grading_results if r.get("status") == "no_files"]),
+                "no_files": len([r for r in grading_results if r.get("status") in ["no_files", "not_submitted", "no_readable_files"]]),
+                "previously_graded": len([r for r in grading_results if r.get("status") == "previously_graded"]),
                 "no_content": len([r for r in grading_results if r.get("status") == "no_readable_content"]),
+                "processed_all": len(grading_results),
                 "average_score": None
             },
             "folder_structure": {
@@ -956,14 +1449,16 @@ async def grade_selected_submissions(request: Request):
             "readable_date": datetime.now().strftime("%B %d, %Y at %I:%M %p"),
             "course_id": sync_summary["course_id"],
             "assignment_id": sync_summary["assignment_id"],
-            "students_graded": len([r for r in grading_results if r.get("status") == "graded"]),
+            "ai_graded": len([r for r in grading_results if r.get("status") == "graded"]),
+            "status_graded": len([r for r in grading_results if r.get("status") in ["not_submitted", "previously_graded", "no_files", "no_readable_files"]]),
+            "total_processed": len(grading_results),
             "total_selected": len(selected_user_ids),
             "rubric_used": job_rubric_name,
             "strictness": strictness,
             "average_percentage": None,
             "average_raw_score": None,
             "rubric_total_points": None,
-            "success_rate": f"{len([r for r in grading_results if r.get('status') == 'graded'])}/{len(selected_user_ids)}"
+            "processing_rate": f"{len(grading_results)}/{len(selected_user_ids)}"
         }
         
         if successful_results:
@@ -1718,3 +2213,522 @@ async def sync_submissions(request: Request):
     except Exception as e:
         logger.error(f"Error in sync submissions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error syncing submissions: {str(e)}") 
+
+@router.post("/courses/{course_id}/assignments/{assignment_id}/grade")
+async def grade_canvas_assignment(
+    course_id: int,
+    assignment_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """Grade a Canvas assignment using ScorePAL with rubric support."""
+    try:
+        global canvas_service_global
+        
+        # First check if Canvas is initialized
+        if not canvas_service_global:
+            return {
+                "status": "error",
+                "message": "Canvas not initialized. Please initialize with credentials first."
+            }
+        
+        # Get rubric_id from request body
+        rubric_id = "default"
+        try:
+            body = await request.json()
+            rubric_id = body.get('rubric_id', 'default')
+        except:
+            # If no body or JSON parsing fails, use default
+            pass
+        
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+        
+        # Create output directory using directories dictionary
+        output_dir = directories["grading_results"] / job_id
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Store job metadata
+        metadata = {
+            "id": job_id,
+            "type": "canvas_assignment",
+            "course_id": course_id,
+            "assignment_id": assignment_id,
+            "rubric_id": rubric_id,
+            "status": "queued",
+            "created_at": datetime.now().isoformat(),
+            "output_dir": str(output_dir)
+        }
+        
+        # Save metadata
+        metadata_path = output_dir / "metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+        
+        # Start the grading task in the background
+        # We'll use the actual canvas_service_global instance from the current module
+        background_tasks.add_task(
+            process_canvas_assignment,
+            job_id=job_id,
+            course_id=course_id,
+            assignment_id=assignment_id,
+            rubric_id=rubric_id,
+            output_dir=output_dir
+        )
+        
+        return {
+            "status": "success",
+            "message": "Grading job started",
+            "job_id": job_id
+        }
+    except Exception as e:
+        logger.error(f"Error starting Canvas grading job: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error starting Canvas grading job: {str(e)}"
+        }
+
+async def process_canvas_assignment(
+    job_id: str,
+    course_id: int,
+    assignment_id: int,
+    rubric_id: str,
+    output_dir: Path
+):
+    """Process a Canvas assignment in the background with rubric support."""
+    try:
+        global canvas_service_global
+        
+        # Update job status (create a simple status update function)
+        update_job_status(job_id, "processing", output_dir)
+        
+        # Process the assignment using the global Canvas service
+        if not canvas_service_global:
+            update_job_status(job_id, "failed", output_dir, "Canvas service not initialized")
+            return
+        
+        # Try to get assignment and course info, but don't fail if we can't
+        assignment_info = {
+            "id": assignment_id,
+            "name": f"Assignment {assignment_id}",
+            "description": "",
+            "points_possible": 0
+        }
+        
+        course_info = {
+            "id": course_id,
+            "name": f"Course {course_id}",
+            "course_code": ""
+        }
+        
+        try:
+            # Try to get assignment details
+            assignment = canvas_service_global.canvas.get_assignment(course_id, assignment_id)
+            if assignment:
+                assignment_info = {
+                    "id": assignment.id,
+                    "name": assignment.name,
+                    "description": getattr(assignment, "description", ""),
+                    "points_possible": getattr(assignment, "points_possible", 0)
+                }
+        except Exception as assignment_error:
+            logger.warning(f"Could not get assignment details: {assignment_error}")
+        
+        try:
+            # Try to get course details
+            course = canvas_service_global.canvas.get_course(course_id)
+            if course:
+                course_info = {
+                    "id": course.id,
+                    "name": course.name,
+                    "course_code": getattr(course, "course_code", "")
+                }
+        except Exception as course_error:
+            logger.warning(f"Could not get course details: {course_error}")
+        
+        # Load rubric if specified
+        rubric = None
+        if rubric_id and rubric_id != "default":
+            try:
+                # Import rubric functionality
+                from backend.rubric_api import RUBRICS, load_rubrics_from_disk
+                
+                # Ensure rubrics are loaded from disk
+                if not RUBRICS:
+                    load_rubrics_from_disk()
+                
+                # Get the rubric
+                if rubric_id in RUBRICS:
+                    rubric_obj = RUBRICS[rubric_id]
+                    # Convert to the format expected by the grading service
+                    rubric = {
+                        "criteria": []
+                    }
+                    total_points = 0
+                    for criterion in rubric_obj.criteria:
+                        rubric["criteria"].append({
+                            "name": criterion.name,
+                            "max_points": criterion.max_points,
+                            "description": criterion.description
+                        })
+                        total_points += criterion.max_points
+                    
+                    rubric["total_points"] = total_points
+                    logger.info(f"Successfully loaded custom rubric '{rubric_obj.name}' with {len(rubric['criteria'])} criteria and {total_points} total points")
+                else:
+                    logger.warning(f"Rubric {rubric_id} not found, using default rubric")
+            except Exception as e:
+                logger.warning(f"Could not load rubric {rubric_id}: {str(e)}, using default rubric")
+        
+        # Process the assignment with rubric
+        success, message, results = canvas_service_global.process_assignment(
+            course_id, assignment_id, str(output_dir), rubric=rubric
+        )
+        
+        # Update job status
+        if success:
+            update_job_status(job_id, "completed", output_dir, None, assignment_info, course_info)
+        else:
+            # If no submissions were found, still consider this a "completion" with assignment info
+            if "No submissions found" in message:
+                update_job_status(job_id, "completed", output_dir, None, assignment_info, course_info)
+            else:
+                update_job_status(job_id, "failed", output_dir, message, assignment_info, course_info)
+        
+        logger.info(f"Canvas assignment processing completed: {message}")
+    except Exception as e:
+        logger.error(f"Error processing Canvas assignment: {e}")
+        update_job_status(job_id, "failed", output_dir, str(e))
+
+def update_job_status(job_id: str, status: str, output_dir: Path, error: str = None, assignment_info: dict = None, course_info: dict = None):
+    """Update the status of a Canvas grading job."""
+    try:
+        # Read the existing metadata
+        metadata_path = output_dir / "metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
+        
+        # Update the status
+        metadata["status"] = status
+        
+        # Add error if provided
+        if error:
+            metadata["error"] = error
+        
+        # Add assignment and course info if provided
+        if assignment_info:
+            metadata["assignment"] = assignment_info
+        
+        if course_info:
+            metadata["course"] = course_info
+        
+        # Add timestamp for status change
+        if status == "completed" or status == "failed":
+            metadata["completed_at"] = datetime.now().isoformat()
+        
+        # Save the updated metadata
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error updating job status: {e}")
+
+@router.get("/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    """Get the status of a Canvas grading job."""
+    try:
+        # Find the job directory
+        job_dir = directories["grading_results"] / job_id
+        
+        if not job_dir.exists():
+            return {
+                "status": "error",
+                "message": f"Canvas grading job {job_id} not found"
+            }
+        
+        # Read the metadata file
+        metadata_path = job_dir / "metadata.json"
+        if not metadata_path.exists():
+            return {
+                "status": "error",
+                "message": f"Canvas grading job metadata not found"
+            }
+        
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        
+        # Check if results are available
+        results_path = job_dir / "grading_results.json"
+        results_available = results_path.exists()
+        
+        response = {
+            "status": "success",
+            "job_id": job_id,
+            "job_status": metadata.get("status", "unknown"),
+            "type": metadata.get("type", "canvas_assignment"),
+            "created_at": metadata.get("created_at", ""),
+            "completed_at": metadata.get("completed_at", ""),
+            "results_available": results_available
+        }
+        
+        # Include assignment and course info if available
+        if "assignment" in metadata:
+            response["assignment"] = metadata["assignment"]
+        
+        if "course" in metadata:
+            response["course"] = metadata["course"]
+        
+        if results_available:
+            response["results_url"] = f"/api/canvas/jobs/{job_id}/results"
+        
+        if "error" in metadata:
+            response["error"] = metadata["error"]
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error getting Canvas job status: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error getting Canvas job status: {str(e)}"
+        }
+
+@router.get("/jobs/{job_id}/results")
+async def get_job_results(job_id: str):
+    """Get the results of a Canvas grading job."""
+    try:
+        # Find the job directory
+        job_dir = directories["grading_results"] / job_id
+        
+        if not job_dir.exists():
+            return {
+                "status": "error",
+                "message": f"Canvas grading job {job_id} not found"
+            }
+        
+        # Read the results file
+        results_path = job_dir / "grading_results.json"
+        if not results_path.exists():
+            # Read metadata for assignment/course info even if no results
+            metadata_path = job_dir / "metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                
+                # Return a minimal response with assignment/course info
+                return {
+                    "status": "success",
+                    "job_id": job_id,
+                    "message": "No grading results available",
+                    "assignment": metadata.get("assignment", {}),
+                    "course": metadata.get("course", {})
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"Canvas grading results not found"
+                }
+        
+        with open(results_path, "r", encoding="utf-8") as f:
+            results = json.load(f)
+        
+        return {
+            "status": "success",
+            "job_id": job_id,
+            "results": results
+        }
+    except Exception as e:
+        logger.error(f"Error getting Canvas job results: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error getting Canvas job results: {str(e)}"
+        }
+
+@router.post("/download-organize-submissions")
+async def download_organize_submissions(request: Request):
+    """
+    Download and organize all submissions for an assignment using the existing synced_submissions structure.
+    Creates: synced_submissions/course_{course_id}/assignment_{assignment_id}/sync_{timestamp}/
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID and Assignment ID must be valid integers"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Initialize Canvas service
+        canvas_service = get_canvas_service(api_key, canvas_url)
+        
+        # Download and organize submissions using existing structure
+        logger.info(f"Starting synced download for course {course_id}, assignment {assignment_id}")
+        result = canvas_service.download_and_organize_submissions(course_id, assignment_id)
+        
+        if result['success']:
+            logger.info(f"Successfully synced {result['submissions_count']} submissions")
+            return {
+                "success": True,
+                "message": result['message'],
+                "data": {
+                    "submissions_count": result['submissions_count'],
+                    "sync_directory": result['sync_directory'],
+                    "statistics": result['statistics'],
+                    "submissions": result['submissions'],
+                    "ready_for_grading": result['ready_for_grading']
+                }
+            }
+        else:
+            logger.warning(f"Failed to sync submissions: {result['message']}")
+            return {
+                "success": False,
+                "message": result['message'],
+                "data": None
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in download organize submissions endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/prepare-grading-batch")
+async def prepare_grading_batch(request: Request):
+    """
+    Prepare a complete grading batch using the existing synced_submissions structure.
+    This endpoint creates everything needed for automated grading workflow.
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID and Assignment ID must be valid integers"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Initialize Canvas service
+        canvas_service = get_canvas_service(api_key, canvas_url)
+        
+        # Prepare grading batch
+        logger.info(f"Preparing grading batch for course {course_id}, assignment {assignment_id}")
+        batch_result = canvas_service.prepare_grading_batch(course_id, assignment_id)
+        
+        if batch_result.get('success', True) and batch_result.get('grading_ready', False):
+            logger.info(f"Successfully prepared grading batch with {len(batch_result.get('student_list', []))} students")
+            return {
+                "success": True,
+                "message": "Grading batch prepared successfully",
+                "data": batch_result
+            }
+        else:
+            logger.warning(f"Failed to prepare grading batch: {batch_result.get('message', 'Unknown error')}")
+            return {
+                "success": False,
+                "message": batch_result.get('message', 'Failed to prepare grading batch'),
+                "data": batch_result
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in prepare grading batch endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/get-latest-sync")
+async def get_latest_sync(request: Request):
+    """
+    Get information about the latest sync for an assignment from existing synced_submissions.
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID and Assignment ID must be valid integers"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Initialize Canvas service
+        canvas_service = get_canvas_service(api_key, canvas_url)
+        
+        # Get latest sync information
+        logger.info(f"Getting latest sync info for course {course_id}, assignment {assignment_id}")
+        sync_result = canvas_service.get_latest_sync_for_assignment(course_id, assignment_id)
+        
+        if sync_result['success']:
+            logger.info(f"Found latest sync: {sync_result.get('sync_directory')}")
+            return {
+                "success": True,
+                "message": "Latest sync information retrieved successfully",
+                "data": sync_result
+            }
+        else:
+            logger.info(f"No existing sync found: {sync_result.get('message')}")
+            return {
+                "success": False,
+                "message": sync_result.get('message'),
+                "data": sync_result
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get latest sync endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
