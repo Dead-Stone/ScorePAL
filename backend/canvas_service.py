@@ -609,27 +609,27 @@ class CanvasGradingService:
             return False, f"Error processing submissions: {str(e)}", {}
 
     def download_and_organize_submissions(self, course_id: int, assignment_id: int, 
-                                        download_dir: str = "synced_submissions") -> Dict[str, Any]:
+                                        download_dir: str = "submissions") -> Dict[str, Any]:
         """
-        Download and organize all submissions for an assignment using the existing synced_submissions structure.
+        Download and organize all submissions for an assignment using the new cloud-ready structure.
         
-        Uses existing folder structure: synced_submissions/course_{course_id}/assignment_{assignment_id}/sync_{timestamp}/
-        - downloaded_files/ - contains actual submission files with {user_id}_{filename} format
-        - submissions_metadata/ - contains submission_{submission_id}.json files
-        - sync_summary.json - contains overall sync information
+        Creates structure: submissions/course_{course_id}/assignment_{assignment_id}/
+        - metadata/ - assignment info, sync data, question paper
+        - submissions/student_{user_id}/ - individual student folders with files and metadata
+        - batch_results/ - grading batch information and results
         
         Args:
             course_id: Canvas course ID
             assignment_id: Canvas assignment ID
-            download_dir: Base directory for downloads (default: "synced_submissions")
+            download_dir: Base directory for downloads (default: "submissions")
             
         Returns:
             Dictionary with download results and organization info
         """
         try:
-            logger.info(f"Starting organized download for course {course_id}, assignment {assignment_id}")
+            logger.info(f"Starting cloud-ready download for course {course_id}, assignment {assignment_id}")
             
-            # Use the Canvas connector's batch download with existing structure
+            # Use the Canvas connector's batch download with new structure
             submissions_dict = self.canvas.batch_download_submissions(
                 course_id, assignment_id, download_dir
             )
@@ -640,39 +640,43 @@ class CanvasGradingService:
                     'success': False,
                     'message': 'No submissions found or could not download submissions',
                     'submissions_count': 0,
-                    'sync_directory': None,
+                    'assignment_directory': None,
                     'submissions': {}
                 }
             
             # Calculate statistics from results
             total_submissions = len(submissions_dict)
-            uploaded_files = sum(1 for sub in submissions_dict.values() if sub.get('submission_file'))
+            successful_downloads = sum(1 for sub in submissions_dict.values() if sub.get('download_status') == 'success')
             graded_submissions = sum(1 for sub in submissions_dict.values() if sub.get('grade'))
             late_submissions = sum(1 for sub in submissions_dict.values() if sub.get('late', False))
             
-            # Get sync directory from first submission
-            sync_directory = None
+            # Get assignment directory from first submission
+            assignment_directory = None
             if submissions_dict:
                 first_submission = next(iter(submissions_dict.values()))
-                sync_directory = first_submission.get('sync_directory')
+                abs_dir = first_submission.get('absolute_directory', '')
+                if abs_dir:
+                    # Get assignment directory (parent of student directory)
+                    assignment_directory = str(Path(abs_dir).parent.parent)
             
             result = {
                 'success': True,
                 'message': f'Successfully downloaded and organized {total_submissions} submissions',
                 'submissions_count': total_submissions,
-                'sync_directory': sync_directory,
+                'assignment_directory': assignment_directory,
                 'statistics': {
                     'total_submissions': total_submissions,
-                    'successful_downloads': uploaded_files,
+                    'successful_downloads': successful_downloads,
                     'graded_submissions': graded_submissions,
                     'late_submissions': late_submissions
                 },
                 'submissions': submissions_dict,
-                'ready_for_grading': True
+                'ready_for_grading': True,
+                'cloud_ready': True
             }
             
             logger.info(f"Successfully organized {total_submissions} submissions")
-            logger.info(f"Sync directory: {sync_directory}")
+            logger.info(f"Assignment directory: {assignment_directory}")
             logger.info(f"Statistics: {result['statistics']}")
             
             return result
@@ -683,25 +687,25 @@ class CanvasGradingService:
                 'success': False,
                 'message': f'Error downloading submissions: {str(e)}',
                 'submissions_count': 0,
-                'sync_directory': None,
+                'assignment_directory': None,
                 'submissions': {},
                 'ready_for_grading': False
             }
 
     def prepare_grading_batch(self, course_id: int, assignment_id: int, 
-                            download_dir: str = "synced_submissions") -> Dict[str, Any]:
+                            download_dir: str = "submissions") -> Dict[str, Any]:
         """
-        Prepare a complete grading batch using the existing synced_submissions structure.
+        Prepare a complete grading batch using the new cloud-ready structure.
         
         This method:
-        1. Downloads and organizes all submissions using existing structure
-        2. Reads the sync_summary.json for comprehensive information
+        1. Downloads and organizes all submissions using new structure
+        2. Reads metadata files for comprehensive information
         3. Prepares the data structure for automated grading
         
         Args:
             course_id: Canvas course ID
             assignment_id: Canvas assignment ID
-            download_dir: Base directory for downloads (default: "synced_submissions")
+            download_dir: Base directory for downloads (default: "submissions")
             
         Returns:
             Complete grading batch ready for processing
@@ -713,41 +717,59 @@ class CanvasGradingService:
             if not download_result['success']:
                 return download_result
             
-            # Get assignment details for grading context
-            try:
-                assignment_data = self.get_assignment_details(course_id, assignment_id)
-            except Exception as e:
-                logger.warning(f"Could not get assignment details: {e}")
-                assignment_data = {'name': f'Assignment {assignment_id}', 'points_possible': 100}
+            # Get assignment directory and read metadata
+            assignment_directory = download_result.get('assignment_directory')
+            assignment_info = None
+            sync_info = None
             
-            # Read the sync summary for comprehensive information
-            sync_summary = None
-            sync_directory = download_result.get('sync_directory')
-            if sync_directory:
-                sync_summary_path = Path(sync_directory) / 'sync_summary.json'
-                if sync_summary_path.exists():
+            if assignment_directory:
+                metadata_dir = Path(assignment_directory) / "metadata"
+                
+                # Read assignment info
+                assignment_info_file = metadata_dir / "assignment_info.json"
+                if assignment_info_file.exists():
                     try:
-                        with open(sync_summary_path, 'r', encoding='utf-8') as f:
-                            sync_summary = json.load(f)
-                        logger.info(f"Loaded sync summary from {sync_summary_path}")
+                        with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                            assignment_info = json.load(f)
+                        logger.info(f"Loaded assignment info from {assignment_info_file}")
                     except Exception as e:
-                        logger.warning(f"Could not read sync summary: {e}")
+                        logger.warning(f"Could not read assignment info: {e}")
+                
+                # Read sync info
+                sync_info_file = metadata_dir / "sync_info.json"
+                if sync_info_file.exists():
+                    try:
+                        with open(sync_info_file, 'r', encoding='utf-8') as f:
+                            sync_info = json.load(f)
+                        logger.info(f"Loaded sync info from {sync_info_file}")
+                    except Exception as e:
+                        logger.warning(f"Could not read sync info: {e}")
+            
+            # Use assignment info if available, otherwise fallback
+            if assignment_info:
+                assignment_name = assignment_info.get('assignment_name', f'Assignment {assignment_id}')
+                total_points = assignment_info.get('points_possible', 100)
+            else:
+                assignment_name = f'Assignment {assignment_id}'
+                total_points = 100
             
             # Prepare grading batch structure
             grading_batch = {
                 'course_id': course_id,
                 'assignment_id': assignment_id,
-                'assignment_name': assignment_data.get('name', f'Assignment {assignment_id}'),
-                'total_points': assignment_data.get('points_possible', 100),
+                'assignment_name': assignment_name,
+                'total_points': total_points,
                 'download_info': download_result,
-                'sync_summary': sync_summary,
+                'assignment_info': assignment_info,
+                'sync_info': sync_info,
                 'grading_ready': True,
                 'grading_metadata': {
                     'batch_created': str(datetime.now()),
                     'submissions_to_grade': len(download_result['submissions']),
-                    'sync_directory': sync_directory,
+                    'assignment_directory': assignment_directory,
                     'grading_status': 'ready',
-                    'structure_type': 'synced_submissions'
+                    'structure_type': 'cloud_ready_v2',
+                    'cloud_ready': True
                 },
                 'student_list': []
             }
@@ -758,34 +780,55 @@ class CanvasGradingService:
                     'user_id': user_id,
                     'name': submission_info['user_name'],
                     'email': submission_info.get('user_email', ''),
-                    'submission_file': submission_info.get('submission_file'),
-                    'all_files': submission_info.get('all_files', []),
+                    'student_directory': submission_info.get('student_directory'),
+                    'absolute_directory': submission_info.get('absolute_directory'),
+                    'files': submission_info.get('files', []),
                     'metadata_file': submission_info.get('metadata_file'),
+                    'results_file': submission_info.get('results_file'),
                     'submission_type': submission_info.get('submission_type'),
                     'current_grade': submission_info.get('grade'),
                     'current_score': submission_info.get('score'),
                     'submitted_at': submission_info.get('submitted_at'),
                     'late': submission_info.get('late', False),
                     'workflow_state': submission_info.get('workflow_state'),
-                    'grading_status': 'pending'
+                    'download_status': submission_info.get('download_status'),
+                    'grading_status': 'pending',
+                    'selected_for_grading': False
                 }
                 grading_batch['student_list'].append(student_entry)
             
-            # If we have sync summary, add more detailed information
-            if sync_summary:
-                grading_batch['sync_job_id'] = sync_summary.get('sync_job_id')
-                grading_batch['synced_at'] = sync_summary.get('synced_at')
-                grading_batch['total_submissions_found'] = sync_summary.get('total_submissions', 0)
-                grading_batch['successful_syncs'] = sync_summary.get('successful_syncs', 0)
-                grading_batch['failed_syncs'] = sync_summary.get('failed_syncs', 0)
-                grading_batch['no_files'] = sync_summary.get('no_files', 0)
+            # If we have sync info, add more detailed information
+            if sync_info:
+                grading_batch['sync_id'] = sync_info.get('sync_id')
+                grading_batch['synced_at'] = sync_info.get('synced_at')
+                grading_batch['successful_downloads'] = sync_info.get('successful_downloads', 0)
+                grading_batch['failed_downloads'] = sync_info.get('failed_downloads', 0)
+                grading_batch['no_files'] = sync_info.get('no_files', 0)
             
-            # Save grading batch info to sync directory
-            if sync_directory:
-                batch_file = Path(sync_directory) / 'grading_batch.json'
+            # Update batch info file
+            if assignment_directory:
+                batch_results_dir = Path(assignment_directory) / "batch_results"
+                batch_file = batch_results_dir / 'grading_batch.json'
+                
+                # Read existing batch info and update it
+                existing_batch = {}
+                if batch_file.exists():
+                    try:
+                        with open(batch_file, 'r', encoding='utf-8') as f:
+                            existing_batch = json.load(f)
+                    except Exception as e:
+                        logger.warning(f"Could not read existing batch file: {e}")
+                
+                # Update with new grading batch info
+                existing_batch.update({
+                    'total_students': len(grading_batch['student_list']),
+                    'batch_updated': str(datetime.now()),
+                    'grading_batch_prepared': True
+                })
+                
                 with open(batch_file, 'w', encoding='utf-8') as f:
-                    json.dump(grading_batch, f, indent=2, default=str)
-                logger.info(f"Saved grading batch info to {batch_file}")
+                    json.dump(existing_batch, f, indent=2, default=str)
+                logger.info(f"Updated grading batch info in {batch_file}")
             
             logger.info(f"Prepared grading batch with {len(grading_batch['student_list'])} students")
             return grading_batch
@@ -798,18 +841,19 @@ class CanvasGradingService:
                 'grading_ready': False
             }
 
-    def get_latest_sync_for_assignment(self, course_id: int, assignment_id: int, 
-                                     base_dir: str = "synced_submissions") -> Dict[str, Any]:
+    def select_students_for_grading(self, course_id: int, assignment_id: int, 
+                                  student_ids: List[int], base_dir: str = "submissions") -> Dict[str, Any]:
         """
-        Get the latest sync directory and information for an assignment.
+        Select specific students for grading and update the selection file.
         
         Args:
             course_id: Canvas course ID
             assignment_id: Canvas assignment ID
-            base_dir: Base directory containing synced_submissions
+            student_ids: List of user IDs to select for grading
+            base_dir: Base directory containing submissions
             
         Returns:
-            Dictionary with latest sync information
+            Dictionary with selection results
         """
         try:
             # Build path to assignment directory
@@ -821,51 +865,771 @@ class CanvasGradingService:
             if not assignment_path.exists():
                 return {
                     'success': False,
-                    'message': f'No synced submissions found for course {course_id}, assignment {assignment_id}',
-                    'sync_directory': None
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'selected_students': []
                 }
             
-            # Find the latest sync directory
-            sync_dirs = [d for d in assignment_path.iterdir() if d.is_dir() and d.name.startswith('sync_')]
-            if not sync_dirs:
-                return {
-                    'success': False,
-                    'message': f'No sync directories found for assignment {assignment_id}',
-                    'sync_directory': None
-                }
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
             
-            # Sort by creation time and get the latest
-            latest_sync = max(sync_dirs, key=lambda x: x.stat().st_ctime)
+            # Get student information for selected IDs
+            selected_students = []
+            submissions_dir = assignment_path / "submissions"
             
-            # Read sync summary if available
-            sync_summary_path = latest_sync / 'sync_summary.json'
-            sync_summary = None
-            if sync_summary_path.exists():
-                with open(sync_summary_path, 'r', encoding='utf-8') as f:
-                    sync_summary = json.load(f)
+            for user_id in student_ids:
+                student_dir = submissions_dir / f"student_{user_id}"
+                if student_dir.exists():
+                    metadata_file = student_dir / "metadata.json"
+                    if metadata_file.exists():
+                        try:
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                            
+                            selected_students.append({
+                                'user_id': user_id,
+                                'user_name': metadata.get('user_name', f'User_{user_id}'),
+                                'user_email': metadata.get('user_email', ''),
+                                'submission_type': metadata.get('submission_type'),
+                                'files_count': len(metadata.get('files', [])),
+                                'download_status': metadata.get('download_status'),
+                                'student_directory': str(student_dir.relative_to(assignment_path.parent.parent)),
+                                'selected_at': str(datetime.now())
+                            })
+                            
+                            # Update grading results to mark as selected
+                            results_file = student_dir / "grading_results.json"
+                            if results_file.exists():
+                                with open(results_file, 'r', encoding='utf-8') as f:
+                                    results = json.load(f)
+                                results['selected_for_grading'] = True
+                                results['selection_timestamp'] = str(datetime.now())
+                                with open(results_file, 'w', encoding='utf-8') as f:
+                                    json.dump(results, f, indent=2, default=str)
+                                    
+                        except Exception as e:
+                            logger.error(f"Error processing student {user_id}: {e}")
+                            continue
+                else:
+                    logger.warning(f"Student directory not found: {student_dir}")
             
-            # Count files in downloaded_files directory
-            downloaded_files_dir = latest_sync / 'downloaded_files'
-            file_count = len(list(downloaded_files_dir.glob('*'))) if downloaded_files_dir.exists() else 0
+            # Save selection information
+            selection_info = {
+                'assignment_id': assignment_id,
+                'selected_students': selected_students,
+                'selection_timestamp': str(datetime.now()),
+                'total_selected': len(selected_students)
+            }
             
-            # Count metadata files
-            metadata_dir = latest_sync / 'submissions_metadata'
-            metadata_count = len(list(metadata_dir.glob('submission_*.json'))) if metadata_dir.exists() else 0
+            with open(selected_file, 'w', encoding='utf-8') as f:
+                json.dump(selection_info, f, indent=2, default=str)
             
+            logger.info(f"Selected {len(selected_students)} students for grading")
             return {
                 'success': True,
-                'sync_directory': str(latest_sync),
-                'sync_summary': sync_summary,
-                'file_count': file_count,
-                'metadata_count': metadata_count,
-                'synced_at': sync_summary.get('synced_at') if sync_summary else None,
-                'total_submissions': sync_summary.get('total_submissions') if sync_summary else metadata_count
+                'message': f'Successfully selected {len(selected_students)} students for grading',
+                'selected_students': selected_students,
+                'selection_file': str(selected_file)
             }
             
         except Exception as e:
-            logger.error(f"Error getting latest sync: {str(e)}")
+            logger.error(f"Error selecting students for grading: {str(e)}")
             return {
                 'success': False,
-                'message': f'Error accessing sync data: {str(e)}',
-                'sync_directory': None
+                'message': f'Error selecting students: {str(e)}',
+                'selected_students': []
+            }
+
+    def get_grading_results(self, course_id: int, assignment_id: int, 
+                          base_dir: str = "submissions") -> Dict[str, Any]:
+        """
+        Get grading results for all students in an assignment.
+        
+        Args:
+            course_id: Canvas course ID
+            assignment_id: Canvas assignment ID
+            base_dir: Base directory containing submissions
+            
+        Returns:
+            Dictionary with grading results for all students
+        """
+        try:
+            # Build path to assignment directory
+            if not base_dir.startswith('backend'):
+                assignment_path = Path("backend") / base_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            else:
+                assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
+            
+            if not assignment_path.exists():
+                return {
+                    'success': False,
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'results': []
+                }
+            
+            # Read assignment info
+            assignment_info = {}
+            metadata_dir = assignment_path / "metadata"
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            if assignment_info_file.exists():
+                with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                    assignment_info = json.load(f)
+            
+            # Read selected students
+            selected_students = {}
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
+            if selected_file.exists():
+                with open(selected_file, 'r', encoding='utf-8') as f:
+                    selection_data = json.load(f)
+                    for student in selection_data.get('selected_students', []):
+                        selected_students[student['user_id']] = student
+            
+            # Collect results from all student directories
+            results = []
+            submissions_dir = assignment_path / "submissions"
+            
+            if submissions_dir.exists():
+                for student_dir in submissions_dir.iterdir():
+                    if student_dir.is_dir() and student_dir.name.startswith('student_'):
+                        try:
+                            # Read student metadata
+                            metadata_file = student_dir / "metadata.json"
+                            grading_results_file = student_dir / "grading_results.json"
+                            
+                            if metadata_file.exists() and grading_results_file.exists():
+                                with open(metadata_file, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                with open(grading_results_file, 'r', encoding='utf-8') as f:
+                                    grading_results = json.load(f)
+                                
+                                user_id = metadata.get('user_id')
+                                
+                                result_entry = {
+                                    'user_id': user_id,
+                                    'user_name': metadata.get('user_name'),
+                                    'user_email': metadata.get('user_email'),
+                                    'submission_type': metadata.get('submission_type'),
+                                    'submitted_at': metadata.get('submitted_at'),
+                                    'files_count': len(metadata.get('files', [])),
+                                    'download_status': metadata.get('download_status'),
+                                    'current_grade': metadata.get('grade'),
+                                    'current_score': metadata.get('score'),
+                                    'late': metadata.get('late', False),
+                                    'grading_status': grading_results.get('grading_status', 'not_graded'),
+                                    'ai_feedback': grading_results.get('ai_feedback'),
+                                    'ai_score': grading_results.get('ai_score'),
+                                    'final_grade': grading_results.get('final_grade'),
+                                    'final_score': grading_results.get('final_score'),
+                                    'grading_timestamp': grading_results.get('grading_timestamp'),
+                                    'feedback_comments': grading_results.get('feedback_comments', []),
+                                    'rubric_scores': grading_results.get('rubric_scores', {}),
+                                    'selected_for_grading': grading_results.get('selected_for_grading', False),
+                                    'student_directory': str(student_dir.relative_to(assignment_path.parent.parent))
+                                }
+                                
+                                # Add selection info if available
+                                if user_id in selected_students:
+                                    result_entry['selection_info'] = selected_students[user_id]
+                                
+                                results.append(result_entry)
+                                
+                        except Exception as e:
+                            logger.error(f"Error reading results for {student_dir.name}: {e}")
+                            continue
+            
+            # Sort results by user name
+            results.sort(key=lambda x: x.get('user_name', ''))
+            
+            # Calculate summary statistics
+            total_students = len(results)
+            graded_count = sum(1 for r in results if r.get('grading_status') != 'not_graded')
+            selected_count = sum(1 for r in results if r.get('selected_for_grading'))
+            
+            summary = {
+                'total_students': total_students,
+                'graded_students': graded_count,
+                'selected_students': selected_count,
+                'pending_students': total_students - graded_count,
+                'assignment_name': assignment_info.get('assignment_name', f'Assignment {assignment_id}'),
+                'total_points': assignment_info.get('points_possible', 100)
+            }
+            
+            logger.info(f"Retrieved grading results for {total_students} students")
+            return {
+                'success': True,
+                'message': f'Retrieved results for {total_students} students',
+                'assignment_directory': str(assignment_path),
+                'summary': summary,
+                'results': results
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting grading results: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Error retrieving grading results: {str(e)}',
+                'results': []
+            }
+
+    def get_students_list_with_files(self, course_id: int, assignment_id: int, 
+                                   base_dir: str = "submissions") -> Dict[str, Any]:
+        """
+        Extract and load all student data with their files for displaying in students list.
+        
+        Args:
+            course_id: Canvas course ID
+            assignment_id: Canvas assignment ID
+            base_dir: Base directory containing submissions
+            
+        Returns:
+            Dictionary with all students data including files information
+        """
+        try:
+            # Build path to assignment directory
+            if not base_dir.startswith('backend'):
+                assignment_path = Path("backend") / base_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            else:
+                assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
+            
+            if not assignment_path.exists():
+                return {
+                    'success': False,
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'students': []
+                }
+            
+            # Read assignment info
+            assignment_info = {}
+            metadata_dir = assignment_path / "metadata"
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            if assignment_info_file.exists():
+                with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                    assignment_info = json.load(f)
+            
+            # Read existing selection data
+            selected_students_set = set()
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
+            if selected_file.exists():
+                try:
+                    with open(selected_file, 'r', encoding='utf-8') as f:
+                        selection_data = json.load(f)
+                        for student in selection_data.get('selected_students', []):
+                            selected_students_set.add(student['user_id'])
+                except Exception as e:
+                    logger.warning(f"Could not read selection file: {e}")
+            
+            # Extract all student data
+            students = []
+            submissions_dir = assignment_path / "submissions"
+            
+            if submissions_dir.exists():
+                for student_dir in submissions_dir.iterdir():
+                    if student_dir.is_dir() and student_dir.name.startswith('student_'):
+                        try:
+                            # Read student metadata
+                            metadata_file = student_dir / "metadata.json"
+                            grading_results_file = student_dir / "grading_results.json"
+                            
+                            if metadata_file.exists():
+                                with open(metadata_file, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                
+                                # Read grading results if available
+                                grading_results = {}
+                                if grading_results_file.exists():
+                                    with open(grading_results_file, 'r', encoding='utf-8') as f:
+                                        grading_results = json.load(f)
+                                
+                                user_id = metadata.get('user_id')
+                                
+                                # Process files information
+                                files_info = []
+                                for file_data in metadata.get('files', []):
+                                    file_info = {
+                                        'original_name': file_data.get('original_name'),
+                                        'file_path': file_data.get('file_path'),
+                                        'absolute_path': file_data.get('absolute_path'),
+                                        'file_size': file_data.get('file_size', 0),
+                                        'file_size_mb': round(file_data.get('file_size', 0) / (1024 * 1024), 2),
+                                        'download_status': file_data.get('download_status'),
+                                        'submission_type': file_data.get('submission_type'),
+                                        'canvas_file_id': file_data.get('canvas_file_id')
+                                    }
+                                    files_info.append(file_info)
+                                
+                                # Create comprehensive student entry
+                                student_entry = {
+                                    'user_id': user_id,
+                                    'user_name': metadata.get('user_name'),
+                                    'user_email': metadata.get('user_email'),
+                                    'submission_id': metadata.get('submission_id'),
+                                    'submission_type': metadata.get('submission_type'),
+                                    'submitted_at': metadata.get('submitted_at'),
+                                    'late': metadata.get('late', False),
+                                    'missing': metadata.get('missing', False),
+                                    'workflow_state': metadata.get('workflow_state'),
+                                    'current_grade': metadata.get('grade'),
+                                    'current_score': metadata.get('score'),
+                                    'entered_grade': metadata.get('entered_grade'),
+                                    'entered_score': metadata.get('entered_score'),
+                                    'attempt': metadata.get('attempt', 1),
+                                    'download_status': metadata.get('download_status'),
+                                    'download_timestamp': metadata.get('download_timestamp'),
+                                    
+                                    # Files information
+                                    'files': files_info,
+                                    'files_count': len(files_info),
+                                    'total_files_size_mb': round(sum(f.get('file_size', 0) for f in metadata.get('files', [])) / (1024 * 1024), 2),
+                                    
+                                    # Grading information
+                                    'grading_status': grading_results.get('grading_status', 'not_graded'),
+                                    'ai_feedback': grading_results.get('ai_feedback'),
+                                    'ai_score': grading_results.get('ai_score'),
+                                    'final_grade': grading_results.get('final_grade'),
+                                    'final_score': grading_results.get('final_score'),
+                                    'grading_timestamp': grading_results.get('grading_timestamp'),
+                                    'feedback_comments': grading_results.get('feedback_comments', []),
+                                    'rubric_scores': grading_results.get('rubric_scores', {}),
+                                    
+                                    # Selection information
+                                    'selected_for_grading': user_id in selected_students_set,
+                                    'selection_timestamp': grading_results.get('selection_timestamp'),
+                                    
+                                    # Directory information
+                                    'student_directory': str(student_dir.relative_to(assignment_path.parent.parent)),
+                                    'absolute_directory': str(student_dir.absolute()),
+                                    'metadata_file': str(metadata_file.absolute()),
+                                    'results_file': str(grading_results_file.absolute())
+                                }
+                                
+                                students.append(student_entry)
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing student directory {student_dir.name}: {e}")
+                            continue
+            
+            # Sort students by name
+            students.sort(key=lambda x: x.get('user_name', ''))
+            
+            # Calculate statistics
+            total_students = len(students)
+            students_with_files = sum(1 for s in students if s['files_count'] > 0)
+            selected_students = sum(1 for s in students if s['selected_for_grading'])
+            graded_students = sum(1 for s in students if s['grading_status'] != 'not_graded')
+            late_submissions = sum(1 for s in students if s['late'])
+            
+            statistics = {
+                'total_students': total_students,
+                'students_with_files': students_with_files,
+                'selected_students': selected_students,
+                'graded_students': graded_students,
+                'pending_students': total_students - graded_students,
+                'late_submissions': late_submissions,
+                'assignment_name': assignment_info.get('assignment_name', f'Assignment {assignment_id}'),
+                'total_points': assignment_info.get('points_possible', 100)
+            }
+            
+            logger.info(f"Extracted data for {total_students} students with {students_with_files} having files")
+            return {
+                'success': True,
+                'message': f'Successfully extracted data for {total_students} students',
+                'assignment_directory': str(assignment_path),
+                'assignment_info': assignment_info,
+                'statistics': statistics,
+                'students': students
+            }
+            
+        except Exception as e:
+            logger.error(f"Error extracting student data: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Error extracting student data: {str(e)}',
+                'students': []
+            }
+
+    def grade_selected_students_only(self, course_id: int, assignment_id: int, 
+                                   base_dir: str = "submissions") -> Dict[str, Any]:
+        """
+        Grade only the students that have been selected for grading.
+        
+        Args:
+            course_id: Canvas course ID
+            assignment_id: Canvas assignment ID
+            base_dir: Base directory containing submissions
+            
+        Returns:
+            Dictionary with grading results for selected students only
+        """
+        try:
+            # Build path to assignment directory
+            if not base_dir.startswith('backend'):
+                assignment_path = Path("backend") / base_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            else:
+                assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
+            
+            if not assignment_path.exists():
+                return {
+                    'success': False,
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'graded_students': []
+                }
+            
+            # Read selected students
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
+            
+            if not selected_file.exists():
+                return {
+                    'success': False,
+                    'message': 'No students have been selected for grading. Please select students first.',
+                    'graded_students': []
+                }
+            
+            with open(selected_file, 'r', encoding='utf-8') as f:
+                selection_data = json.load(f)
+            
+            selected_students = selection_data.get('selected_students', [])
+            if not selected_students:
+                return {
+                    'success': False,
+                    'message': 'No students are currently selected for grading.',
+                    'graded_students': []
+                }
+            
+            # Read assignment info for grading context
+            assignment_info = {}
+            metadata_dir = assignment_path / "metadata"
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            if assignment_info_file.exists():
+                with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                    assignment_info = json.load(f)
+            
+            # Grade each selected student
+            graded_results = []
+            successful_gradings = 0
+            failed_gradings = 0
+            
+            for student in selected_students:
+                try:
+                    user_id = student['user_id']
+                    user_name = student['user_name']
+                    
+                    logger.info(f"Grading selected student: {user_name} (ID: {user_id})")
+                    
+                    # Get student directory
+                    student_dir = assignment_path / "submissions" / f"student_{user_id}"
+                    if not student_dir.exists():
+                        logger.warning(f"Student directory not found for {user_name}")
+                        failed_gradings += 1
+                        continue
+                    
+                    # Read student metadata and files
+                    metadata_file = student_dir / "metadata.json"
+                    results_file = student_dir / "grading_results.json"
+                    
+                    if not metadata_file.exists():
+                        logger.warning(f"Metadata file not found for {user_name}")
+                        failed_gradings += 1
+                        continue
+                    
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    
+                    # Read existing grading results
+                    grading_results = {}
+                    if results_file.exists():
+                        with open(results_file, 'r', encoding='utf-8') as f:
+                            grading_results = json.load(f)
+                    
+                    # Simulate AI grading process (replace this with actual AI grading logic)
+                    files = metadata.get('files', [])
+                    if files:
+                        # Example grading logic - replace with actual AI grading
+                        total_points = assignment_info.get('points_possible', 100)
+                        
+                        # Simulate AI feedback and scoring
+                        ai_feedback = f"Automated feedback for {user_name}: Good submission with {len(files)} file(s). "
+                        if metadata.get('late', False):
+                            ai_feedback += "Note: This submission was late. "
+                        
+                        # Example scoring based on files and content (replace with actual AI logic)
+                        base_score = min(total_points * 0.8, total_points)  # Base 80% score
+                        if len(files) > 1:
+                            base_score += min(10, total_points * 0.1)  # Bonus for multiple files
+                        if metadata.get('late', False):
+                            base_score *= 0.9  # 10% penalty for late submission
+                        
+                        ai_score = round(base_score, 1)
+                        ai_feedback += f"Score: {ai_score}/{total_points}"
+                        
+                        # Update grading results
+                        grading_results.update({
+                            'grading_status': 'graded',
+                            'ai_feedback': ai_feedback,
+                            'ai_score': ai_score,
+                            'final_grade': str(ai_score),
+                            'final_score': ai_score,
+                            'grading_timestamp': str(datetime.now()),
+                            'graded_by': 'AI_System',
+                            'grading_method': 'automated_ai'
+                        })
+                        
+                    else:
+                        # No files to grade
+                        grading_results.update({
+                            'grading_status': 'no_submission',
+                            'ai_feedback': 'No files found for grading.',
+                            'ai_score': 0,
+                            'final_grade': '0',
+                            'final_score': 0,
+                            'grading_timestamp': str(datetime.now()),
+                            'graded_by': 'AI_System',
+                            'grading_method': 'automated_ai'
+                        })
+                    
+                    # Save updated grading results
+                    with open(results_file, 'w', encoding='utf-8') as f:
+                        json.dump(grading_results, f, indent=2, default=str)
+                    
+                    # Add to results
+                    graded_results.append({
+                        'user_id': user_id,
+                        'user_name': user_name,
+                        'grading_status': grading_results['grading_status'],
+                        'ai_score': grading_results['ai_score'],
+                        'ai_feedback': grading_results['ai_feedback'],
+                        'files_count': len(files),
+                        'grading_timestamp': grading_results['grading_timestamp']
+                    })
+                    
+                    successful_gradings += 1
+                    logger.info(f"Successfully graded {user_name}: {grading_results['ai_score']}")
+                    
+                except Exception as e:
+                    logger.error(f"Error grading student {student.get('user_name', user_id)}: {e}")
+                    failed_gradings += 1
+                    continue
+            
+            # Update batch results with grading summary
+            grading_summary = {
+                'grading_completed_at': str(datetime.now()),
+                'selected_students_count': len(selected_students),
+                'successful_gradings': successful_gradings,
+                'failed_gradings': failed_gradings,
+                'grading_method': 'selected_students_only'
+            }
+            
+            summary_file = batch_results_dir / "grading_summary.json"
+            with open(summary_file, 'w', encoding='utf-8') as f:
+                json.dump(grading_summary, f, indent=2, default=str)
+            
+            logger.info(f"Completed grading for {successful_gradings} selected students")
+            return {
+                'success': True,
+                'message': f'Successfully graded {successful_gradings} out of {len(selected_students)} selected students',
+                'graded_students': graded_results,
+                'statistics': {
+                    'total_selected': len(selected_students),
+                    'successfully_graded': successful_gradings,
+                    'failed_gradings': failed_gradings,
+                    'grading_method': 'selected_students_only'
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error grading selected students: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Error grading selected students: {str(e)}',
+                'graded_students': []
+            }
+
+    def update_student_selection(self, course_id: int, assignment_id: int, 
+                               student_ids: List[int], action: str = "select",
+                               base_dir: str = "submissions") -> Dict[str, Any]:
+        """
+        Update student selection (add or remove students from selection).
+        
+        Args:
+            course_id: Canvas course ID
+            assignment_id: Canvas assignment ID
+            student_ids: List of user IDs to update
+            action: "select" or "deselect"
+            base_dir: Base directory containing submissions
+            
+        Returns:
+            Dictionary with updated selection results
+        """
+        try:
+            # Build path to assignment directory
+            if not base_dir.startswith('backend'):
+                assignment_path = Path("backend") / base_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            else:
+                assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
+            
+            if not assignment_path.exists():
+                return {
+                    'success': False,
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'selected_students': []
+                }
+            
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
+            
+            # Read existing selection
+            selection_data = {
+                'assignment_id': assignment_id,
+                'selected_students': [],
+                'selection_timestamp': str(datetime.now()),
+                'total_selected': 0
+            }
+            
+            existing_selected = {}
+            if selected_file.exists():
+                with open(selected_file, 'r', encoding='utf-8') as f:
+                    selection_data = json.load(f)
+                    for student in selection_data.get('selected_students', []):
+                        existing_selected[student['user_id']] = student
+            
+            # Update selection based on action
+            submissions_dir = assignment_path / "submissions"
+            
+            for user_id in student_ids:
+                student_dir = submissions_dir / f"student_{user_id}"
+                if student_dir.exists():
+                    metadata_file = student_dir / "metadata.json"
+                    results_file = student_dir / "grading_results.json"
+                    
+                    if metadata_file.exists():
+                        try:
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                            
+                            if action == "select":
+                                # Add to selection
+                                existing_selected[user_id] = {
+                                    'user_id': user_id,
+                                    'user_name': metadata.get('user_name', f'User_{user_id}'),
+                                    'user_email': metadata.get('user_email', ''),
+                                    'submission_type': metadata.get('submission_type'),
+                                    'files_count': len(metadata.get('files', [])),
+                                    'download_status': metadata.get('download_status'),
+                                    'student_directory': str(student_dir.relative_to(assignment_path.parent.parent)),
+                                    'selected_at': str(datetime.now())
+                                }
+                                
+                                # Update grading results
+                                if results_file.exists():
+                                    with open(results_file, 'r', encoding='utf-8') as f:
+                                        results = json.load(f)
+                                    results['selected_for_grading'] = True
+                                    results['selection_timestamp'] = str(datetime.now())
+                                    with open(results_file, 'w', encoding='utf-8') as f:
+                                        json.dump(results, f, indent=2, default=str)
+                                        
+                            elif action == "deselect":
+                                # Remove from selection
+                                if user_id in existing_selected:
+                                    del existing_selected[user_id]
+                                
+                                # Update grading results
+                                if results_file.exists():
+                                    with open(results_file, 'r', encoding='utf-8') as f:
+                                        results = json.load(f)
+                                    results['selected_for_grading'] = False
+                                    results['selection_timestamp'] = None
+                                    with open(results_file, 'w', encoding='utf-8') as f:
+                                        json.dump(results, f, indent=2, default=str)
+                                        
+                        except Exception as e:
+                            logger.error(f"Error updating selection for student {user_id}: {e}")
+                            continue
+            
+            # Update selection file
+            selection_data['selected_students'] = list(existing_selected.values())
+            selection_data['total_selected'] = len(existing_selected)
+            selection_data['selection_timestamp'] = str(datetime.now())
+            
+            with open(selected_file, 'w', encoding='utf-8') as f:
+                json.dump(selection_data, f, indent=2, default=str)
+            
+            logger.info(f"Updated selection: {action}ed {len(student_ids)} students. Total selected: {len(existing_selected)}")
+            return {
+                'success': True,
+                'message': f'Successfully {action}ed {len(student_ids)} students',
+                'selected_students': selection_data['selected_students'],
+                'total_selected': len(existing_selected),
+                'action': action
+            }
+            
+        except Exception as e:
+            logger.error(f"Error updating student selection: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Error updating selection: {str(e)}',
+                'selected_students': []
+            }
+
+    def get_selection_status(self, course_id: int, assignment_id: int, 
+                           base_dir: str = "submissions") -> Dict[str, Any]:
+        """
+        Get current selection status for an assignment.
+        
+        Args:
+            course_id: Canvas course ID
+            assignment_id: Canvas assignment ID
+            base_dir: Base directory containing submissions
+            
+        Returns:
+            Dictionary with current selection status
+        """
+        try:
+            # Build path to assignment directory
+            if not base_dir.startswith('backend'):
+                assignment_path = Path("backend") / base_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            else:
+                assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
+            
+            if not assignment_path.exists():
+                return {
+                    'success': False,
+                    'message': f'Assignment directory not found: {assignment_path}',
+                    'selected_students': []
+                }
+            
+            # Read selection data
+            batch_results_dir = assignment_path / "batch_results"
+            selected_file = batch_results_dir / "selected_students.json"
+            
+            if not selected_file.exists():
+                return {
+                    'success': True,
+                    'message': 'No selection file found. No students currently selected.',
+                    'selected_students': [],
+                    'total_selected': 0,
+                    'selection_timestamp': None
+                }
+            
+            with open(selected_file, 'r', encoding='utf-8') as f:
+                selection_data = json.load(f)
+            
+            selected_students = selection_data.get('selected_students', [])
+            
+            return {
+                'success': True,
+                'message': f'Found {len(selected_students)} selected students',
+                'selected_students': selected_students,
+                'total_selected': len(selected_students),
+                'selection_timestamp': selection_data.get('selection_timestamp'),
+                'assignment_id': selection_data.get('assignment_id')
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting selection status: {str(e)}")
+            return {
+                'success': False,
+                'message': f'Error getting selection status: {str(e)}',
+                'selected_students': []
             } 

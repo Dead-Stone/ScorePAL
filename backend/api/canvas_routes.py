@@ -2548,8 +2548,8 @@ async def get_job_results(job_id: str):
 @router.post("/download-organize-submissions")
 async def download_organize_submissions(request: Request):
     """
-    Download and organize all submissions for an assignment using the existing synced_submissions structure.
-    Creates: synced_submissions/course_{course_id}/assignment_{assignment_id}/sync_{timestamp}/
+    Download and organize all submissions for an assignment using the new cloud-ready structure.
+    Creates: submissions/course_{course_id}/assignment_{assignment_id}/
     Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
     """
     try:
@@ -2581,25 +2581,26 @@ async def download_organize_submissions(request: Request):
         # Initialize Canvas service
         canvas_service = get_canvas_service(api_key, canvas_url)
         
-        # Download and organize submissions using existing structure
-        logger.info(f"Starting synced download for course {course_id}, assignment {assignment_id}")
+        # Download and organize submissions using new cloud-ready structure
+        logger.info(f"Starting cloud-ready download for course {course_id}, assignment {assignment_id}")
         result = canvas_service.download_and_organize_submissions(course_id, assignment_id)
         
         if result['success']:
-            logger.info(f"Successfully synced {result['submissions_count']} submissions")
+            logger.info(f"Successfully organized {result['submissions_count']} submissions")
             return {
                 "success": True,
                 "message": result['message'],
                 "data": {
                     "submissions_count": result['submissions_count'],
-                    "sync_directory": result['sync_directory'],
+                    "assignment_directory": result['assignment_directory'],
                     "statistics": result['statistics'],
                     "submissions": result['submissions'],
-                    "ready_for_grading": result['ready_for_grading']
+                    "ready_for_grading": result['ready_for_grading'],
+                    "cloud_ready": result['cloud_ready']
                 }
             }
         else:
-            logger.warning(f"Failed to sync submissions: {result['message']}")
+            logger.warning(f"Failed to organize submissions: {result['message']}")
             return {
                 "success": False,
                 "message": result['message'],
@@ -2615,7 +2616,7 @@ async def download_organize_submissions(request: Request):
 @router.post("/prepare-grading-batch")
 async def prepare_grading_batch(request: Request):
     """
-    Prepare a complete grading batch using the existing synced_submissions structure.
+    Prepare a complete grading batch using the new cloud-ready structure.
     This endpoint creates everything needed for automated grading workflow.
     Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
     """
@@ -2673,10 +2674,82 @@ async def prepare_grading_batch(request: Request):
         logger.error(f"Error in prepare grading batch endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.post("/get-latest-sync")
-async def get_latest_sync(request: Request):
+@router.post("/select-students-for-grading")
+async def select_students_for_grading(request: Request):
     """
-    Get information about the latest sync for an assignment from existing synced_submissions.
+    Select specific students for grading workflow.
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "...", "student_ids": [123, 456, 789]}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        student_ids = body.get("student_ids", [])
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        if not student_ids or not isinstance(student_ids, list):
+            raise HTTPException(
+                status_code=400, 
+                detail="student_ids must be a non-empty list of user IDs"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+            student_ids = [int(sid) for sid in student_ids]
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID, Assignment ID, and Student IDs must be valid integers"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Initialize Canvas service
+        canvas_service = get_canvas_service(api_key, canvas_url)
+        
+        # Select students for grading
+        logger.info(f"Selecting {len(student_ids)} students for grading in course {course_id}, assignment {assignment_id}")
+        selection_result = canvas_service.select_students_for_grading(course_id, assignment_id, student_ids)
+        
+        if selection_result['success']:
+            logger.info(f"Successfully selected {len(selection_result['selected_students'])} students")
+            return {
+                "success": True,
+                "message": selection_result['message'],
+                "data": {
+                    "selected_students": selection_result['selected_students'],
+                    "selection_file": selection_result['selection_file'],
+                    "total_selected": len(selection_result['selected_students'])
+                }
+            }
+        else:
+            logger.warning(f"Failed to select students: {selection_result['message']}")
+            return {
+                "success": False,
+                "message": selection_result['message'],
+                "data": None
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in select students endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/get-grading-results")
+async def get_grading_results(request: Request):
+    """
+    Get grading results for all students in an assignment.
     Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
     """
     try:
@@ -2708,27 +2781,260 @@ async def get_latest_sync(request: Request):
         # Initialize Canvas service
         canvas_service = get_canvas_service(api_key, canvas_url)
         
-        # Get latest sync information
-        logger.info(f"Getting latest sync info for course {course_id}, assignment {assignment_id}")
-        sync_result = canvas_service.get_latest_sync_for_assignment(course_id, assignment_id)
+        # Get grading results
+        logger.info(f"Getting grading results for course {course_id}, assignment {assignment_id}")
+        results = canvas_service.get_grading_results(course_id, assignment_id)
         
-        if sync_result['success']:
-            logger.info(f"Found latest sync: {sync_result.get('sync_directory')}")
+        if results['success']:
+            logger.info(f"Successfully retrieved results for {len(results['results'])} students")
             return {
                 "success": True,
-                "message": "Latest sync information retrieved successfully",
-                "data": sync_result
+                "message": results['message'],
+                "data": {
+                    "assignment_directory": results['assignment_directory'],
+                    "summary": results['summary'],
+                    "results": results['results']
+                }
             }
         else:
-            logger.info(f"No existing sync found: {sync_result.get('message')}")
+            logger.warning(f"Failed to get grading results: {results['message']}")
             return {
                 "success": False,
-                "message": sync_result.get('message'),
-                "data": sync_result
+                "message": results['message'],
+                "data": None
             }
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in get latest sync endpoint: {str(e)}")
+        logger.error(f"Error in get grading results endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/get-latest-sync")
+async def get_assignment_info(request: Request):
+    """
+    Get information about an assignment from the cloud-ready submissions structure.
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID and Assignment ID must be valid integers"
+            )
+        
+        # Check if assignment directory exists
+        assignment_path = Path("backend") / "submissions" / f"course_{course_id}" / f"assignment_{assignment_id}"
+        
+        if not assignment_path.exists():
+            return {
+                "success": False,
+                "message": f"No submissions found for course {course_id}, assignment {assignment_id}",
+                "data": None
+            }
+        
+        # Read assignment metadata
+        assignment_info = {}
+        sync_info = {}
+        
+        metadata_dir = assignment_path / "metadata"
+        if metadata_dir.exists():
+            # Read assignment info
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            if assignment_info_file.exists():
+                with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                    assignment_info = json.load(f)
+            
+            # Read sync info
+            sync_info_file = metadata_dir / "sync_info.json"
+            if sync_info_file.exists():
+                with open(sync_info_file, 'r', encoding='utf-8') as f:
+                    sync_info = json.load(f)
+        
+        # Count student directories
+        submissions_dir = assignment_path / "submissions"
+        student_count = len([d for d in submissions_dir.iterdir() if d.is_dir() and d.name.startswith('student_')]) if submissions_dir.exists() else 0
+        
+        logger.info(f"Found assignment info: {assignment_path}")
+        return {
+            "success": True,
+            "message": "Assignment information retrieved successfully",
+            "data": {
+                "assignment_directory": str(assignment_path),
+                "assignment_info": assignment_info,
+                "sync_info": sync_info,
+                "student_count": student_count,
+                "structure_version": sync_info.get('structure_version', '2.0'),
+                "cloud_ready": sync_info.get('cloud_ready', True)
+            }
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get assignment info endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.post("/load-students-with-files")
+async def load_students_with_files(request: Request):
+    """
+    Load all student data with their files for displaying in students list.
+    Extracts comprehensive information including files, metadata, and grading status.
+    """
+    try:
+        data = await request.json()
+        course_id = data.get('course_id')
+        assignment_id = data.get('assignment_id')
+        
+        if not course_id or not assignment_id:
+            return {
+                'success': False,
+                'message': 'Missing course_id or assignment_id'
+            }
+        
+        # Load student data with files
+        result = canvas_service.get_students_list_with_files(
+            course_id=course_id,
+            assignment_id=assignment_id
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error loading students with files: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error loading students with files: {str(e)}',
+            'students': []
+        }
+
+@router.post("/grade-selected-students")
+async def grade_selected_students(request: Request):
+    """
+    Grade only the students that have been selected for grading.
+    This endpoint processes selected students only, not all students.
+    """
+    try:
+        data = await request.json()
+        course_id = data.get('course_id')
+        assignment_id = data.get('assignment_id')
+        
+        if not course_id or not assignment_id:
+            return {
+                'success': False,
+                'message': 'Missing course_id or assignment_id'
+            }
+        
+        # Grade selected students only
+        result = canvas_service.grade_selected_students_only(
+            course_id=course_id,
+            assignment_id=assignment_id
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error grading selected students: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error grading selected students: {str(e)}',
+            'graded_students': []
+        }
+
+@router.post("/update-student-selection")
+async def update_student_selection(request: Request):
+    """
+    Update student selection (select or deselect students for grading).
+    Allows bulk selection/deselection of students.
+    """
+    try:
+        data = await request.json()
+        course_id = data.get('course_id')
+        assignment_id = data.get('assignment_id')
+        student_ids = data.get('student_ids', [])
+        action = data.get('action', 'select')  # 'select' or 'deselect'
+        
+        if not course_id or not assignment_id:
+            return {
+                'success': False,
+                'message': 'Missing course_id or assignment_id'
+            }
+        
+        if not student_ids:
+            return {
+                'success': False,
+                'message': 'No student IDs provided'
+            }
+        
+        if action not in ['select', 'deselect']:
+            return {
+                'success': False,
+                'message': 'Invalid action. Must be "select" or "deselect"'
+            }
+        
+        # Update student selection
+        result = canvas_service.update_student_selection(
+            course_id=course_id,
+            assignment_id=assignment_id,
+            student_ids=student_ids,
+            action=action
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error updating student selection: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error updating student selection: {str(e)}',
+            'selected_students': []
+        }
+
+@router.post("/get-selection-status")
+async def get_selection_status(request: Request):
+    """
+    Get current selection status for an assignment.
+    Returns which students are currently selected for grading.
+    """
+    try:
+        data = await request.json()
+        course_id = data.get('course_id')
+        assignment_id = data.get('assignment_id')
+        
+        if not course_id or not assignment_id:
+            return {
+                'success': False,
+                'message': 'Missing course_id or assignment_id'
+            }
+        
+        # Get selection information
+        result = canvas_service.get_selection_status(
+            course_id=course_id,
+            assignment_id=assignment_id
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting selection status: {str(e)}")
+        return {
+            'success': False,
+            'message': f'Error getting selection status: {str(e)}',
+            'selected_students': []
+        }

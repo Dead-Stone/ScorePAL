@@ -845,7 +845,7 @@ const CanvasIntegration: React.FC = () => {
                     <Box sx={{ py: 3, textAlign: 'center' }}>
                       <Typography variant="body2" color="text.secondary">
                         Select a course to view assignments
-                      </Typography>
+                    </Typography>
                     </Box>
                   ) : assignments.length === 0 ? (
                     <Box sx={{ py: 3, textAlign: 'center' }}>
@@ -910,20 +910,20 @@ const CanvasIntegration: React.FC = () => {
           <Box>
             <Typography variant="h5" gutterBottom>
               Student Submissions
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
               {selectedAssignment?.name} • {selectedCourse?.name}
-            </Typography>
-          </Box>
-          <Button 
+                              </Typography>
+                            </Box>
+                            <Button
             startIcon={<BackIcon />} 
             onClick={resetWorkflow}
             variant="outlined"
-            size="small"
-          >
+                              size="small"
+                            >
             Back to Selection
-          </Button>
-        </Box>
+                            </Button>
+                          </Box>
 
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -1014,7 +1014,7 @@ const CanvasIntegration: React.FC = () => {
                       <Typography variant="body2" color="text.secondary">
                         Not submitted
                       </Typography>
-                    )}
+                  )}
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
@@ -1159,7 +1159,7 @@ const CanvasIntegration: React.FC = () => {
                     Total Graded
                   </Typography>
                 </Paper>
-              </Grid>
+            </Grid>
               <Grid item xs={3}>
                 <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'success.50' }}>
                   <Typography variant="h5" color="success.main">
@@ -1169,7 +1169,7 @@ const CanvasIntegration: React.FC = () => {
                     Successful
                   </Typography>
                 </Paper>
-              </Grid>
+          </Grid>
               <Grid item xs={3}>
                 <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'info.50' }}>
                   <Typography variant="h5" color="info.main">
@@ -1261,8 +1261,8 @@ const CanvasIntegration: React.FC = () => {
                 Post Grades to Canvas
               </Button>
             </Box>
-          </>
-        )}
+        </>
+      )}
       </Paper>
     </Box>
   );

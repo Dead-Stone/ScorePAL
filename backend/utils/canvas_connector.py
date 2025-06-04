@@ -14,6 +14,7 @@ import re
 import requests
 import json
 from datetime import datetime
+import uuid
 
 # Canvas API library
 from canvasapi import Canvas
@@ -440,16 +441,19 @@ class CanvasConnector:
             return False
     
     def batch_download_submissions(self, course_id: int, assignment_id: int, 
-                                 download_dir: Union[str, Path] = "synced_submissions") -> Dict[int, Dict[str, Any]]:
+                                 download_dir: Union[str, Path] = "submissions") -> Dict[int, Dict[str, Any]]:
         """
-        Batch download all submissions for an assignment using the existing synced_submissions structure.
+        Download and organize all submissions for an assignment using a cloud-ready folder structure.
         
-        Uses existing folder structure: synced_submissions/course_{course_id}/assignment_{assignment_id}/sync_{timestamp}/
+        Creates structure: submissions/course_{course_id}/assignment_{assignment_id}/
+        - metadata/ - assignment info, sync data, question paper
+        - submissions/student_{user_id}/ - individual student folders with files and metadata
+        - batch_results/ - grading batch information and results
         
         Args:
             course_id: Canvas course ID
             assignment_id: Canvas assignment ID
-            download_dir: Base directory to download files to (default: "synced_submissions")
+            download_dir: Base directory (default: "submissions")
             
         Returns:
             Dictionary mapping user IDs to submission info
@@ -457,26 +461,24 @@ class CanvasConnector:
         results = {}
         
         try:
-            # Use existing synced_submissions structure
+            # Create cloud-ready folder structure
             if isinstance(download_dir, str) and not download_dir.startswith('backend'):
                 base_dir = Path("backend") / download_dir
             else:
                 base_dir = Path(download_dir) if isinstance(download_dir, str) else download_dir
             
-            # Create organized folder structure following existing pattern
+            # Create organized folder structure
             course_dir = base_dir / f"course_{course_id}"
             assignment_dir = course_dir / f"assignment_{assignment_id}"
             
-            # Create sync directory with timestamp
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            sync_dir = assignment_dir / f"sync_{timestamp}"
+            # Create main directories
+            metadata_dir = assignment_dir / "metadata"
+            submissions_dir = assignment_dir / "submissions"
+            batch_results_dir = assignment_dir / "batch_results"
             
-            # Create directories
-            downloaded_files_dir = sync_dir / "downloaded_files"
-            submissions_metadata_dir = sync_dir / "submissions_metadata"
-            os.makedirs(downloaded_files_dir, exist_ok=True)
-            os.makedirs(submissions_metadata_dir, exist_ok=True)
+            os.makedirs(metadata_dir, exist_ok=True)
+            os.makedirs(submissions_dir, exist_ok=True)
+            os.makedirs(batch_results_dir, exist_ok=True)
             
             # Get all submissions with detailed information using direct API
             submissions = self.get_submissions_direct(course_id, assignment_id, 
@@ -501,10 +503,45 @@ class CanvasConnector:
             try:
                 assignment = self.get_assignment(course_id, assignment_id)
                 assignment_name = assignment.name if assignment else f"Assignment_{assignment_id}"
+                assignment_description = getattr(assignment, 'description', '') if assignment else ''
+                assignment_points = getattr(assignment, 'points_possible', 100) if assignment else 100
             except Exception as e:
                 logger.warning(f"Could not get assignment details: {e}")
                 assignment_name = f"Assignment_{assignment_id}"
-                assignment = None
+                assignment_description = ''
+                assignment_points = 100
+            
+            # Create assignment metadata
+            assignment_info = {
+                'course_id': course_id,
+                'assignment_id': assignment_id,
+                'assignment_name': assignment_name,
+                'assignment_description': assignment_description,
+                'points_possible': assignment_points,
+                'total_submissions': len(submissions),
+                'workflow_states': workflow_states,
+                'submission_types': submission_types,
+                'created_at': str(datetime.now())
+            }
+            
+            # Save assignment info
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            with open(assignment_info_file, 'w', encoding='utf-8') as f:
+                json.dump(assignment_info, f, indent=2, default=str)
+            
+            # Create question paper if available
+            question_paper_path = None
+            if assignment_description:
+                question_paper_file = metadata_dir / "question_paper.html"
+                with open(question_paper_file, 'w', encoding='utf-8') as f:
+                    f.write(f"<html><head><title>{assignment_name}</title></head><body>")
+                    f.write(f"<h1>{assignment_name}</h1>")
+                    f.write(f"<p><strong>Points Possible:</strong> {assignment_points}</p>")
+                    f.write("<hr>")
+                    f.write(assignment_description)
+                    f.write("</body></html>")
+                question_paper_path = str(question_paper_file)
+                logger.info(f"Created question paper: {question_paper_file}")
             
             # Define acceptable workflow states for downloading
             acceptable_states = ['submitted', 'graded', 'pending_review']
@@ -519,8 +556,8 @@ class CanvasConnector:
             
             # Process each submission
             processed_submissions = []
-            successful_syncs = 0
-            failed_syncs = 0
+            successful_downloads = 0
+            failed_downloads = 0
             no_files = 0
             
             for submission in submissions:
@@ -535,6 +572,7 @@ class CanvasConnector:
                     # Get user information
                     user_info = user_dict.get(user_id, {})
                     user_name = user_info.get('name', f"User_{user_id}")
+                    user_email = user_info.get('email', '')
                     
                     # Get workflow state and submission info
                     workflow_state = submission.get('workflow_state', '')
@@ -543,50 +581,69 @@ class CanvasConnector:
                     logger.info(f"Processing submission from {user_name}, "
                                f"type: {submission_type}, state: {workflow_state}")
                     
-                    # Initialize submission metadata following existing format
-                    submission_metadata = {
+                    # Create student directory
+                    student_dir = submissions_dir / f"student_{user_id}"
+                    student_files_dir = student_dir / "files"
+                    os.makedirs(student_files_dir, exist_ok=True)
+                    
+                    # Initialize student metadata
+                    student_metadata = {
                         'user_id': user_id,
                         'user_name': user_name,
+                        'user_email': user_email,
                         'submission_id': submission_id,
                         'submitted_at': submission.get('submitted_at'),
                         'workflow_state': workflow_state,
+                        'submission_type': submission_type,
                         'late': submission.get('late', False),
                         'missing': submission.get('missing', False),
                         'score': submission.get('score'),
                         'grade': submission.get('grade'),
-                        'attachments': [],
-                        'downloaded_files': [],
-                        'sync_status': 'pending'
+                        'entered_score': submission.get('entered_score'),
+                        'entered_grade': submission.get('entered_grade'),
+                        'attempt': submission.get('attempt', 1),
+                        'files': [],
+                        'download_status': 'pending',
+                        'download_timestamp': str(datetime.now())
+                    }
+                    
+                    # Initialize grading results structure
+                    grading_results = {
+                        'user_id': user_id,
+                        'user_name': user_name,
+                        'assignment_id': assignment_id,
+                        'grading_status': 'not_graded',
+                        'ai_feedback': None,
+                        'ai_score': None,
+                        'final_grade': student_metadata.get('grade'),
+                        'final_score': student_metadata.get('score'),
+                        'grading_timestamp': None,
+                        'feedback_comments': [],
+                        'rubric_scores': {},
+                        'selected_for_grading': False
                     }
                     
                     # Skip submissions that are not in acceptable states
                     if workflow_state not in acceptable_states:
                         logger.info(f"Skipping submission with workflow state '{workflow_state}'")
-                        submission_metadata['sync_status'] = 'skipped'
+                        student_metadata['download_status'] = 'skipped'
                         no_files += 1
                     elif submission_type == 'online_upload' and submission.get('attachments'):
-                        # Download attachments following existing naming convention
+                        # Download attachments
+                        downloaded_files = []
                         for attachment in submission['attachments']:
                             try:
                                 display_name = attachment.get('display_name', '')
                                 file_url = attachment.get('url', '')
                                 file_id = attachment.get('id')
-                                uuid = attachment.get('uuid', '')
                                 
-                                if not file_url:
-                                    logger.warning(f"No URL for attachment: {display_name}")
+                                if not file_url or not display_name:
+                                    logger.warning(f"Missing URL or name for attachment: {file_id}")
                                     continue
                                 
-                                # Create filename following existing pattern: {user_id}_{display_name}
-                                safe_filename = re.sub(r'[^\w\s.-]', '', display_name)
-                                if not safe_filename.strip():
-                                    safe_filename = f"attachment_{file_id}"
-                                
-                                # Clean filename to match existing pattern
-                                safe_filename = safe_filename.replace(' ', '_').replace('(', '').replace(')', '')
-                                filename = f"{user_id}_{safe_filename}"
-                                
-                                file_path = downloaded_files_dir / filename
+                                # Use original filename for better organization
+                                safe_filename = re.sub(r'[<>:"/\\|?*]', '_', display_name)
+                                file_path = student_files_dir / safe_filename
                                 
                                 # Download file using requests
                                 headers = {}
@@ -602,108 +659,192 @@ class CanvasConnector:
                                             if chunk:
                                                 f.write(chunk)
                                     
-                                    # Add to metadata following existing format
-                                    attachment_info = {
-                                        'id': file_id,
-                                        'name': display_name,
-                                        'uuid': uuid,
-                                        'url': file_url,
+                                    # Add file info to metadata
+                                    file_info = {
+                                        'original_name': display_name,
+                                        'file_path': str(file_path.relative_to(assignment_dir)),
+                                        'absolute_path': str(file_path.absolute()),
+                                        'file_size': file_path.stat().st_size,
                                         'download_status': 'success',
-                                        'local_path': str(file_path.absolute())
+                                        'canvas_file_id': file_id,
+                                        'canvas_url': file_url
                                     }
-                                    submission_metadata['attachments'].append(attachment_info)
-                                    submission_metadata['downloaded_files'].append(str(file_path.absolute()))
+                                    student_metadata['files'].append(file_info)
+                                    downloaded_files.append(str(file_path.absolute()))
                                     
-                                    logger.info(f"Downloaded attachment: {file_path}")
+                                    logger.info(f"Downloaded: {file_path}")
                                     
                                 else:
-                                    logger.warning(f"Failed to download attachment: {response.status_code}")
-                                    attachment_info = {
-                                        'id': file_id,
-                                        'name': display_name,
-                                        'uuid': uuid,
-                                        'url': file_url,
+                                    logger.warning(f"Failed to download {display_name}: {response.status_code}")
+                                    file_info = {
+                                        'original_name': display_name,
+                                        'file_path': None,
                                         'download_status': 'failed',
-                                        'local_path': None
+                                        'canvas_file_id': file_id,
+                                        'canvas_url': file_url,
+                                        'error': f"HTTP {response.status_code}"
                                     }
-                                    submission_metadata['attachments'].append(attachment_info)
+                                    student_metadata['files'].append(file_info)
                                     
                             except Exception as attachment_error:
                                 logger.error(f"Error downloading attachment: {str(attachment_error)}")
-                                failed_syncs += 1
+                                failed_downloads += 1
                                 continue
                         
-                        # Set sync status based on results
-                        if submission_metadata['downloaded_files']:
-                            submission_metadata['sync_status'] = 'synced'
-                            successful_syncs += 1
+                        # Set download status based on results
+                        if downloaded_files:
+                            student_metadata['download_status'] = 'success'
+                            successful_downloads += 1
                         else:
-                            submission_metadata['sync_status'] = 'no_files'
+                            student_metadata['download_status'] = 'no_files'
                             no_files += 1
+                            
+                    elif submission_type == 'online_text_entry' and submission.get('body'):
+                        # Save text submission as HTML file
+                        text_file = student_files_dir / "text_submission.html"
+                        with open(text_file, 'w', encoding='utf-8') as f:
+                            f.write(f"<html><head><title>Text Submission - {user_name}</title></head><body>")
+                            f.write(f"<h2>Submission by {user_name}</h2>")
+                            f.write(f"<p><strong>Submitted:</strong> {submission.get('submitted_at', 'Unknown')}</p>")
+                            f.write("<hr>")
+                            f.write(submission.get('body', ''))
+                            f.write("</body></html>")
+                        
+                        file_info = {
+                            'original_name': 'text_submission.html',
+                            'file_path': str(text_file.relative_to(assignment_dir)),
+                            'absolute_path': str(text_file.absolute()),
+                            'file_size': text_file.stat().st_size,
+                            'download_status': 'success',
+                            'submission_type': 'text'
+                        }
+                        student_metadata['files'].append(file_info)
+                        student_metadata['download_status'] = 'success'
+                        successful_downloads += 1
+                        logger.info(f"Saved text submission: {text_file}")
+                        
+                    elif submission_type == 'online_url' and submission.get('url'):
+                        # Save URL submission as text file
+                        url_file = student_files_dir / "url_submission.txt"
+                        with open(url_file, 'w', encoding='utf-8') as f:
+                            f.write(f"Student: {user_name}\n")
+                            f.write(f"Email: {user_email}\n")
+                            f.write(f"Submitted: {submission.get('submitted_at', 'Unknown')}\n")
+                            f.write(f"Submission URL: {submission.get('url')}\n")
+                        
+                        file_info = {
+                            'original_name': 'url_submission.txt',
+                            'file_path': str(url_file.relative_to(assignment_dir)),
+                            'absolute_path': str(url_file.absolute()),
+                            'file_size': url_file.stat().st_size,
+                            'download_status': 'success',
+                            'submission_type': 'url',
+                            'submitted_url': submission.get('url')
+                        }
+                        student_metadata['files'].append(file_info)
+                        student_metadata['download_status'] = 'success'
+                        successful_downloads += 1
+                        logger.info(f"Saved URL submission: {url_file}")
                     else:
-                        # No attachments or different submission type
-                        submission_metadata['sync_status'] = 'no_files'
+                        # No files to download
+                        student_metadata['download_status'] = 'no_files'
                         no_files += 1
                     
-                    # Save individual submission metadata
-                    metadata_file = submissions_metadata_dir / f"submission_{submission_id}.json"
+                    # Save student metadata
+                    metadata_file = student_dir / "metadata.json"
                     with open(metadata_file, 'w', encoding='utf-8') as f:
-                        json.dump(submission_metadata, f, indent=2, default=str)
+                        json.dump(student_metadata, f, indent=2, default=str)
+                    
+                    # Save grading results template
+                    results_file = student_dir / "grading_results.json"
+                    with open(results_file, 'w', encoding='utf-8') as f:
+                        json.dump(grading_results, f, indent=2, default=str)
                     
                     # Add to processed submissions
-                    processed_submissions.append(submission_metadata)
+                    processed_submissions.append(student_metadata)
                     
-                    # Add to results if successful
-                    if submission_metadata['sync_status'] == 'synced':
+                    # Add to results if successful or has data
+                    if student_metadata['download_status'] in ['success', 'no_files']:
                         results[user_id] = {
                             'user_id': user_id,
                             'user_name': user_name,
-                            'user_email': user_info.get('email', ''),
-                            'submission_file': submission_metadata['downloaded_files'][0] if submission_metadata['downloaded_files'] else None,
-                            'all_files': submission_metadata['downloaded_files'],
-                            'sync_directory': str(sync_dir),
-                            'metadata_file': str(metadata_file),
+                            'user_email': user_email,
+                            'student_directory': str(student_dir.relative_to(base_dir)),
+                            'absolute_directory': str(student_dir.absolute()),
+                            'metadata_file': str(metadata_file.absolute()),
+                            'results_file': str(results_file.absolute()),
+                            'files': student_metadata['files'],
                             'assignment_name': assignment_name,
                             'assignment_id': assignment_id,
                             'course_id': course_id,
                             'submission_type': submission_type,
                             'workflow_state': workflow_state,
-                            'grade': submission.get('grade'),
-                            'score': submission.get('score'),
-                            'submitted_at': submission.get('submitted_at'),
-                            'late': submission.get('late', False),
-                            'missing': submission.get('missing', False)
+                            'grade': student_metadata.get('grade'),
+                            'score': student_metadata.get('score'),
+                            'submitted_at': student_metadata.get('submitted_at'),
+                            'late': student_metadata.get('late', False),
+                            'download_status': student_metadata['download_status']
                         }
                         logger.info(f"Successfully processed submission for {user_name}")
                     
                 except Exception as e:
                     user_name = submission.get('user', {}).get('name', 'unknown') if submission.get('user') else 'unknown'
                     logger.error(f"Error processing submission for user {user_name}: {str(e)}")
-                    failed_syncs += 1
+                    failed_downloads += 1
             
-            # Create sync summary following existing format
-            import uuid
-            sync_summary = {
-                'sync_job_id': str(uuid.uuid4()),
+            # Create sync information
+            sync_info = {
+                'sync_id': str(uuid.uuid4()),
                 'course_id': course_id,
                 'assignment_id': assignment_id,
                 'synced_at': datetime.now().isoformat(),
                 'total_submissions': len(submissions),
-                'successful_syncs': successful_syncs,
-                'failed_syncs': failed_syncs,
+                'successful_downloads': successful_downloads,
+                'failed_downloads': failed_downloads,
                 'no_files': no_files,
-                'sync_directory': str(sync_dir.absolute()),
-                'submissions': processed_submissions
+                'assignment_directory': str(assignment_dir.absolute()),
+                'structure_version': '2.0',
+                'cloud_ready': True
             }
             
-            # Save sync summary
-            summary_file = sync_dir / 'sync_summary.json'
-            with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(sync_summary, f, indent=2, default=str)
+            # Save sync info
+            sync_info_file = metadata_dir / "sync_info.json"
+            with open(sync_info_file, 'w', encoding='utf-8') as f:
+                json.dump(sync_info, f, indent=2, default=str)
             
-            logger.info(f"Successfully downloaded {successful_syncs} submissions for assignment {assignment_id}")
-            logger.info(f"Files organized in: {sync_dir}")
-            logger.info(f"Sync summary saved to: {summary_file}")
+            # Create initial batch results structure
+            batch_info = {
+                'course_id': course_id,
+                'assignment_id': assignment_id,
+                'assignment_name': assignment_name,
+                'total_points': assignment_points,
+                'total_students': len(results),
+                'batch_created': datetime.now().isoformat(),
+                'grading_status': 'ready',
+                'assignment_directory': str(assignment_dir.absolute()),
+                'question_paper': question_paper_path
+            }
+            
+            # Save batch info
+            batch_info_file = batch_results_dir / "grading_batch.json"
+            with open(batch_info_file, 'w', encoding='utf-8') as f:
+                json.dump(batch_info, f, indent=2, default=str)
+            
+            # Create selected students template (empty initially)
+            selected_students = {
+                'assignment_id': assignment_id,
+                'selected_students': [],
+                'selection_timestamp': None,
+                'total_selected': 0
+            }
+            
+            selected_file = batch_results_dir / "selected_students.json"
+            with open(selected_file, 'w', encoding='utf-8') as f:
+                json.dump(selected_students, f, indent=2, default=str)
+            
+            logger.info(f"Successfully downloaded {successful_downloads} submissions for assignment {assignment_id}")
+            logger.info(f"Files organized in: {assignment_dir}")
+            logger.info(f"Cloud-ready structure created with {len(results)} student folders")
             
             return results
             
