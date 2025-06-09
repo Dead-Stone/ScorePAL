@@ -545,10 +545,15 @@ class FilePreprocessor:
             # print(f"Answer key prompt: {prompt}")
             response = model.generate_content(prompt)
             # print(f"Answer key generated: {response.text.strip()}")
-            return response.text.strip()
+            answer_key_text = response.text.strip()
+            
+            # Convert the JSON response to a string if it's not already a string
+            if isinstance(answer_key_text, dict) or (answer_key_text.startswith('{') and answer_key_text.endswith('}')):
+                return json.dumps(answer_key_text)
+            return answer_key_text
         except Exception as e:
             logger.error(f"Answer key generation failed: {e}")
-            return ""
+            return "No answer key available"
             
     def _process_docx(self, docx_path: str) -> str:
         """Process DOCX files with text and hyperlink extraction"""
@@ -681,6 +686,8 @@ class FilePreprocessor:
                         submission_text = self._process_docx(str(file_path))
                     elif file_extension == '.ipynb':
                         submission_text = self._process_notebook(str(file_path))
+                    elif file_extension == '.html':
+                        submission_text = self._process_html(str(file_path))
                     else:
                         logger.warning(f"Unsupported file extension: {file_extension}")
                         continue
@@ -737,7 +744,7 @@ class FilePreprocessor:
 
     def _get_document_files(self, directory: Path) -> List[Path]:
         """Get all document files in a directory."""
-        document_extensions = ['.pdf', '.txt', '.docx', '.ipynb']
+        document_extensions = ['.pdf', '.txt', '.docx', '.ipynb', '.html']
         document_files = []
         
         for file_path in directory.glob('**/*'):
@@ -793,9 +800,29 @@ class FilePreprocessor:
                 return self._process_docx(file_path)
             elif file_extension == '.ipynb':
                 return self._process_notebook(file_path)
+            elif file_extension == '.html':
+                return self._process_html(file_path)
             else:
                 logger.warning(f"Unsupported file extension: {file_extension}")
                 return ""
         except Exception as e:
             logger.error(f"Error extracting text from file {file_path}: {e}")
             return ""
+
+    def _process_html(self, html_path: str) -> str:
+        """Process HTML files."""
+        try:
+            with open(html_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            logger.info(f"Successfully extracted HTML content from {html_path}: {len(html_content)} characters")
+            return html_content
+        except UnicodeDecodeError:
+            # Try with different encodings
+            try:
+                with open(html_path, 'r', encoding='latin-1') as f:
+                    html_content = f.read()
+                logger.info(f"Successfully extracted HTML content with latin-1 encoding: {len(html_content)} characters")
+                return html_content
+            except Exception as e:
+                logger.error(f"Failed to read HTML file with multiple encodings: {e}")
+                return ""

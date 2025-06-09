@@ -330,6 +330,7 @@ export default function Dashboard() {
           answerKey: null,
           rubricId: '',
         });
+        setStrictness(0.5); // Reset strictness to default
       } else {
         throw new Error('Invalid response from server');
       }

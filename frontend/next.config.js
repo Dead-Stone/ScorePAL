@@ -10,6 +10,7 @@ const nextConfig = {
     // optimizeCss: true,
     // Turning off Fast Refresh can help if it's causing issues
     // fastRefresh: false,
+    proxyTimeout: 120000, // 2 minutes for multi-agent grading
   },
   async redirects() {
     return [
@@ -35,6 +36,12 @@ const nextConfig = {
         destination: 'http://localhost:8000/canvas/:path*',
       },
     ];
+  },
+  // Configure server options
+  serverRuntimeConfig: {
+    // Increase timeout for API routes
+    bodyTimeout: 120000,
+    headersTimeout: 120000,
   },
 }
 

@@ -7,12 +7,13 @@ import os
 import logging
 import tempfile
 import shutil
+import requests
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import json
 import re
-import requests
 from datetime import datetime
+import uuid
 
 from utils.canvas_connector import CanvasConnector
 from preprocessing_v2 import FilePreprocessor
@@ -213,7 +214,8 @@ class CanvasGradingService:
             }
     
     def process_assignment(self, course_id: int, assignment_id: int, 
-                          output_dir: Optional[Path] = None, rubric: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Dict[str, Any]]:
+                          output_dir: Optional[Path] = None, rubric: Optional[Dict[str, Any]] = None, 
+                          strictness: float = 0.5) -> Tuple[bool, str, Dict[str, Any]]:
         """
         Process an assignment from Canvas.
         
@@ -340,28 +342,60 @@ class CanvasGradingService:
                 try:
                     logger.info(f"Processing submission from {submission_info['user_name']} (type: {submission_info.get('submission_type', 'unknown')})")
                     
-                    # Get submission file path and extract text
-                    submission_file = Path(submission_info['submission_file'])
-                    question_paper_file = Path(submission_info['question_paper']) if submission_info['question_paper'] else None
+                    # Extract text from all submission files in the new structure
+                    submission_text = ""
+                    files_processed = []
                     
-                    # Extract text from submission
-                    logger.info(f"Extracting text from {submission_file}")
-                    submission_text = self.file_preprocessor.extract_text_from_file(submission_file)
+                    # Check if submission has files
+                    if submission_info.get('files') and len(submission_info['files']) > 0:
+                        for file_info in submission_info['files']:
+                            if file_info.get('download_status') == 'success' and file_info.get('absolute_path'):
+                                file_path = Path(file_info['absolute_path'])
+                                if file_path.exists():
+                                    logger.info(f"Extracting text from {file_path}")
+                                    try:
+                                        file_text = self.file_preprocessor.extract_text_from_file(file_path)
+                                        if file_text and len(file_text.strip()) > 10:
+                                            submission_text += f"\n=== {file_info['original_name']} ===\n{file_text}\n"
+                                            files_processed.append(file_info['original_name'])
+                                    except Exception as file_error:
+                                        logger.warning(f"Error extracting text from {file_path}: {str(file_error)}")
                     
+                    # If no files were processed successfully, skip this submission
                     if not submission_text or len(submission_text.strip()) < 10:
-                        logger.warning(f"Extracted text is too short or empty: '{submission_text}'")
-                        submission_info['error'] = "Extracted text is too short or empty"
+                        logger.warning(f"No valid text extracted from submission files. Files: {[f.get('original_name') for f in submission_info.get('files', [])]}")
+                        submission_info['error'] = "No valid text could be extracted from submission files"
+                        submission_info['files_processed'] = files_processed
                         results['submissions'][user_id] = submission_info
                         continue
                     
-                    # Extract text from question paper
+                    # Extract text from question paper (if available in metadata directory)
                     question_text = ""
-                    if question_paper_file:
-                        logger.info(f"Extracting text from question paper {question_paper_file}")
-                        question_text = self.file_preprocessor.extract_text_from_file(question_paper_file)
+                    try:
+                        # Look for question paper in the assignment metadata directory
+                        metadata_file_path = Path(submission_info.get('metadata_file', ''))
+                        if metadata_file_path.exists():
+                            assignment_dir = metadata_file_path.parent.parent.parent  # Go up to assignment directory
+                            question_paper_file = assignment_dir / "metadata" / "question_paper.html"
+                            if question_paper_file.exists():
+                                logger.info(f"Extracting text from question paper {question_paper_file}")
+                                question_text = self.file_preprocessor.extract_text_from_file(question_paper_file)
+                    except Exception as question_error:
+                        logger.warning(f"Could not extract question paper text: {str(question_error)}")
                     
-                    # Generate answer key if needed
-                    answer_key = self.file_preprocessor._generate_answer_key(question_text, None)
+                    # Generate answer key if not available
+                    if not answer_key and question_text:
+                        try:
+                            logger.info("Generating answer key from question text...")
+                            answer_key = self.file_preprocessor._generate_answer_key(question_text, None)
+                            
+                            # Save the generated answer key
+                            with open(answer_key_file, 'w', encoding='utf-8') as f:
+                                f.write(answer_key)
+                            logger.info("Answer key generated and saved")
+                        except Exception as e:
+                            logger.warning(f"Could not generate answer key: {e}")
+                            answer_key = "No answer key available"
                     
                     # Grade submission
                     logger.info(f"Grading submission for {submission_info['user_name']}")
@@ -371,11 +405,13 @@ class CanvasGradingService:
                         answer_key=answer_key,
                         student_name=submission_info['user_name'],
                         rubric=grading_rubric,
-                        strictness=0.5  # Default moderate strictness
+                        strictness=strictness
                     )
                     
                     # Store results
                     submission_info['grading_result'] = grading_result
+                    submission_info['files_processed'] = files_processed
+                    submission_info['total_files'] = len(submission_info.get('files', []))
                     results['submissions'][user_id] = submission_info
                     
                     # Update summary statistics
@@ -392,11 +428,13 @@ class CanvasGradingService:
                         if score > results['summary']['max_score']:
                             results['summary']['max_score'] = score
                     
-                    logger.info(f"Successfully graded submission for {submission_info['user_name']}")
+                    logger.info(f"Successfully graded submission for {submission_info['user_name']} (processed {len(files_processed)} files)")
                     
                 except Exception as e:
-                    logger.error(f"Error processing submission for user {submission_info['user_name']}: {str(e)}")
+                    user_name = submission_info.get('user_name', 'unknown')
+                    logger.error(f"Error processing submission for user {user_name}: {str(e)}")
                     submission_info['error'] = str(e)
+                    submission_info['files_processed'] = files_processed if 'files_processed' in locals() else []
                     results['submissions'][user_id] = submission_info
             
             # Calculate average score
@@ -862,55 +900,79 @@ class CanvasGradingService:
             else:
                 assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
             
-            if not assignment_path.exists():
-                return {
-                    'success': False,
-                    'message': f'Assignment directory not found: {assignment_path}',
-                    'selected_students': []
-                }
-            
+            # Create directory structure if it doesn't exist
             batch_results_dir = assignment_path / "batch_results"
+            batch_results_dir.mkdir(parents=True, exist_ok=True)
+            
             selected_file = batch_results_dir / "selected_students.json"
             
-            # Get student information for selected IDs
+            # Get student information from Canvas for selected IDs
             selected_students = []
-            submissions_dir = assignment_path / "submissions"
             
-            for user_id in student_ids:
-                student_dir = submissions_dir / f"student_{user_id}"
-                if student_dir.exists():
-                    metadata_file = student_dir / "metadata.json"
-                    if metadata_file.exists():
-                        try:
-                            with open(metadata_file, 'r', encoding='utf-8') as f:
-                                metadata = json.load(f)
-                            
+            try:
+                # Get submissions from Canvas to get student info
+                submissions_result = self.get_submissions_for_assignment(course_id, assignment_id, include=['user'])
+                
+                if submissions_result.get('success'):
+                    all_submissions = submissions_result.get('submissions', [])
+                    
+                    # Create student info for selected IDs
+                    for user_id in student_ids:
+                        # Find submission for this user
+                        user_submission = None
+                        for submission in all_submissions:
+                            if submission.get('user_id') == user_id:
+                                user_submission = submission
+                                break
+                        
+                        if user_submission:
+                            user_info = user_submission.get('user', {})
                             selected_students.append({
                                 'user_id': user_id,
-                                'user_name': metadata.get('user_name', f'User_{user_id}'),
-                                'user_email': metadata.get('user_email', ''),
-                                'submission_type': metadata.get('submission_type'),
-                                'files_count': len(metadata.get('files', [])),
-                                'download_status': metadata.get('download_status'),
-                                'student_directory': str(student_dir.relative_to(assignment_path.parent.parent)),
+                                'user_name': user_info.get('name', f'User_{user_id}'),
+                                'user_email': user_info.get('email', ''),
+                                'submission_type': user_submission.get('submission_type'),
+                                'workflow_state': user_submission.get('workflow_state'),
+                                'submitted_at': user_submission.get('submitted_at'),
                                 'selected_at': str(datetime.now())
                             })
-                            
-                            # Update grading results to mark as selected
-                            results_file = student_dir / "grading_results.json"
-                            if results_file.exists():
-                                with open(results_file, 'r', encoding='utf-8') as f:
-                                    results = json.load(f)
-                                results['selected_for_grading'] = True
-                                results['selection_timestamp'] = str(datetime.now())
-                                with open(results_file, 'w', encoding='utf-8') as f:
-                                    json.dump(results, f, indent=2, default=str)
-                                    
-                        except Exception as e:
-                            logger.error(f"Error processing student {user_id}: {e}")
-                            continue
+                        else:
+                            # Create basic entry even if no submission found
+                            selected_students.append({
+                                'user_id': user_id,
+                                'user_name': f'User_{user_id}',
+                                'user_email': '',
+                                'submission_type': None,
+                                'workflow_state': 'unsubmitted',
+                                'submitted_at': None,
+                                'selected_at': str(datetime.now())
+                            })
                 else:
-                    logger.warning(f"Student directory not found: {student_dir}")
+                    # Fallback: create basic entries for all selected students
+                    for user_id in student_ids:
+                        selected_students.append({
+                            'user_id': user_id,
+                            'user_name': f'User_{user_id}',
+                            'user_email': '',
+                            'submission_type': None,
+                            'workflow_state': 'unknown',
+                            'submitted_at': None,
+                            'selected_at': str(datetime.now())
+                        })
+                        
+            except Exception as canvas_error:
+                logger.warning(f"Could not fetch student info from Canvas: {canvas_error}")
+                # Fallback: create basic entries for all selected students
+                for user_id in student_ids:
+                    selected_students.append({
+                        'user_id': user_id,
+                        'user_name': f'User_{user_id}',
+                        'user_email': '',
+                        'submission_type': None,
+                        'workflow_state': 'unknown',
+                        'submitted_at': None,
+                        'selected_at': str(datetime.now())
+                    })
             
             # Save selection information
             selection_info = {
@@ -923,7 +985,7 @@ class CanvasGradingService:
             with open(selected_file, 'w', encoding='utf-8') as f:
                 json.dump(selection_info, f, indent=2, default=str)
             
-            logger.info(f"Selected {len(selected_students)} students for grading")
+            logger.info(f"Selected {len(selected_students)} students for grading: {[s['user_id'] for s in selected_students]}")
             return {
                 'success': True,
                 'message': f'Successfully selected {len(selected_students)} students for grading',
@@ -942,7 +1004,7 @@ class CanvasGradingService:
     def get_grading_results(self, course_id: int, assignment_id: int, 
                           base_dir: str = "submissions") -> Dict[str, Any]:
         """
-        Get grading results for all students in an assignment.
+        Get grading results for all students in an assignment with enhanced formatting for display.
         
         Args:
             course_id: Canvas course ID
@@ -950,7 +1012,7 @@ class CanvasGradingService:
             base_dir: Base directory containing submissions
             
         Returns:
-            Dictionary with grading results for all students
+            Dictionary with grading results formatted for table display
         """
         try:
             # Build path to assignment directory
@@ -987,6 +1049,7 @@ class CanvasGradingService:
             # Collect results from all student directories
             results = []
             submissions_dir = assignment_path / "submissions"
+            total_points = assignment_info.get('points_possible', 100)
             
             if submissions_dir.exists():
                 for student_dir in submissions_dir.iterdir():
@@ -996,34 +1059,98 @@ class CanvasGradingService:
                             metadata_file = student_dir / "metadata.json"
                             grading_results_file = student_dir / "grading_results.json"
                             
-                            if metadata_file.exists() and grading_results_file.exists():
+                            if metadata_file.exists():
                                 with open(metadata_file, 'r', encoding='utf-8') as f:
                                     metadata = json.load(f)
-                                with open(grading_results_file, 'r', encoding='utf-8') as f:
-                                    grading_results = json.load(f)
+                                
+                                # Read grading results if available
+                                grading_results = {}
+                                if grading_results_file.exists():
+                                    with open(grading_results_file, 'r', encoding='utf-8') as f:
+                                        grading_results = json.load(f)
                                 
                                 user_id = metadata.get('user_id')
                                 
+                                # Determine grading status and scores
+                                ai_score = grading_results.get('ai_score', 0)
+                                final_score = grading_results.get('final_score', ai_score)
+                                current_score = metadata.get('score', final_score)
+                                
+                                # Calculate percentage
+                                if total_points > 0:
+                                    percentage = round((final_score / total_points) * 100, 1)
+                                else:
+                                    percentage = 0
+                                
+                                # Determine status
+                                grading_status = grading_results.get('grading_status', 'not_graded')
+                                if grading_status == 'not_graded' and metadata.get('download_status') == 'success':
+                                    status = 'ready'
+                                elif grading_status == 'graded':
+                                    status = 'graded'
+                                elif grading_status == 'failed':
+                                    status = 'failed'
+                                elif grading_status == 'updating_coming_soon':
+                                    status = 'updating_coming_soon'
+                                elif metadata.get('download_status') == 'failed':
+                                    status = 'download_failed'
+                                else:
+                                    status = 'pending'
+                                
+                                # Get letter grade
+                                if percentage >= 90:
+                                    letter_grade = 'A'
+                                elif percentage >= 80:
+                                    letter_grade = 'B'
+                                elif percentage >= 70:
+                                    letter_grade = 'C'
+                                elif percentage >= 60:
+                                    letter_grade = 'D'
+                                else:
+                                    letter_grade = 'F'
+                                
+                                # Format feedback for display
+                                ai_feedback = grading_results.get('ai_feedback', 'No feedback available')
+                                feedback_preview = ai_feedback[:150] + "..." if len(ai_feedback) > 150 else ai_feedback
+                                
+                                # Get files information
+                                files_info = []
+                                files_dir = student_dir / "files"
+                                if files_dir.exists():
+                                    for file in files_dir.iterdir():
+                                        if file.is_file():
+                                            files_info.append({
+                                                'name': file.name,
+                                                'size': file.stat().st_size,
+                                                'type': file.suffix.lower()
+                                            })
+                                
                                 result_entry = {
-                                    'user_id': user_id,
-                                    'user_name': metadata.get('user_name'),
-                                    'user_email': metadata.get('user_email'),
-                                    'submission_type': metadata.get('submission_type'),
+                                    'student_id': user_id,
+                                    'student_name': metadata.get('user_name', f'Student {user_id}'),
+                                    'student_email': metadata.get('user_email', ''),
+                                    'score': final_score,
+                                    'percentage': percentage,
+                                    'letter_grade': letter_grade,
+                                    'total_points': total_points,
+                                    'status': status,
+                                    'grading_status': grading_status,
+                                    'feedback': ai_feedback,
+                                    'feedback_preview': feedback_preview,
+                                    'submission_type': metadata.get('submission_type', 'unknown'),
                                     'submitted_at': metadata.get('submitted_at'),
-                                    'files_count': len(metadata.get('files', [])),
-                                    'download_status': metadata.get('download_status'),
-                                    'current_grade': metadata.get('grade'),
-                                    'current_score': metadata.get('score'),
+                                    'files_count': len(files_info),
+                                    'files_info': files_info,
                                     'late': metadata.get('late', False),
-                                    'grading_status': grading_results.get('grading_status', 'not_graded'),
-                                    'ai_feedback': grading_results.get('ai_feedback'),
-                                    'ai_score': grading_results.get('ai_score'),
-                                    'final_grade': grading_results.get('final_grade'),
-                                    'final_score': grading_results.get('final_score'),
+                                    'missing': metadata.get('missing', False),
+                                    'download_status': metadata.get('download_status', 'unknown'),
                                     'grading_timestamp': grading_results.get('grading_timestamp'),
-                                    'feedback_comments': grading_results.get('feedback_comments', []),
                                     'rubric_scores': grading_results.get('rubric_scores', {}),
-                                    'selected_for_grading': grading_results.get('selected_for_grading', False),
+                                    'criteria_scores': grading_results.get('criteria_scores', []),
+                                    'selected_for_grading': user_id in selected_students,
+                                    'canvas_grade': metadata.get('grade'),
+                                    'canvas_score': metadata.get('score'),
+                                    'error_message': grading_results.get('error_message'),
                                     'student_directory': str(student_dir.relative_to(assignment_path.parent.parent))
                                 }
                                 
@@ -1037,27 +1164,48 @@ class CanvasGradingService:
                             logger.error(f"Error reading results for {student_dir.name}: {e}")
                             continue
             
-            # Sort results by user name
-            results.sort(key=lambda x: x.get('user_name', ''))
+            # Sort results by student name
+            results.sort(key=lambda x: x.get('student_name', ''))
             
             # Calculate summary statistics
             total_students = len(results)
-            graded_count = sum(1 for r in results if r.get('grading_status') != 'not_graded')
+            graded_count = sum(1 for r in results if r.get('status') == 'graded')
+            failed_count = sum(1 for r in results if r.get('status') == 'failed')
+            ready_count = sum(1 for r in results if r.get('status') == 'ready')
             selected_count = sum(1 for r in results if r.get('selected_for_grading'))
+            
+            # Calculate grade distribution
+            grade_distribution = {'A': 0, 'B': 0, 'C': 0, 'D': 0, 'F': 0}
+            total_score = 0
+            graded_students = [r for r in results if r.get('status') == 'graded']
+            
+            for result in graded_students:
+                grade_distribution[result['letter_grade']] += 1
+                total_score += result['score']
+            
+            average_score = round(total_score / len(graded_students), 2) if graded_students else 0
+            average_percentage = round((average_score / total_points) * 100, 1) if total_points > 0 else 0
             
             summary = {
                 'total_students': total_students,
                 'graded_students': graded_count,
+                'failed_students': failed_count,
+                'ready_students': ready_count,
                 'selected_students': selected_count,
-                'pending_students': total_students - graded_count,
+                'pending_students': total_students - graded_count - failed_count,
                 'assignment_name': assignment_info.get('assignment_name', f'Assignment {assignment_id}'),
-                'total_points': assignment_info.get('points_possible', 100)
+                'total_points': total_points,
+                'average_score': average_score,
+                'average_percentage': average_percentage,
+                'grade_distribution': grade_distribution,
+                'highest_score': max([r['score'] for r in graded_students], default=0),
+                'lowest_score': min([r['score'] for r in graded_students], default=0)
             }
             
-            logger.info(f"Retrieved grading results for {total_students} students")
+            logger.info(f"Retrieved grading results for {total_students} students ({graded_count} graded)")
             return {
                 'success': True,
-                'message': f'Retrieved results for {total_students} students',
+                'message': f'Retrieved results for {total_students} students ({graded_count} graded)',
                 'assignment_directory': str(assignment_path),
                 'summary': summary,
                 'results': results
@@ -1249,9 +1397,9 @@ class CanvasGradingService:
             }
 
     def grade_selected_students_only(self, course_id: int, assignment_id: int, 
-                                   base_dir: str = "submissions") -> Dict[str, Any]:
+                                   base_dir: str = "submissions", strictness: float = 0.5) -> Dict[str, Any]:
         """
-        Grade only the students that have been selected for grading.
+        Grade only the students that have been selected for grading with improved error handling.
         
         Args:
             course_id: Canvas course ID
@@ -1259,7 +1407,7 @@ class CanvasGradingService:
             base_dir: Base directory containing submissions
             
         Returns:
-            Dictionary with grading results for selected students only
+            Dictionary with grading results
         """
         try:
             # Build path to assignment directory
@@ -1272,18 +1420,26 @@ class CanvasGradingService:
                 return {
                     'success': False,
                     'message': f'Assignment directory not found: {assignment_path}',
-                    'graded_students': []
+                    'results': {}
                 }
             
-            # Read selected students
+            # Read assignment info
+            assignment_info = {}
+            metadata_dir = assignment_path / "metadata"
+            assignment_info_file = metadata_dir / "assignment_info.json"
+            if assignment_info_file.exists():
+                with open(assignment_info_file, 'r', encoding='utf-8') as f:
+                    assignment_info = json.load(f)
+            
+            # Get selected students
             batch_results_dir = assignment_path / "batch_results"
             selected_file = batch_results_dir / "selected_students.json"
             
             if not selected_file.exists():
                 return {
                     'success': False,
-                    'message': 'No students have been selected for grading. Please select students first.',
-                    'graded_students': []
+                    'message': 'No students selected for grading. Please select students first.',
+                    'results': {}
                 }
             
             with open(selected_file, 'r', encoding='utf-8') as f:
@@ -1293,156 +1449,288 @@ class CanvasGradingService:
             if not selected_students:
                 return {
                     'success': False,
-                    'message': 'No students are currently selected for grading.',
-                    'graded_students': []
+                    'message': 'No students in selection list.',
+                    'results': {}
                 }
             
-            # Read assignment info for grading context
-            assignment_info = {}
-            metadata_dir = assignment_path / "metadata"
-            assignment_info_file = metadata_dir / "assignment_info.json"
-            if assignment_info_file.exists():
-                with open(assignment_info_file, 'r', encoding='utf-8') as f:
-                    assignment_info = json.load(f)
+            # Read answer key if available
+            answer_key_file = metadata_dir / "answer_key.txt"
+            answer_key = ""
+            if answer_key_file.exists():
+                with open(answer_key_file, 'r', encoding='utf-8') as f:
+                    answer_key = f.read().strip()
             
-            # Grade each selected student
-            graded_results = []
-            successful_gradings = 0
-            failed_gradings = 0
+            # Read question paper if available  
+            question_file = metadata_dir / "question_paper.html"
+            question_text = assignment_info.get('description', 'No question description available')
+            if question_file.exists():
+                with open(question_file, 'r', encoding='utf-8') as f:
+                    question_text = f.read().strip()
             
-            for student in selected_students:
+            logger.info(f"Starting grading for {len(selected_students)} selected students")
+            
+            # Process each selected student
+            grading_results = {}
+            successful_grades = 0
+            failed_grades = 0
+            
+            for i, student in enumerate(selected_students):
+                user_id = student['user_id']
+                user_name = student['user_name']
+                
                 try:
-                    user_id = student['user_id']
-                    user_name = student['user_name']
+                    logger.info(f"Processing student {i+1}/{len(selected_students)}: {user_name} (ID: {user_id})")
                     
-                    logger.info(f"Grading selected student: {user_name} (ID: {user_id})")
-                    
-                    # Get student directory
+                    # Find student directory
                     student_dir = assignment_path / "submissions" / f"student_{user_id}"
                     if not student_dir.exists():
-                        logger.warning(f"Student directory not found for {user_name}")
-                        failed_gradings += 1
+                        logger.warning(f"Student directory not found: {student_dir}")
+                        failed_grades += 1
                         continue
                     
-                    # Read student metadata and files
+                    # Read metadata
                     metadata_file = student_dir / "metadata.json"
-                    results_file = student_dir / "grading_results.json"
-                    
                     if not metadata_file.exists():
-                        logger.warning(f"Metadata file not found for {user_name}")
-                        failed_gradings += 1
+                        logger.warning(f"Metadata file not found for student {user_id}")
+                        failed_grades += 1
                         continue
                     
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         metadata = json.load(f)
                     
-                    # Read existing grading results
-                    grading_results = {}
-                    if results_file.exists():
-                        with open(results_file, 'r', encoding='utf-8') as f:
-                            grading_results = json.load(f)
+                    # Check if already graded successfully
+                    grading_results_file = student_dir / "grading_results.json"
+                    if grading_results_file.exists():
+                        with open(grading_results_file, 'r', encoding='utf-8') as f:
+                            existing_results = json.load(f)
+                        
+                        if existing_results.get('grading_status') == 'graded':
+                            logger.info(f"Student {user_name} already graded successfully, skipping")
+                            grading_results[user_id] = existing_results
+                            successful_grades += 1
+                            continue
                     
-                    # Simulate AI grading process (replace this with actual AI grading logic)
-                    files = metadata.get('files', [])
-                    if files:
-                        # Example grading logic - replace with actual AI grading
-                        total_points = assignment_info.get('points_possible', 100)
+                    # Extract text from submitted files using Canvas URLs
+                    submission_text = ""
+                    gradeable_files = []
+                    non_pdf_files = []
+                    
+                    # Get file information from metadata
+                    files_data = metadata.get('files', [])
+                    
+                    if files_data:
+                        for file_data in files_data:
+                            file_name = file_data.get('filename', '')
+                            file_url = file_data.get('url', '')
+                            file_type = file_data.get('content-type', '').lower()
+                            
+                            # Check if it's a PDF file
+                            is_pdf = (
+                                file_type == 'application/pdf' or 
+                                file_name.lower().endswith('.pdf')
+                            )
+                            
+                            if is_pdf:
+                                gradeable_files.append({
+                                    'name': file_name,
+                                    'url': file_url,
+                                    'type': 'pdf'
+                                })
+                            else:
+                                non_pdf_files.append({
+                                    'name': file_name,
+                                    'url': file_url,
+                                    'type': file_type
+                                })
+                    
+                    # Process gradeable files (PDFs only for now)
+                    if gradeable_files:
+                        for file_info in gradeable_files:
+                            try:
+                                # Download file content from Canvas URL
+                                logger.info(f"Downloading {file_info['name']} from Canvas URL")
+                                
+                                # Use Canvas API to download file
+                                headers = {'Authorization': f'Bearer {self.canvas_api_key}'}
+                                
+                                response = requests.get(file_info['url'], headers=headers, timeout=30)
+                                
+                                if response.status_code == 200:
+                                    # Save file temporarily and extract text
+                                    temp_file_path = student_dir / "temp_files" / file_info['name']
+                                    temp_file_path.parent.mkdir(exist_ok=True)
+                                    
+                                    with open(temp_file_path, 'wb') as f:
+                                        f.write(response.content)
+                                    
+                                    # Extract text from PDF
+                                    extracted_text = self.file_preprocessor.extract_text_from_file(temp_file_path)
+                                    if extracted_text:
+                                        submission_text += f"\n--- {file_info['name']} ---\n{extracted_text}\n"
+                                    
+                                    # Clean up temp file
+                                    temp_file_path.unlink(missing_ok=True)
+                                    
+                                else:
+                                    logger.warning(f"Failed to download {file_info['name']}: HTTP {response.status_code}")
+                                    
+                            except Exception as e:
+                                logger.warning(f"Could not process file {file_info['name']}: {e}")
+                    
+                    # Handle non-PDF files
+                    if non_pdf_files and not gradeable_files:
+                        logger.info(f"Student {user_name} has only non-PDF files. Grading not supported yet.")
                         
-                        # Simulate AI feedback and scoring
-                        ai_feedback = f"Automated feedback for {user_name}: Good submission with {len(files)} file(s). "
-                        if metadata.get('late', False):
-                            ai_feedback += "Note: This submission was late. "
-                        
-                        # Example scoring based on files and content (replace with actual AI logic)
-                        base_score = min(total_points * 0.8, total_points)  # Base 80% score
-                        if len(files) > 1:
-                            base_score += min(10, total_points * 0.1)  # Bonus for multiple files
-                        if metadata.get('late', False):
-                            base_score *= 0.9  # 10% penalty for late submission
-                        
-                        ai_score = round(base_score, 1)
-                        ai_feedback += f"Score: {ai_score}/{total_points}"
-                        
-                        # Update grading results
-                        grading_results.update({
-                            'grading_status': 'graded',
-                            'ai_feedback': ai_feedback,
-                            'ai_score': ai_score,
-                            'final_grade': str(ai_score),
-                            'final_score': ai_score,
-                            'grading_timestamp': str(datetime.now()),
-                            'graded_by': 'AI_System',
-                            'grading_method': 'automated_ai'
-                        })
-                        
-                    else:
-                        # No files to grade
-                        grading_results.update({
-                            'grading_status': 'no_submission',
-                            'ai_feedback': 'No files found for grading.',
+                        # Save "updating coming soon" result
+                        updating_result = {
+                            'grading_status': 'updating_coming_soon',
+                            'error_message': 'Non-PDF file grading not yet supported',
+                            'ai_feedback': f'Grading for {", ".join([f["name"] for f in non_pdf_files])} coming soon. Currently only PDF files are supported.',
                             'ai_score': 0,
-                            'final_grade': '0',
                             'final_score': 0,
-                            'grading_timestamp': str(datetime.now()),
-                            'graded_by': 'AI_System',
-                            'grading_method': 'automated_ai'
-                        })
+                            'final_grade': 'Pending',
+                            'grading_timestamp': datetime.now().isoformat(),
+                            'selected_for_grading': True,
+                            'file_types': [f['type'] for f in non_pdf_files],
+                            'files_info': non_pdf_files
+                        }
+                        
+                        with open(grading_results_file, 'w', encoding='utf-8') as f:
+                            json.dump(updating_result, f, indent=2)
+                        
+                        grading_results[user_id] = updating_result
+                        logger.info(f"Marked {user_name} as 'updating coming soon' due to non-PDF files")
+                        continue
                     
-                    # Save updated grading results
-                    with open(results_file, 'w', encoding='utf-8') as f:
-                        json.dump(grading_results, f, indent=2, default=str)
+                    elif non_pdf_files and gradeable_files:
+                        # Mixed file types - note in feedback
+                        submission_text += f"\n--- NOTE ---\nNon-PDF files not graded: {', '.join([f['name'] for f in non_pdf_files])}\n"
                     
-                    # Add to results
-                    graded_results.append({
-                        'user_id': user_id,
-                        'user_name': user_name,
-                        'grading_status': grading_results['grading_status'],
-                        'ai_score': grading_results['ai_score'],
-                        'ai_feedback': grading_results['ai_feedback'],
-                        'files_count': len(files),
-                        'grading_timestamp': grading_results['grading_timestamp']
-                    })
+                    if not submission_text.strip():
+                        logger.warning(f"No extractable text found for student {user_name}")
+                        # Save failure result
+                        failure_result = {
+                            'grading_status': 'failed',
+                            'error_message': 'No extractable text found in submission',
+                            'ai_feedback': 'Unable to grade: No readable text found in submitted files',
+                            'ai_score': 0,
+                            'final_score': 0,
+                            'final_grade': 'F',
+                            'grading_timestamp': datetime.now().isoformat(),
+                            'selected_for_grading': True
+                        }
+                        
+                        with open(grading_results_file, 'w', encoding='utf-8') as f:
+                            json.dump(failure_result, f, indent=2)
+                        
+                        grading_results[user_id] = failure_result
+                        failed_grades += 1
+                        continue
                     
-                    successful_gradings += 1
-                    logger.info(f"Successfully graded {user_name}: {grading_results['ai_score']}")
+                    # Generate answer key if not available
+                    if not answer_key and question_text:
+                        try:
+                            logger.info("Generating answer key from question text...")
+                            answer_key = self.file_preprocessor._generate_answer_key(question_text, None)
+                            
+                            # Save the generated answer key
+                            with open(answer_key_file, 'w', encoding='utf-8') as f:
+                                f.write(answer_key)
+                            logger.info("Answer key generated and saved")
+                        except Exception as e:
+                            logger.warning(f"Could not generate answer key: {e}")
+                            answer_key = "No answer key available"
+                    
+                    # Grade the submission with retry logic handled by GradingService
+                    logger.info(f"Grading submission for {user_name}...")
+                    grade_result = self.grading_service.grade_submission(
+                        submission_text=submission_text,
+                        question_text=question_text,
+                        answer_key=answer_key,
+                        student_name=user_name,
+                        strictness=strictness
+                    )
+                    
+                    # Save grading results
+                    grading_result = {
+                        'grading_status': 'graded',
+                        'ai_feedback': grade_result.get('feedback', 'No feedback provided'),
+                        'ai_score': grade_result.get('score', 0),
+                        'final_score': grade_result.get('score', 0),
+                        'final_grade': grade_result.get('grade_letter', 'F'),
+                        'grading_timestamp': datetime.now().isoformat(),
+                        'selected_for_grading': True,
+                        'criteria_scores': grade_result.get('criteria_scores', []),
+                        'mistakes': grade_result.get('mistakes', []),
+                        'percentage': grade_result.get('percentage', 0)
+                    }
+                    
+                    with open(grading_results_file, 'w', encoding='utf-8') as f:
+                        json.dump(grading_result, f, indent=2)
+                    
+                    grading_results[user_id] = grading_result
+                    successful_grades += 1
+                    
+                    logger.info(f"Successfully graded {user_name}: {grade_result.get('score', 0)} points")
                     
                 except Exception as e:
-                    logger.error(f"Error grading student {student.get('user_name', user_id)}: {e}")
-                    failed_gradings += 1
-                    continue
+                    error_msg = str(e)
+                    logger.error(f"Error grading student {user_name}: {error_msg}")
+                    
+                    # Save failure result
+                    failure_result = {
+                        'grading_status': 'failed',
+                        'error_message': error_msg,
+                        'ai_feedback': f'Grading failed: {error_msg}',
+                        'ai_score': 0,
+                        'final_score': 0,
+                        'final_grade': 'F',
+                        'grading_timestamp': datetime.now().isoformat(),
+                        'selected_for_grading': True
+                    }
+                    
+                    try:
+                        with open(grading_results_file, 'w', encoding='utf-8') as f:
+                            json.dump(failure_result, f, indent=2)
+                    except:
+                        pass  # Don't fail if we can't save the failure result
+                    
+                    grading_results[user_id] = failure_result
+                    failed_grades += 1
+                    
+                    # Check if this is a rate limit error and break early if needed
+                    if "rate limit" in error_msg.lower() or "429" in error_msg:
+                        logger.warning("Rate limit detected, stopping grading process")
+                        break
             
-            # Update batch results with grading summary
-            grading_summary = {
-                'grading_completed_at': str(datetime.now()),
-                'selected_students_count': len(selected_students),
-                'successful_gradings': successful_gradings,
-                'failed_gradings': failed_gradings,
-                'grading_method': 'selected_students_only'
+            # Save overall grading results summary
+            summary_result = {
+                'grading_completed': True,
+                'total_selected': len(selected_students),
+                'successful_grades': successful_grades,
+                'failed_grades': failed_grades,
+                'completion_timestamp': datetime.now().isoformat(),
+                'assignment_info': assignment_info
             }
             
             summary_file = batch_results_dir / "grading_summary.json"
             with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(grading_summary, f, indent=2, default=str)
+                json.dump(summary_result, f, indent=2)
             
-            logger.info(f"Completed grading for {successful_gradings} selected students")
+            logger.info(f"Grading completed: {successful_grades} successful, {failed_grades} failed")
             return {
                 'success': True,
-                'message': f'Successfully graded {successful_gradings} out of {len(selected_students)} selected students',
-                'graded_students': graded_results,
-                'statistics': {
-                    'total_selected': len(selected_students),
-                    'successfully_graded': successful_gradings,
-                    'failed_gradings': failed_gradings,
-                    'grading_method': 'selected_students_only'
-                }
+                'message': f'Grading completed: {successful_grades} successful, {failed_grades} failed out of {len(selected_students)} selected students',
+                'results': grading_results,
+                'summary': summary_result
             }
             
         except Exception as e:
-            logger.error(f"Error grading selected students: {str(e)}")
+            logger.error(f"Error in grade_selected_students_only: {str(e)}")
             return {
                 'success': False,
-                'message': f'Error grading selected students: {str(e)}',
-                'graded_students': []
+                'message': f'Error during grading: {str(e)}',
+                'results': {}
             }
 
     def update_student_selection(self, course_id: int, assignment_id: int, 
@@ -1592,18 +1880,12 @@ class CanvasGradingService:
             else:
                 assignment_path = Path(base_dir) / f"course_{course_id}" / f"assignment_{assignment_id}"
             
-            if not assignment_path.exists():
-                return {
-                    'success': False,
-                    'message': f'Assignment directory not found: {assignment_path}',
-                    'selected_students': []
-                }
-            
             # Read selection data
             batch_results_dir = assignment_path / "batch_results"
             selected_file = batch_results_dir / "selected_students.json"
             
             if not selected_file.exists():
+                logger.info(f"No selection file found at {selected_file}")
                 return {
                     'success': True,
                     'message': 'No selection file found. No students currently selected.',
@@ -1616,6 +1898,7 @@ class CanvasGradingService:
                 selection_data = json.load(f)
             
             selected_students = selection_data.get('selected_students', [])
+            logger.info(f"Found selection file with {len(selected_students)} selected students: {[s.get('user_id') for s in selected_students]}")
             
             return {
                 'success': True,

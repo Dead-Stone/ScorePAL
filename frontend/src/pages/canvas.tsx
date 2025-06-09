@@ -18,6 +18,7 @@ import {
   InputLabel,
   Select,
   SelectChangeEvent,
+  Slider,
   TextField,
   MenuItem,
   CardActionArea,
@@ -35,6 +36,10 @@ import {
   Avatar,
   Tooltip,
   IconButton,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
 } from '@mui/material';
 import {
   School as CanvasIcon,
@@ -161,6 +166,7 @@ const CanvasIntegration: React.FC = () => {
   const [gradingResults, setGradingResults] = useState<GradingResult[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [selectAllStudents, setSelectAllStudents] = useState(false);
+  const [strictness, setStrictness] = useState<number>(0.5);
 
   useEffect(() => {
     initializeEverything();
@@ -470,7 +476,8 @@ const CanvasIntegration: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           rubric_id: selectedRubric,
-          selected_students: selectedStudents
+          selected_students: selectedStudents,
+          strictness: strictness
         }),
       });
 
@@ -729,43 +736,71 @@ const CanvasIntegration: React.FC = () => {
             <Typography variant="h6" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 600, mb: 2 }}>
               Grading Configuration
             </Typography>
-            <FormControl fullWidth sx={{ maxWidth: 500 }}>
-              <InputLabel sx={{ fontSize: '0.9rem' }}>Grading Rubric</InputLabel>
-              <Select
-                value={selectedRubric}
-                onChange={handleRubricChange}
-                label="Grading Rubric"
-                sx={{ 
-                  fontSize: '0.9rem',
-                  '& .MuiSelect-select': {
-                    py: 1.5
-                  }
-                }}
-              >
-                <MenuItem value="default">
-                  <Box>
-                    <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.9rem' }}>
-                      Default Assignment Rubric
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                      Content, Analysis, Organization, Evidence, Communication
-                    </Typography>
-                  </Box>
-                </MenuItem>
-                {rubrics.map((rubric) => (
-                  <MenuItem key={rubric.id} value={rubric.id}>
-                    <Box>
-                      <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.9rem' }}>
-                        {rubric.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                        {rubric.description}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel sx={{ fontSize: '0.9rem' }}>Grading Rubric</InputLabel>
+                  <Select
+                    value={selectedRubric}
+                    onChange={handleRubricChange}
+                    label="Grading Rubric"
+                    sx={{ 
+                      fontSize: '0.9rem',
+                      '& .MuiSelect-select': {
+                        py: 1.5
+                      }
+                    }}
+                  >
+                    <MenuItem value="default">
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.9rem' }}>
+                          Default Assignment Rubric
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                          Content, Analysis, Organization, Evidence, Communication
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                    {rubrics.map((rubric) => (
+                      <MenuItem key={rubric.id} value={rubric.id}>
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.9rem' }}>
+                            {rubric.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                            {rubric.description}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} md={6}>
+                <Typography variant="body2" sx={{ fontWeight: 500, fontSize: '0.9rem', mb: 1 }}>
+                  Grading Strictness: {Math.round(strictness * 100)}%
+                </Typography>
+                <Slider
+                  value={strictness}
+                  onChange={(_: Event, value: number | number[]) => setStrictness(value as number)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  marks={[
+                    { value: 0, label: 'Lenient' },
+                    { value: 0.5, label: 'Moderate' },
+                    { value: 1, label: 'Strict' }
+                  ]}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(value: number) => `${Math.round(value * 100)}%`}
+                  sx={{ mt: 1 }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                  Higher strictness means more rigorous grading with potentially lower scores
+                </Typography>
+              </Grid>
+            </Grid>
           </Paper>
 
           <Grid container spacing={3}>
@@ -944,9 +979,20 @@ const CanvasIntegration: React.FC = () => {
             onClick={startGradingWorkflow}
             disabled={selectedStudents.length === 0}
           >
-            Grade Selected Students
+            Grade Selected Students (PDF Only)
           </Button>
         </Box>
+        
+        {/* PDF Grading Information */}
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <Typography variant="body2">
+            <strong>Grading Information:</strong><br/>
+            • Only <strong>PDF files</strong> are currently supported for AI grading<br/>
+            • Non-PDF files (code, images, etc.) will show "Coming Soon" status<br/>
+            • Only <strong>selected students</strong> will be graded (use checkboxes above)<br/>
+            • Files are downloaded directly from Canvas using submission URLs
+          </Typography>
+        </Alert>
 
         <TableContainer component={Paper} sx={{ maxHeight: 500 }}>
           <Table stickyHeader>

@@ -26,6 +26,12 @@ import SchoolIcon from '@mui/icons-material/School';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { normalizeCanvasUrl } from '../utils/canvas';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import Tooltip from '@mui/material/Tooltip';
+import DownloadIcon from '@mui/icons-material/Download';
+import GetAppIcon from '@mui/icons-material/GetApp';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
 const LMSPage = () => {
   const router = useRouter();
@@ -80,6 +86,8 @@ const LMSPage = () => {
   const [gradingResults, setGradingResults] = useState([]);
   const [resultsDialogOpen, setResultsDialogOpen] = useState(false);
   const [selectedResult, setSelectedResult] = useState(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [showResults, setShowResults] = useState(false);
 
   // Fetch rubrics on mount
   useEffect(() => {
@@ -255,6 +263,8 @@ const LMSPage = () => {
       if (selectedPlatform === 'canvas') {
         const processedApiKey = processApiKey(canvasApiKey);
         
+        console.log('Fetching assignments for course:', selectedCourseId);
+        
         response = await axios.post('/api/canvas/get-assignments', {
           api_key: processedApiKey,
           course_id: parseInt(selectedCourseId)
@@ -264,9 +274,14 @@ const LMSPage = () => {
           }
         });
         
+        console.log('Assignment fetch response:', response.data);
+        
         if (response.data.status === 'success' && response.data.assignments) {
+          const allAssignments = response.data.assignments;
+          console.log('All assignments received:', allAssignments.map(a => ({ id: a.id, name: a.name, workflow_state: a.workflow_state })));
+          
           // Filter only published assignments for Canvas
-          const publishedAssignments = response.data.assignments.filter(assignment => {
+          const publishedAssignments = allAssignments.filter(assignment => {
             const isPublished = assignment.published === true;
             const workflowPublished = assignment.workflow_state === 'published';
             const notUnpublished = assignment.workflow_state !== 'unpublished';
@@ -274,11 +289,20 @@ const LMSPage = () => {
             
             return (isPublished && workflowPublished) || (workflowPublished && notUnpublished && notDeleted);
           });
+          
+          console.log('Published assignments after filtering:', publishedAssignments.map(a => ({ id: a.id, name: a.name })));
+          console.log('Pagination info:', response.data.pagination_info);
+          
           setAssignments(publishedAssignments);
           
           if (publishedAssignments.length > 0) {
-            setSelectedAssignmentId(publishedAssignments[0].id.toString());
-            setSelectedAssignmentName(publishedAssignments[0].name);
+            const firstAssignment = publishedAssignments[0];
+            setSelectedAssignmentId(firstAssignment.id.toString());
+            setSelectedAssignmentName(firstAssignment.name);
+            console.log('Auto-selected first assignment:', { id: firstAssignment.id, name: firstAssignment.name });
+          } else {
+            console.warn('No published assignments found');
+            setError('No published assignments found in this course');
           }
         }
       } else if (selectedPlatform === 'moodle') {
@@ -303,6 +327,7 @@ const LMSPage = () => {
       }
       
       if (response.data.status !== 'success') {
+        console.error('Assignment fetch failed:', response.data.message);
         setError(response.data.message || 'Failed to fetch assignments');
       }
     } catch (err) {
@@ -324,15 +349,52 @@ const LMSPage = () => {
   };
 
   const handleAssignmentChange = (assignmentId) => {
+    console.log('Assignment selection changed:', {
+      selectedAssignmentId: assignmentId,
+      allAssignments: assignments.map(a => ({ id: a.id, name: a.name }))
+    });
+    
     setSelectedAssignmentId(assignmentId);
     const assignment = assignments.find(a => a.id.toString() === assignmentId);
     if (assignment) {
       setSelectedAssignmentName(assignment.name);
+      console.log('Assignment selected successfully:', {
+        id: assignment.id,
+        name: assignment.name
+      });
+    } else {
+      console.error('Assignment not found in list:', {
+        searchedId: assignmentId,
+        availableAssignments: assignments.map(a => ({ id: a.id, name: a.name }))
+      });
+      setError(`Assignment with ID ${assignmentId} not found in the assignments list.`);
     }
   };
 
   // Platform-specific sync handlers
   const handleSyncSubmissions = async (forceSync = false) => {
+    // Validation: Ensure we have the correct assignment selected
+    if (!selectedAssignmentId || !selectedAssignmentName) {
+      setError('Please select an assignment before syncing submissions.');
+      return;
+    }
+    
+    console.log('Starting sync for assignment:', {
+      id: selectedAssignmentId,
+      name: selectedAssignmentName,
+      courseId: selectedCourseId,
+      platform: selectedPlatform
+    });
+    
+    // Double-check that the assignment exists in our list
+    const assignment = assignments.find(a => a.id.toString() === selectedAssignmentId);
+    if (!assignment) {
+      setError(`Assignment with ID ${selectedAssignmentId} not found. Please refresh assignments and try again.`);
+      return;
+    }
+    
+    console.log('Assignment validation passed:', assignment);
+    
     setLoading(true);
     setError(null);
     
@@ -341,6 +403,12 @@ const LMSPage = () => {
       
       if (selectedPlatform === 'canvas') {
         const processedApiKey = processApiKey(canvasApiKey);
+        
+        console.log('Sending sync request with:', {
+          course_id: parseInt(selectedCourseId),
+          assignment_id: parseInt(selectedAssignmentId),
+          assignment_name: selectedAssignmentName
+        });
         
         response = await axios.post('/api/canvas/sync-submissions', {
           api_key: processedApiKey,
@@ -365,6 +433,8 @@ const LMSPage = () => {
           }
         });
       }
+      
+      console.log('Sync response:', response.data);
       
       if (response.data.status === 'success') {
         setSyncJobId(response.data.sync_job_id);
@@ -451,6 +521,105 @@ const LMSPage = () => {
       setSelectedSubmissions(new Set());
     } else {
       setSelectedSubmissions(new Set(syncedSubmissions.map(s => s.user_id)));
+    }
+  };
+
+  // Add function to fetch grading results
+  const fetchGradingResults = async () => {
+    if (!selectedCourseId || !selectedAssignmentId) {
+      setError('Please select a course and assignment first');
+      return;
+    }
+    
+    setResultsLoading(true);
+    setError(null);
+    
+    try {
+      const processedApiKey = processApiKey(canvasApiKey);
+      
+      console.log('Fetching grading results for:', {
+        course_id: selectedCourseId,
+        assignment_id: selectedAssignmentId,
+        assignment_name: selectedAssignmentName
+      });
+      
+      const response = await axios.post('/api/canvas/get-grading-results', {
+        api_key: processedApiKey,
+        course_id: parseInt(selectedCourseId),
+        assignment_id: parseInt(selectedAssignmentId)
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Grading results response:', response.data);
+      
+      if (response.data.success && response.data.data) {
+        setGradingResults(response.data.data.results || []);
+        setShowResults(true);
+        setCurrentStep(4); // New step for results
+        setActiveView('results');
+      } else {
+        setError(response.data.message || 'Failed to fetch grading results');
+      }
+    } catch (err) {
+      console.error('Error fetching grading results:', err);
+      setError(err.response?.data?.message || 'Failed to fetch grading results');
+    } finally {
+      setResultsLoading(false);
+    }
+  };
+
+  // Add function to grade selected students
+  const gradeSelectedStudents = async () => {
+    if (!selectedCourseId || !selectedAssignmentId) {
+      setError('Please select a course and assignment first');
+      return;
+    }
+    
+    setResultsLoading(true);
+    setError(null);
+    
+    try {
+      const processedApiKey = processApiKey(canvasApiKey);
+      
+      console.log('Starting grading for selected students:', {
+        course_id: selectedCourseId,
+        assignment_id: selectedAssignmentId,
+        assignment_name: selectedAssignmentName
+      });
+      
+      const response = await axios.post('/api/canvas/grade-selected-students', {
+        api_key: processedApiKey,
+        course_id: parseInt(selectedCourseId),
+        assignment_id: parseInt(selectedAssignmentId)
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Grading response:', response.data);
+      
+      if (response.data.success) {
+        setAlert({
+          type: 'success',
+          message: response.data.message || 'Grading completed successfully!'
+        });
+        
+        // Automatically refresh results after grading
+        setTimeout(() => {
+          fetchGradingResults();
+        }, 2000);
+      } else {
+        setError(response.data.message || 'Failed to grade selected students');
+      }
+    } catch (err) {
+      console.error('Error grading selected students:', err);
+      setError(err.response?.data?.message || 'Failed to grade selected students');
+    } finally {
+      setResultsLoading(false);
     }
   };
 
@@ -619,18 +788,28 @@ const LMSPage = () => {
               >
                 {assignments.map((assignment) => (
                   <MenuItem key={assignment.id} value={assignment.id.toString()}>
-                    {assignment.name}
+                    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                      <Typography variant="body1">{assignment.name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        ID: {assignment.id} | State: {assignment.workflow_state}
+                      </Typography>
+                    </Box>
                   </MenuItem>
                 ))}
               </Select>
               <FormHelperText>
-                {selectedCourseId ? `${assignments.length} published assignment(s) in course (loaded with pagination)` : 'Select a course first'}
+                {selectedCourseId ? `${assignments.length} published assignment(s) in course (loaded with per_page=50&page=1)` : 'Select a course first'}
+                {selectedAssignmentId && (
+                  <Box component="span" sx={{ display: 'block', mt: 0.5, color: 'primary.main' }}>
+                    Selected: {selectedAssignmentName} (ID: {selectedAssignmentId})
+                  </Box>
+                )}
               </FormHelperText>
             </FormControl>
           </Grid>
         </Grid>
         
-        <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+        <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
           <Button
             variant="outlined"
             onClick={fetchAssignments}
@@ -639,6 +818,57 @@ const LMSPage = () => {
           >
             {loading ? 'Loading...' : 'Load Assignments'}
           </Button>
+          
+          {/* Debug button for testing assignment fetching */}
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={async () => {
+              if (!selectedCourseId) return;
+              
+              try {
+                const processedApiKey = processApiKey(canvasApiKey);
+                const response = await axios.post('/api/canvas/debug-assignments', {
+                  api_key: processedApiKey,
+                  course_id: parseInt(selectedCourseId)
+                });
+                console.log('Debug response:', response.data);
+                alert(`Debug results: ${JSON.stringify(response.data, null, 2)}`);
+              } catch (error) {
+                console.error('Debug error:', error);
+                alert(`Debug error: ${error.message}`);
+              }
+            }}
+            disabled={!selectedCourseId}
+          >
+            Debug Assignments
+          </Button>
+          
+          {/* Button to fetch grading results */}
+          {selectedAssignmentId && (
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={fetchGradingResults}
+              disabled={resultsLoading}
+              startIcon={resultsLoading ? <CircularProgress size={20} /> : <VisibilityIcon />}
+            >
+              {resultsLoading ? 'Loading Results...' : 'View Grading Results'}
+            </Button>
+          )}
+          
+          {/* Button to grade selected students */}
+          {selectedAssignmentId && (
+            <Button
+              variant="contained"
+              color="success"
+              onClick={gradeSelectedStudents}
+              disabled={resultsLoading}
+              startIcon={resultsLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
+            >
+              {resultsLoading ? 'Grading...' : 'Grade Selected Students (PDF Only)'}
+            </Button>
+          )}
           
           <Button
             variant="contained"
@@ -652,6 +882,30 @@ const LMSPage = () => {
             Continue to Sync
           </Button>
         </Box>
+        
+        {/* Selection Summary */}
+        {selectedCourseId && selectedAssignmentId && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              <strong>Current Selection:</strong><br/>
+              Course: {selectedCourseName} (ID: {selectedCourseId})<br/>
+              Assignment: {selectedAssignmentName} (ID: {selectedAssignmentId})
+            </Typography>
+          </Alert>
+        )}
+        
+        {/* PDF Grading Info */}
+        {selectedAssignmentId && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            <Typography variant="body2">
+              <strong>Grading Information:</strong><br/>
+              • Only <strong>PDF files</strong> are currently supported for AI grading<br/>
+              • Non-PDF files (code, images, etc.) will show "Coming Soon" status<br/>
+              • Only <strong>selected students</strong> will be graded (not all students)<br/>
+              • Files are downloaded directly from Canvas using submission URLs
+            </Typography>
+          </Alert>
+        )}
         
         {error && (
           <Alert severity="error" sx={{ mt: 2 }}>
@@ -947,111 +1201,401 @@ const LMSPage = () => {
     </Card>
   );
 
-  // Results screen
+  // Render results screen
   const renderResultsScreen = () => {
-    const successfulGrades = gradingResults.filter(r => r.status === 'graded');
-    const averageScore = successfulGrades.length > 0 
-      ? successfulGrades.reduce((sum, r) => sum + r.percentage, 0) / successfulGrades.length 
+    if (gradingResults.length === 0) {
+      return (
+        <Card>
+          <CardContent>
+            <Typography variant="h5" gutterBottom>
+              Grading Results
+            </Typography>
+            <Alert severity="info">
+              No grading results found. Make sure you have graded some submissions first.
+            </Alert>
+            <Box sx={{ mt: 2 }}>
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  setCurrentStep(3);
+                  setActiveView('select');
+                }}
+                startIcon={<ArrowBackIcon />}
+              >
+                Back to Selection
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // Calculate summary statistics
+    const totalStudents = gradingResults.length;
+    const gradedStudents = gradingResults.filter(r => r.status === 'graded').length;
+    const failedStudents = gradingResults.filter(r => r.status === 'failed').length;
+    const comingSoonStudents = gradingResults.filter(r => r.status === 'updating_coming_soon').length;
+    const averageScore = gradedStudents > 0 
+      ? (gradingResults.filter(r => r.status === 'graded').reduce((sum, r) => sum + r.percentage, 0) / gradedStudents).toFixed(1)
       : 0;
 
     return (
       <Card>
         <CardContent>
-          <Typography variant="h5" gutterBottom>
-            Grading Results
-          </Typography>
-          
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={6} md={3}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="h6">{gradingResults.length}</Typography>
-                <Typography variant="body2">Total Processed</Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h5" gutterBottom>
+              Grading Results - {selectedAssignmentName}
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Button
+                variant="outlined"
+                onClick={fetchGradingResults}
+                startIcon={<SyncIcon />}
+                disabled={resultsLoading}
+              >
+                {resultsLoading ? 'Refreshing...' : 'Refresh Results'}
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  setCurrentStep(3);
+                  setActiveView('select');
+                }}
+                startIcon={<ArrowBackIcon />}
+              >
+                Back to Selection
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Summary Statistics */}
+          <Grid container spacing={3} sx={{ mb: 3 }}>
+            <Grid item xs={12} sm={2.4}>
+              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'primary.50' }}>
+                <Typography variant="h4" color="primary.main">
+                  {totalStudents}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Total Students
+                </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={6} md={3}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="h6">{successfulGrades.length}</Typography>
-                <Typography variant="body2">AI Graded</Typography>
+            <Grid item xs={12} sm={2.4}>
+              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'success.50' }}>
+                <Typography variant="h4" color="success.main">
+                  {gradedStudents}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Graded (PDF)
+                </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={6} md={3}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="h6">{averageScore.toFixed(1)}%</Typography>
-                <Typography variant="body2">Average Score</Typography>
+            <Grid item xs={12} sm={2.4}>
+              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'warning.50' }}>
+                <Typography variant="h4" color="warning.main">
+                  {comingSoonStudents}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Coming Soon
+                </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={6} md={3}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <Typography variant="h6">{selectedPlatform.toUpperCase()}</Typography>
-                <Typography variant="body2">Platform</Typography>
+            <Grid item xs={12} sm={2.4}>
+              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'error.50' }}>
+                <Typography variant="h4" color="error.main">
+                  {failedStudents}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Failed
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid item xs={12} sm={2.4}>
+              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'info.50' }}>
+                <Typography variant="h4" color="info.main">
+                  {averageScore}%
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Average Score
+                </Typography>
               </Paper>
             </Grid>
           </Grid>
-          
-          <TableContainer component={Paper}>
-            <Table>
+
+          {/* Results Table */}
+          <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+            <Table stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>Student</TableCell>
-                  <TableCell>Status</TableCell>
                   <TableCell>Score</TableCell>
-                  <TableCell>Platform</TableCell>
+                  <TableCell>Percentage</TableCell>
+                  <TableCell>Letter Grade</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Files</TableCell>
+                  <TableCell>Feedback Preview</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {gradingResults.map((result, index) => (
-                  <TableRow key={result.user_id || index}>
-                    <TableCell>{result.user_name || `User ${result.user_id}`}</TableCell>
+                {gradingResults.map((result) => (
+                  <TableRow key={result.student_id} hover>
                     <TableCell>
-                      <Chip 
-                        label={result.status === 'graded' ? 'Graded' : result.status.replace('_', ' ')}
-                        color={result.status === 'graded' ? 'success' : 'default'}
+                      <Box>
+                        <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                          {result.student_name}
+                        </Typography>
+                        {result.student_email && (
+                          <Typography variant="caption" color="text.secondary">
+                            {result.student_email}
+                          </Typography>
+                        )}
+                        {result.late && (
+                          <Chip label="Late" color="warning" size="small" sx={{ mt: 0.5 }} />
+                        )}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {result.score}/{result.total_points}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={`${result.percentage}%`}
+                        color={
+                          result.percentage >= 90 ? 'success' :
+                          result.percentage >= 80 ? 'info' :
+                          result.percentage >= 70 ? 'warning' : 'error'
+                        }
                         size="small"
                       />
                     </TableCell>
                     <TableCell>
-                      {result.status === 'graded' 
-                        ? `${result.raw_score}/${result.total_points} (${result.percentage}%)`
-                        : 'N/A'
-                      }
-                    </TableCell>
-                    <TableCell>
-                      <Chip 
-                        label={selectedPlatform.toUpperCase()}
+                      <Chip
+                        label={result.letter_grade}
+                        color={
+                          result.letter_grade === 'A' ? 'success' :
+                          result.letter_grade === 'B' ? 'info' :
+                          result.letter_grade === 'C' ? 'warning' : 'error'
+                        }
                         variant="outlined"
                         size="small"
                       />
                     </TableCell>
                     <TableCell>
-                      <Button
+                      <Chip
+                        label={
+                          result.status === 'graded' ? 'Graded' :
+                          result.status === 'failed' ? 'Failed' :
+                          result.status === 'ready' ? 'Ready' :
+                          result.status === 'updating_coming_soon' ? 'Coming Soon' :
+                          'Pending'
+                        }
+                        color={
+                          result.status === 'graded' ? 'success' :
+                          result.status === 'failed' ? 'error' :
+                          result.status === 'ready' ? 'info' :
+                          result.status === 'updating_coming_soon' ? 'warning' :
+                          'default'
+                        }
                         size="small"
-                        onClick={() => {
-                          setSelectedResult(result);
-                          setResultsDialogOpen(true);
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {result.files_count} file{result.files_count !== 1 ? 's' : ''}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 250 }}>
+                      <Typography 
+                        variant="body2" 
+                        sx={{ 
+                          overflow: 'hidden', 
+                          textOverflow: 'ellipsis', 
+                          whiteSpace: 'nowrap' 
                         }}
                       >
-                        View Details
-                      </Button>
+                        {result.feedback_preview || 'No feedback available'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <Tooltip title="View Full Feedback">
+                          <IconButton 
+                            size="small" 
+                            color="primary"
+                            onClick={() => {
+                              setSelectedResult(result);
+                              setResultsDialogOpen(true);
+                            }}
+                          >
+                            <VisibilityIcon />
+                          </IconButton>
+                        </Tooltip>
+                        {result.files_count > 0 && (
+                          <Tooltip title="Download Files">
+                            <IconButton size="small" color="secondary">
+                              <DownloadIcon />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                      </Box>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
-          
-          {error && (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {error}
-            </Alert>
-          )}
+
+          {/* Action Buttons */}
+          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+            <Button variant="outlined" startIcon={<GetAppIcon />}>
+              Export Results
+            </Button>
+            <Button variant="contained" color="success" startIcon={<CloudUploadIcon />}>
+              Post Grades to Canvas
+            </Button>
+          </Box>
         </CardContent>
       </Card>
     );
   };
 
+  // Add results dialog for viewing detailed feedback
+  const renderResultsDialog = () => (
+    <Dialog
+      open={resultsDialogOpen}
+      onClose={() => setResultsDialogOpen(false)}
+      maxWidth="md"
+      fullWidth
+    >
+      <DialogTitle>
+        Detailed Feedback - {selectedResult?.student_name}
+      </DialogTitle>
+      <DialogContent>
+        {selectedResult && (
+          <Box sx={{ pt: 1 }}>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={6}>
+                <Typography variant="subtitle2" color="text.secondary">Score</Typography>
+                <Typography variant="h6">
+                  {selectedResult.score}/{selectedResult.total_points} ({selectedResult.percentage}%)
+                </Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="subtitle2" color="text.secondary">Letter Grade</Typography>
+                <Typography variant="h6">{selectedResult.letter_grade}</Typography>
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="subtitle2" color="text.secondary">Status</Typography>
+                <Chip 
+                  label={selectedResult.status} 
+                  color={selectedResult.status === 'graded' ? 'success' : 'error'}
+                  size="small"
+                />
+              </Grid>
+              <Grid item xs={6}>
+                <Typography variant="subtitle2" color="text.secondary">Files Submitted</Typography>
+                <Typography variant="body1">{selectedResult.files_count}</Typography>
+              </Grid>
+            </Grid>
+            
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              AI Feedback
+            </Typography>
+            <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
+              <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                {selectedResult.feedback}
+              </Typography>
+            </Paper>
+            
+            {selectedResult.criteria_scores && selectedResult.criteria_scores.length > 0 && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  Criteria Breakdown
+                </Typography>
+                <TableContainer component={Paper}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Criterion</TableCell>
+                        <TableCell>Points</TableCell>
+                        <TableCell>Feedback</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {selectedResult.criteria_scores.map((criterion, index) => (
+                        <TableRow key={index}>
+                          <TableCell>{criterion.name}</TableCell>
+                          <TableCell>{criterion.points}/{criterion.max_points}</TableCell>
+                          <TableCell>{criterion.feedback}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            )}
+          </Box>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setResultsDialogOpen(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+
   // Workflow stepper
   const steps = ['Connect', 'Select Course', 'Sync', 'Select Students', 'Grade', 'Results'];
+
+  const renderContent = () => {
+    if (!selectedPlatform) {
+      return renderPlatformSelection();
+    }
+
+    if (activeView === 'platform') {
+      return renderPlatformSelection();
+    }
+
+    if (activeView === 'courses') {
+      return renderCoursesScreen();
+    }
+
+    if (activeView === 'assignments') {
+      return renderAssignmentsScreen();
+    }
+
+    if (activeView === 'submissions') {
+      return renderSubmissionsScreen();
+    }
+
+    if (activeView === 'select') {
+      return renderSelectionScreen();
+    }
+
+    if (activeView === 'progress') {
+      return renderProgressScreen();
+    }
+
+    if (activeView === 'results') {
+      return renderResultsScreen();
+    }
+
+    // Default view based on current step
+    switch (currentStep) {
+      case 1:
+        return renderCoursesScreen();
+      case 2:
+        return renderAssignmentsScreen();
+      case 3:
+        return renderSubmissionsScreen();
+      case 4:
+        return renderResultsScreen();
+      default:
+        return renderPlatformSelection();
+    }
+  };
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -1074,55 +1618,10 @@ const LMSPage = () => {
       </Paper>
       
       {/* Main Content */}
-      {activeView === 'connect' && renderConnectScreen()}
-      {activeView === 'select-course' && renderCourseSelectionScreen()}
-      {activeView === 'sync' && renderSyncScreen()}
-      {activeView === 'select' && renderSelectionScreen()}
-      {activeView === 'grade' && renderGradingScreen()}
-      {activeView === 'results' && renderResultsScreen()}
+      {renderContent()}
       
       {/* Results Detail Dialog */}
-      <Dialog
-        open={resultsDialogOpen}
-        onClose={() => setResultsDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Grading Details - {selectedResult?.user_name || 'Student'}
-        </DialogTitle>
-        <DialogContent>
-          {selectedResult && (
-            <Box>
-              <Typography variant="h6" gutterBottom>
-                Score: {selectedResult.score_display} ({selectedResult.percentage_display})
-              </Typography>
-              <Typography variant="body1" paragraph>
-                <strong>Status:</strong> {selectedResult.status}
-              </Typography>
-              <Typography variant="body1" paragraph>
-                <strong>Platform:</strong> {selectedResult.platform?.toUpperCase()}
-              </Typography>
-              <Typography variant="body1" paragraph>
-                <strong>Files Processed:</strong> {selectedResult.files_processed}
-              </Typography>
-              <Typography variant="body1" paragraph>
-                <strong>Rubric Used:</strong> {selectedResult.rubric_used}
-              </Typography>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="h6" gutterBottom>
-                Feedback:
-              </Typography>
-              <Typography variant="body2" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
-                {selectedResult.feedback || 'No feedback available'}
-              </Typography>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResultsDialogOpen(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
+      {renderResultsDialog()}
     </Container>
   );
 };

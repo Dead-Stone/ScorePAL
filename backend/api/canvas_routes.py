@@ -28,6 +28,15 @@ from utils.directory_utils import ensure_directory_structure
 # Import rubric functionality directly
 from rubric_api import RUBRICS, load_rubrics_from_disk
 
+# Add agentic framework imports
+from agentic_integration import (
+    AgenticCanvasService, 
+    create_canvas_service, 
+    workflow_manager,
+    initialize_global_agentic_system,
+    shutdown_global_agentic_system
+)
+
 settings = get_settings()
 directories = ensure_directory_structure()  # Get directories dictionary
 
@@ -40,16 +49,18 @@ router = APIRouter()  # No prefix here - it will be added when included in the a
 # Global Canvas service instance
 canvas_service_global = None
 
-def get_canvas_service() -> CanvasGradingService:
-    """Get the Canvas grading service."""
-    canvas_api_key = settings.canvas_api_key
-    canvas_url = settings.canvas_url
-    gemini_api_key = settings.gemini_api_key
+def get_canvas_service(canvas_api_key: str = None, canvas_url: str = None, gemini_api_key: str = None, use_agentic: bool = True) -> CanvasGradingService:
+    """Get the Canvas grading service (agentic or traditional)."""
+    # Use provided parameters or fall back to settings
+    api_key = canvas_api_key or settings.canvas_api_key
+    url = canvas_url or settings.canvas_url
+    gemini_key = gemini_api_key or settings.gemini_api_key
     
-    return CanvasGradingService(
-        canvas_api_key=canvas_api_key,
-        canvas_url=canvas_url,
-        gemini_api_key=gemini_api_key,
+    return create_canvas_service(
+        canvas_url=url,
+        canvas_api_key=api_key,
+        gemini_api_key=gemini_key,
+        use_agentic=use_agentic
     )
 
 @router.get("/status")
@@ -257,11 +268,12 @@ async def initialize_canvas(request: Request):
         # Get Gemini API key from environment
         gemini_api_key = os.getenv("GEMINI_API_KEY", "")
         
-        # Create the Canvas service instance and update global variable
-        canvas_service_global = CanvasGradingService(
+        # Create the Canvas service instance and update global variable (using agentic framework)
+        canvas_service_global = create_canvas_service(
             canvas_url=canvas_url,
             canvas_api_key=clean_api_key,
-            gemini_api_key=gemini_api_key
+            gemini_api_key=gemini_api_key,
+            use_agentic=True
         )
         
         # Make sure to update the global variable
@@ -582,6 +594,10 @@ async def get_assignments(request: Request):
             all_assignments.extend(page_assignments)
             logger.info(f"Fetched {len(page_assignments)} assignments on page {page}, {len(all_assignments)} total so far")
             
+            # Log assignment details for debugging
+            for assignment in page_assignments:
+                logger.info(f"Assignment found: ID={assignment.get('id')}, Name='{assignment.get('name')}', State={assignment.get('workflow_state')}")
+            
             # If we got fewer than per_page results, this is likely the last page
             if len(page_assignments) < per_page:
                 logger.info(f"Got {len(page_assignments)} < {per_page} assignments, assuming this is the last page")
@@ -596,10 +612,24 @@ async def get_assignments(request: Request):
         
         logger.info(f"Finished fetching assignments for course {course_id}. Total assignments retrieved: {len(all_assignments)}")
         
+        # Log all assignments with their IDs and names for debugging assignment selection issues
+        logger.info("=== ALL ASSIGNMENTS FOR DEBUGGING ===")
+        for i, assignment in enumerate(all_assignments):
+            assignment_id = assignment.get('id')
+            assignment_name = assignment.get('name', '')
+            workflow_state = assignment.get('workflow_state', '')
+            logger.info(f"Assignment #{i+1}: ID={assignment_id}, Name='{assignment_name}', State={workflow_state}")
+        logger.info("=== END ASSIGNMENT LIST ===")
+        
         return {
             "status": "success",
             "assignments": all_assignments,
-            "total_count": len(all_assignments)
+            "total_count": len(all_assignments),
+            "pagination_info": {
+                "per_page": per_page,
+                "total_pages": page - 1,
+                "fetched_all": True
+            }
         }
     except HTTPException:
         raise
@@ -2232,14 +2262,48 @@ async def grade_canvas_assignment(
                 "message": "Canvas not initialized. Please initialize with credentials first."
             }
         
-        # Get rubric_id from request body
+        # Get rubric_id, selected_students, and strictness from request body
         rubric_id = "default"
+        selected_students = None
+        strictness = 0.5  # Default strictness level (moderate)
         try:
             body = await request.json()
             rubric_id = body.get('rubric_id', 'default')
+            selected_students = body.get('selected_students', [])
+            strictness = float(body.get('strictness', 0.5))  # Accept strictness from request
+            # Ensure strictness is within valid range
+            strictness = max(0.0, min(1.0, strictness))
         except:
-            # If no body or JSON parsing fails, use default
+            # If no body or JSON parsing fails, use defaults
             pass
+        
+        # If students are selected, save the selection first
+        if selected_students and len(selected_students) > 0:
+            logger.info(f"Saving selection for {len(selected_students)} students: {selected_students}")
+            
+            # Convert selected_students from strings to integers if needed
+            selected_student_ids = []
+            for student_id in selected_students:
+                try:
+                    selected_student_ids.append(int(student_id))
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid student ID: {student_id}")
+            
+            if selected_student_ids:
+                logger.info(f"Converted student IDs: {selected_student_ids}")
+                # Save to both default submissions directory and job directory
+                selection_result = canvas_service_global.select_students_for_grading(
+                    course_id, assignment_id, selected_student_ids, "submissions"
+                )
+                logger.info(f"Selection result: {selection_result}")
+                if not selection_result.get('success'):
+                    logger.warning(f"Failed to save student selection: {selection_result.get('message')}")
+                else:
+                    logger.info(f"Successfully saved selection for {len(selected_student_ids)} students")
+            else:
+                logger.warning("No valid student IDs found in selection")
+        else:
+            logger.info("No students selected for grading")
         
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
@@ -2255,6 +2319,7 @@ async def grade_canvas_assignment(
             "course_id": course_id,
             "assignment_id": assignment_id,
             "rubric_id": rubric_id,
+            "strictness": strictness,
             "status": "queued",
             "created_at": datetime.now().isoformat(),
             "output_dir": str(output_dir)
@@ -2273,6 +2338,7 @@ async def grade_canvas_assignment(
             course_id=course_id,
             assignment_id=assignment_id,
             rubric_id=rubric_id,
+            strictness=strictness,
             output_dir=output_dir
         )
         
@@ -2293,6 +2359,7 @@ async def process_canvas_assignment(
     course_id: int,
     assignment_id: int,
     rubric_id: str,
+    strictness: float,
     output_dir: Path
 ):
     """Process a Canvas assignment in the background with rubric support."""
@@ -2381,9 +2448,117 @@ async def process_canvas_assignment(
                 logger.warning(f"Could not load rubric {rubric_id}: {str(e)}, using default rubric")
         
         # Process the assignment with rubric
-        success, message, results = canvas_service_global.process_assignment(
-            course_id, assignment_id, str(output_dir), rubric=rubric
-        )
+        # First check if there are selected students, if so only grade those
+        # Use the global canvas service to maintain agentic capabilities
+        canvas_service = canvas_service_global
+        
+        # Check for selected students - first in default submissions directory
+        selection_status = canvas_service.get_selection_status(course_id, assignment_id, "submissions")
+        
+        if selection_status.get('success') and selection_status.get('selected_students', []):
+            selected_students = selection_status.get('selected_students', [])
+            selected_student_ids = [student['user_id'] for student in selected_students]
+            logger.info(f"Found {len(selected_students)} selected students, grading only those: {selected_student_ids}")
+            
+            # Create the job directory structure
+            job_assignment_path = output_dir / f"course_{course_id}" / f"assignment_{assignment_id}"
+            job_submissions_dir = job_assignment_path / "submissions"
+            job_batch_dir = job_assignment_path / "batch_results"
+            job_metadata_dir = job_assignment_path / "metadata"
+            
+            job_submissions_dir.mkdir(parents=True, exist_ok=True)
+            job_batch_dir.mkdir(parents=True, exist_ok=True)
+            job_metadata_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy the selection to the job directory
+            job_selected_file = job_batch_dir / "selected_students.json"
+            selection_data = {
+                'assignment_id': assignment_id,
+                'selected_students': selected_students,
+                'selection_timestamp': selection_status.get('selection_timestamp'),
+                'total_selected': len(selected_students)
+            }
+            
+            with open(job_selected_file, 'w', encoding='utf-8') as f:
+                json.dump(selection_data, f, indent=2, default=str)
+            
+            # Get submissions from Canvas for only the selected students
+            logger.info("Fetching submissions for selected students from Canvas...")
+            try:
+                submissions_data = canvas_service_global.get_submissions_for_assignment(
+                    course_id, assignment_id, include=['submission_history', 'submission_comments', 'attachments']
+                )
+                
+                if submissions_data.get('success'):
+                    all_submissions = submissions_data.get('submissions', [])
+                    
+                    # Filter submissions to only selected students
+                    selected_submissions = []
+                    for submission in all_submissions:
+                        if submission.get('user_id') in selected_student_ids:
+                            selected_submissions.append(submission)
+                    
+                    logger.info(f"Found submissions for {len(selected_submissions)} selected students")
+                    
+                    # Create metadata for each selected student
+                    for submission in selected_submissions:
+                        user_id = submission.get('user_id')
+                        user_name = submission.get('user', {}).get('name', f'User_{user_id}')
+                        
+                        student_dir = job_submissions_dir / f"student_{user_id}"
+                        student_dir.mkdir(exist_ok=True)
+                        
+                        # Create metadata for the student
+                        metadata = {
+                            'user_id': user_id,
+                            'user_name': user_name,
+                            'user_email': submission.get('user', {}).get('email', ''),
+                            'submission_type': submission.get('submission_type'),
+                            'workflow_state': submission.get('workflow_state'),
+                            'score': submission.get('score'),
+                            'submitted_at': submission.get('submitted_at'),
+                            'files': [],
+                            'download_status': 'success'
+                        }
+                        
+                        # Add attachment information
+                        attachments = submission.get('attachments', [])
+                        for attachment in attachments:
+                            metadata['files'].append({
+                                'filename': attachment.get('filename'),
+                                'url': attachment.get('url'),
+                                'content-type': attachment.get('content-type'),
+                                'size': attachment.get('size')
+                            })
+                        
+                        # Save metadata
+                        metadata_file = student_dir / "metadata.json"
+                        with open(metadata_file, 'w', encoding='utf-8') as f:
+                            json.dump(metadata, f, indent=2, default=str)
+                    
+                    # Use the selective grading method with the job directory as base_dir
+                    success = True
+                    message = "Grading selected students only"
+                    results = canvas_service.grade_selected_students_only(
+                        course_id, assignment_id, str(output_dir), strictness=strictness
+                    )
+                    if not results.get('success'):
+                        success = False
+                        message = results.get('message', 'Failed to grade selected students')
+                else:
+                    success = False
+                    message = f"Failed to fetch submissions: {submissions_data.get('message', 'Unknown error')}"
+                    
+            except Exception as e:
+                logger.error(f"Error fetching submissions for selected students: {e}")
+                success = False
+                message = f"Error fetching submissions: {str(e)}"
+        else:
+            logger.info("No students selected, processing all submissions")
+            # Use the original method for all submissions
+            success, message, results = canvas_service_global.process_assignment(
+                course_id, assignment_id, str(output_dir), rubric=rubric, strictness=strictness
+            )
         
         # Update job status
         if success:
@@ -3037,4 +3212,274 @@ async def get_selection_status(request: Request):
             'success': False,
             'message': f'Error getting selection status: {str(e)}',
             'selected_students': []
+        }
+
+@router.post("/debug-assignments")
+async def debug_assignments(request: Request):
+    """
+    Debug endpoint to test assignment fetching and identify selection issues.
+    Expected request body: {"api_key": "...", "course_id": 123}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        
+        if not api_key or not course_id:
+            raise HTTPException(
+                status_code=400, 
+                detail="API key and course ID are required"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Clean up the API key (remove Bearer prefix if present)
+        clean_api_key = api_key.replace("Bearer ", "").strip()
+        
+        # Fetch assignments with debugging
+        headers = {"Authorization": f"Bearer {clean_api_key}"}
+        url = f"{canvas_url}/api/v1/courses/{course_id}/assignments?per_page=50&page=1"
+        
+        logger.info(f"DEBUG: Fetching assignments from: {url}")
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            logger.error(f"DEBUG: Canvas API error: {response.status_code} - {response.text}")
+            return {
+                "status": "error",
+                "message": f"Failed to fetch assignments from Canvas: {response.status_code}",
+                "debug_info": {
+                    "url": url,
+                    "status_code": response.status_code,
+                    "response_text": response.text[:500]  # First 500 chars
+                }
+            }
+        
+        assignments = response.json()
+        
+        # Create debug information
+        debug_info = {
+            "total_assignments": len(assignments),
+            "assignments_summary": [],
+            "networking_assignments": [],
+            "honesty_assignments": []
+        }
+        
+        for assignment in assignments:
+            assignment_info = {
+                "id": assignment.get('id'),
+                "name": assignment.get('name', ''),
+                "workflow_state": assignment.get('workflow_state', ''),
+                "published": assignment.get('published', False)
+            }
+            debug_info["assignments_summary"].append(assignment_info)
+            
+            # Look for networking-related assignments
+            name_lower = assignment.get('name', '').lower()
+            if 'network' in name_lower or 'hw' in name_lower:
+                debug_info["networking_assignments"].append(assignment_info)
+            
+            # Look for honesty pledge assignments
+            if 'honesty' in name_lower or 'pledge' in name_lower:
+                debug_info["honesty_assignments"].append(assignment_info)
+        
+        logger.info(f"DEBUG: Found {len(assignments)} assignments")
+        logger.info(f"DEBUG: Networking assignments: {debug_info['networking_assignments']}")
+        logger.info(f"DEBUG: Honesty assignments: {debug_info['honesty_assignments']}")
+        
+        return {
+            "status": "success",
+            "message": "Debug information retrieved successfully",
+            "debug_info": debug_info,
+            "raw_assignments": assignments
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"DEBUG: Error in debug endpoint: {e}")
+        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
+
+@router.post("/grade-selected-students-with-urls")
+async def grade_selected_students_with_urls(request: Request):
+    """
+    Grade only selected students using Canvas URLs directly.
+    Only processes PDF files for now, shows 'updating coming soon' for other types.
+    Expected request body: {"api_key": "...", "course_id": "...", "assignment_id": "..."}
+    """
+    try:
+        # Parse request body
+        body = await request.json()
+        api_key = body.get("api_key")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not all([api_key, course_id, assignment_id]):
+            raise HTTPException(
+                status_code=400, 
+                detail="API key, course ID, and assignment ID are required"
+            )
+        
+        # Convert to integers
+        try:
+            course_id = int(course_id)
+            assignment_id = int(assignment_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Course ID and Assignment ID must be valid integers"
+            )
+        
+        # Use hardcoded SJSU Canvas URL
+        canvas_url = "https://sjsu.instructure.com"
+        
+        # Initialize Canvas service
+        canvas_service = get_canvas_service(api_key, canvas_url)
+        
+        # Grade selected students only
+        logger.info(f"Starting grading for selected students in course {course_id}, assignment {assignment_id}")
+        results = canvas_service.grade_selected_students_only(course_id, assignment_id)
+        
+        if results['success']:
+            logger.info(f"Grading completed: {results.get('message', 'Unknown status')}")
+            return {
+                "success": True,
+                "message": results['message'],
+                "data": {
+                    "results": results['results'],
+                    "summary": results.get('summary', {})
+                }
+            }
+        else:
+            logger.warning(f"Grading failed: {results['message']}")
+            return {
+                "success": False,
+                "message": results['message'],
+                "data": None
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in grade selected students with URLs endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# Agentic Framework Endpoints
+
+@router.get("/workflow-status/{workflow_id}")
+async def get_workflow_status(workflow_id: str):
+    """Get the status of an agentic workflow."""
+    try:
+        status = workflow_manager.get_workflow_status(workflow_id)
+        return {
+            "status": "success",
+            "workflow_id": workflow_id,
+            "workflow_status": status
+        }
+    except Exception as e:
+        logger.error(f"Error getting workflow status: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error getting workflow status: {str(e)}"
+        }
+
+@router.get("/workflows")
+async def get_all_workflows():
+    """Get all tracked workflows."""
+    try:
+        workflows = workflow_manager.get_all_workflows()
+        return {
+            "status": "success",
+            "workflows": workflows
+        }
+    except Exception as e:
+        logger.error(f"Error getting workflows: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error getting workflows: {str(e)}"
+        }
+
+@router.post("/start-agentic-grading")
+async def start_agentic_grading(request: Request):
+    """Start agentic grading workflow for selected students."""
+    try:
+        data = await request.json()
+        course_id = data.get("course_id")
+        assignment_id = data.get("assignment_id")
+        
+        if not course_id or not assignment_id:
+            return {
+                "status": "error",
+                "message": "Course ID and Assignment ID are required"
+            }
+        
+        if not canvas_service_global:
+            return {
+                "status": "error",
+                "message": "Canvas service not initialized"
+            }
+        
+        # Check if using agentic service
+        if hasattr(canvas_service_global, 'grade_selected_students_agentic'):
+            result = await canvas_service_global.grade_selected_students_agentic(
+                course_id=int(course_id),
+                assignment_id=int(assignment_id)
+            )
+            return {
+                "status": "success" if result.get('success') else "error",
+                "message": result.get('message', ''),
+                "results": result.get('results', {})
+            }
+        else:
+            # Fallback to traditional grading
+            result = canvas_service_global.grade_selected_students_only(
+                course_id=int(course_id),
+                assignment_id=int(assignment_id)
+            )
+            return {
+                "status": "success" if result.get('success') else "error",
+                "message": result.get('message', ''),
+                "results": result.get('results', {})
+            }
+            
+    except Exception as e:
+        logger.error(f"Error starting agentic grading: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error starting agentic grading: {str(e)}"
+        }
+
+@router.post("/initialize-agentic-system")
+async def initialize_agentic_system():
+    """Initialize the global agentic system."""
+    try:
+        await initialize_global_agentic_system()
+        return {
+            "status": "success",
+            "message": "Agentic system initialized successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error initializing agentic system: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error initializing agentic system: {str(e)}"
+        }
+
+@router.post("/shutdown-agentic-system")
+async def shutdown_agentic_system():
+    """Shutdown the global agentic system."""
+    try:
+        await shutdown_global_agentic_system()
+        return {
+            "status": "success",
+            "message": "Agentic system shutdown successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error shutting down agentic system: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Error shutting down agentic system: {str(e)}"
         }

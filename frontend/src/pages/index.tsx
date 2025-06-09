@@ -24,6 +24,15 @@ import {
   Grid,
   Divider,
   CircularProgress,
+  Slider,
+  IconButton,
+  Switch,
+  FormControlLabel,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Drawer,
 } from '@mui/material';
 import {
   CloudUpload as UploadIcon,
@@ -34,6 +43,9 @@ import {
   ExpandMore as ExpandMoreIcon,
   School as GradeIcon,
   Refresh as RefreshIcon,
+  Info as InfoIcon,
+  Settings as SettingsIcon,
+  Tune as TuneIcon,
 } from '@mui/icons-material';
 import { useRouter } from 'next/router';
 import { useFreeTrial } from '../hooks/useFreeTrial';
@@ -49,7 +61,7 @@ interface Rubric {
 
 interface GradingState {
   step: number;
-  assignment: File | null;
+  assignments: File[];
   rubric: any;
   result: any;
   loading: boolean;
@@ -81,7 +93,7 @@ const HomePage: React.FC = () => {
   
   const [gradingState, setGradingState] = useState<GradingState>({
     step: 0,
-    assignment: null,
+    assignments: [],
     rubric: null,
     result: null,
     loading: false,
@@ -89,8 +101,15 @@ const HomePage: React.FC = () => {
 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [alert, setAlert] = useState<{ type: 'success' | 'error' | 'warning' | 'info'; message: string } | null>(null);
+  
+  // Configuration state
+  const [config, setConfig] = useState({
+    strictness: 0.5,
+    modelType: 'moderate', // 'fast', 'moderate', 'deep'
+    selectedRubric: null as any,
+  });
 
-  const steps = ['Upload Assignment', 'Select Rubric', 'Review & Grade'];
+  const steps = ['Upload Files', 'Configure & Grade'];
 
   // Check if user can proceed with grading - prioritize localUser over hook state
   const isAuthenticated = localUser || isLoggedIn;
@@ -123,27 +142,66 @@ const HomePage: React.FC = () => {
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      // Validate file type
-      const allowedTypes = ['application/pdf', 'text/plain', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-      if (!allowedTypes.includes(file.type)) {
+    const files = Array.from(event.target.files || []);
+    if (files.length > 0) {
+      // Validate file type - much more comprehensive list
+      const allowedTypes = [
+        // Documents
+        'application/pdf', 'text/plain', 'application/msword', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/markdown',
+        
+        // Programming files
+        'text/x-python', 'text/x-java-source', 'text/x-c', 'text/x-c++src',
+        'application/javascript', 'text/javascript', 'application/typescript',
+        'text/html', 'text/css',
+        
+        // Data files
+        'application/json', 'application/xml', 'text/xml', 'text/csv',
+        'application/x-yaml', 'text/yaml',
+        
+        // Archives
+        'application/zip', 'application/x-tar', 'application/gzip',
+        
+        // Images
+        'image/jpeg', 'image/png', 'image/gif', 'image/bmp',
+        
+        // Notebooks
+        'application/x-ipynb+json',
+      ];
+      
+      // Validate all files
+      const allowedExtensions = [
+        'pdf', 'txt', 'doc', 'docx', 'md',
+        'py', 'java', 'cpp', 'c', 'h', 'hpp', 'js', 'ts', 'html', 'css', 'scss',
+        'json', 'xml', 'yaml', 'yml', 'csv', 'tsv',
+        'zip', 'tar', 'gz',
+        'jpg', 'jpeg', 'png', 'gif', 'bmp',
+        'ipynb', 'r', 'R', 'm', 'sql', 'sh', 'bash', 'ps1', 'bat'
+      ];
+      
+      const invalidFiles = files.filter(file => {
+        const fileExtension = file.name.toLowerCase().split('.').pop() || '';
+        return !allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension);
+      });
+      
+      if (invalidFiles.length > 0) {
         setAlert({
           type: 'error',
-          message: 'Please upload a PDF, DOC, DOCX, or TXT file.',
+          message: `Unsupported file type(s): ${invalidFiles.map(f => f.name).join(', ')}. Please upload supported file types only.`,
         });
         return;
       }
       
       setGradingState(prev => ({
         ...prev,
-        assignment: file,
+        assignments: files,
         step: 1,
       }));
 
       setAlert({
         type: 'success',
-        message: `File "${file.name}" uploaded successfully!`,
+        message: `${files.length} file(s) uploaded successfully!`,
       });
     }
   };
@@ -224,10 +282,12 @@ const HomePage: React.FC = () => {
     try {
       // Create FormData for file upload
       const formData = new FormData();
-      if (gradingState.assignment) {
-        formData.append('file', gradingState.assignment);
-      }
-      formData.append('rubric_id', gradingState.rubric?.id || 'default');
+      gradingState.assignments.forEach((file, index) => {
+        formData.append(`files`, file);
+      });
+      formData.append('rubric_id', config.selectedRubric?.id || gradingState.rubric?.id || 'default');
+      formData.append('strictness', config.strictness.toString());
+      formData.append('model_type', config.modelType);
 
       const response = await fetch('/api/grade-assignment', {
         method: 'POST',
@@ -254,29 +314,160 @@ const HomePage: React.FC = () => {
   const resetGrading = () => {
     setGradingState({
       step: 0,
-      assignment: null,
+      assignments: [],
       rubric: null,
       result: null,
       loading: false,
     });
+    // Reset configuration to defaults
+    setConfig({
+      strictness: 0.5,
+      modelType: 'moderate',
+      selectedRubric: null,
+    });
     setAlert(null);
   };
 
+  const regradeAssignment = async () => {
+    if (gradingState.assignments.length === 0) return;
+    
+    setGradingState(prev => ({ ...prev, loading: true, result: null }));
+    await handleStartGrading();
+  };
+
+  const updateConfig = (key: string, value: any) => {
+    setConfig(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  const renderConfigurationSidebar = () => (
+    <Paper sx={{ p: 3, position: 'sticky', top: 20, height: 'fit-content' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+        <TuneIcon sx={{ mr: 1, color: 'primary.main' }} />
+        <Typography variant="h6" color="primary.main">
+          Grading Settings
+        </Typography>
+      </Box>
+
+      {/* Strictness Level */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="body2" gutterBottom>
+          Grading Strictness
+          <IconButton
+            size="small"
+            onClick={() => setAlert({
+              type: 'info',
+              message: "Higher strictness means more rigorous grading standards. Moderate works well for most assignments.",
+            })}
+            sx={{ ml: 0.5 }}
+          >
+            <InfoIcon fontSize="small" />
+          </IconButton>
+        </Typography>
+        <Slider
+          value={config.strictness}
+          min={0}
+          max={1}
+          step={0.1}
+          marks={[
+            { value: 0, label: 'Lenient' },
+            { value: 0.5, label: 'Moderate' },
+            { value: 1, label: 'Strict' },
+          ]}
+          onChange={(_, value) => updateConfig('strictness', value)}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
+          size="small"
+        />
+      </Box>
+
+      {/* Model Type */}
+      <Box sx={{ mb: 3 }}>
+        <FormControl fullWidth size="small">
+          <InputLabel>Analysis Type</InputLabel>
+          <Select
+            value={config.modelType}
+            label="Analysis Type"
+            onChange={(e) => updateConfig('modelType', e.target.value)}
+          >
+            <MenuItem value="fast">Fast Analysis</MenuItem>
+            <MenuItem value="moderate">Moderate Analysis</MenuItem>
+            <MenuItem value="deep">Deep Analysis</MenuItem>
+          </Select>
+        </FormControl>
+      </Box>
+
+      {/* Rubric Selection */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="body2" gutterBottom>
+          Rubric
+        </Typography>
+        {rubricsLoading ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 2 }}>
+            <CircularProgress size={20} />
+            <Typography variant="body2" sx={{ ml: 1 }}>Loading...</Typography>
+          </Box>
+        ) : (
+          <FormControl fullWidth size="small">
+            <InputLabel>Select Rubric</InputLabel>
+            <Select
+              value={config.selectedRubric?.id || 'default'}
+              label="Select Rubric"
+              onChange={(e) => {
+                const rubricId = e.target.value;
+                const selectedRubric = rubricId === 'default' 
+                  ? { id: 'default', name: 'Default Assignment Rubric' }
+                  : rubrics.find(r => r.id === rubricId);
+                updateConfig('selectedRubric', selectedRubric);
+              }}
+            >
+              <MenuItem value="default">Default Assignment Rubric</MenuItem>
+              {rubrics.map((rubric) => (
+                <MenuItem key={rubric.id} value={rubric.id}>
+                  {rubric.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
+      </Box>
+
+      {/* Configuration Summary */}
+      <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+        <Typography variant="caption" color="text.secondary">
+          {config.modelType} • {Math.round(config.strictness * 100)}% strictness
+        </Typography>
+      </Box>
+    </Paper>
+  );
+
   const renderUploadStep = () => (
-    <Card sx={{ p: 4, textAlign: 'center' }}>
+    <Card sx={{ p: 4, textAlign: 'center', maxWidth: '600px', mx: 'auto' }}>
       <UploadIcon sx={{ fontSize: 80, color: 'primary.main', mb: 2 }} />
       <Typography variant="h5" gutterBottom>
-        Upload Your Assignment
+        Upload Your Assignment Files
         </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Support for PDF, DOC, DOCX, and TXT files
+      <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+        Upload one or multiple assignment files for AI-powered grading
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+        <strong>Supported formats:</strong> 
+        <br/>📄 Documents: PDF, DOC, DOCX, TXT, MD
+        <br/>💻 Code: Python, Java, C/C++, JavaScript, HTML, CSS, SQL, R, MATLAB
+        <br/>📊 Data: CSV, JSON, XML, YAML, Excel, Jupyter notebooks
+        <br/>📦 Archives: ZIP, TAR (multiple files)
+        <br/>🖼️ Images: JPG, PNG, GIF, BMP (with OCR)
+        <br/><strong>File size limit:</strong> Up to 10MB
         </Typography>
       
       <input
-        accept=".pdf,.doc,.docx,.txt"
+        accept=".pdf,.doc,.docx,.txt,.py,.java,.cpp,.c,.js,.ts,.html,.css,.json,.xml,.csv,.md,.ipynb,.zip,.tar,.jpg,.jpeg,.png,.gif,.bmp"
         style={{ display: 'none' }}
         id="file-upload"
         type="file"
+        multiple
         onChange={handleFileUpload}
       />
       <label htmlFor="file-upload">
@@ -285,19 +476,39 @@ const HomePage: React.FC = () => {
           component="span"
             size="large"
           startIcon={<UploadIcon />}
+          sx={{ 
+            px: 6, 
+            py: 2, 
+            fontSize: '1.1rem',
+            boxShadow: 3,
+            '&:hover': {
+              boxShadow: 6,
+              transform: 'translateY(-2px)',
+              transition: 'all 0.2s ease-in-out'
+            }
+          }}
         >
-          Choose File
+          Choose Files
         </Button>
       </label>
 
-      {gradingState.assignment && (
+      {gradingState.assignments.length > 0 && (
         <Box sx={{ mt: 3 }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, justifyContent: 'center' }}>
+            {gradingState.assignments.map((file, index) => (
           <Chip
+                key={index}
             icon={<AssignmentIcon />}
-            label={gradingState.assignment.name}
+                label={file.name}
             color="primary"
             variant="outlined"
+                size="medium"
           />
+            ))}
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 1 }}>
+            {gradingState.assignments.length} file(s) selected
+          </Typography>
         </Box>
       )}
     </Card>
@@ -308,9 +519,15 @@ const HomePage: React.FC = () => {
       <Typography variant="h5" gutterBottom>
         Select Grading Rubric
       </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Choose a rubric for grading your assignment
+      <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+        Choose how your assignment should be evaluated
       </Typography>
+      <Box sx={{ mb: 3, p: 2, bgcolor: 'info.50', borderRadius: 1, border: '1px solid', borderColor: 'info.100' }}>
+        <Typography variant="body2" color="info.main">
+          <strong>💡 Pro Tip:</strong> Our default rubric evaluates content quality, analysis depth, 
+          organization, evidence usage, and communication clarity. Perfect for most academic assignments!
+        </Typography>
+      </Box>
 
       {rubricsLoading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
@@ -398,17 +615,38 @@ const HomePage: React.FC = () => {
       <Typography variant="h5" gutterBottom>
         Ready to Grade
       </Typography>
+      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+        Review your selections and start the AI-powered grading process
+      </Typography>
       
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6}>
-          <Typography variant="subtitle2" color="text.secondary">Assignment:</Typography>
-          <Typography variant="body1">{gradingState.assignment?.name}</Typography>
+          <Typography variant="subtitle2" color="text.secondary">Files:</Typography>
+          <Typography variant="body1">
+            {gradingState.assignments.length === 1 
+              ? gradingState.assignments[0].name 
+              : `${gradingState.assignments.length} files selected`
+            }
+          </Typography>
         </Grid>
         <Grid item xs={12} sm={6}>
           <Typography variant="subtitle2" color="text.secondary">Rubric:</Typography>
-          <Typography variant="body1">{gradingState.rubric?.name}</Typography>
+          <Typography variant="body1">{config.selectedRubric?.name || 'Default Assignment Rubric'}</Typography>
         </Grid>
       </Grid>
+
+      {/* Configuration Summary */}
+      <Box sx={{ mb: 3, p: 3, bgcolor: 'grey.50', borderRadius: 2 }}>
+        <Typography variant="subtitle1" gutterBottom>
+          Current Configuration
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          Analysis: <strong>{config.modelType}</strong> | Strictness: <strong>{Math.round(config.strictness * 100)}%</strong>
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Use the configuration panel on the right to adjust grading settings.
+        </Typography>
+      </Box>
 
       {/* Trial Status Warning */}
       {!isAuthenticated && !canGrade && (
@@ -431,22 +669,40 @@ const HomePage: React.FC = () => {
         </Alert>
       )}
 
+      <Box sx={{ mt: 3, textAlign: 'center', maxWidth: '400px', mx: 'auto' }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          🚀 <strong>Processing typically takes 30-60 seconds</strong> depending on assignment length
+        </Typography>
       <Button
         variant="contained"
         size="large"
-        fullWidth
+          sx={{ 
+            px: 6, 
+            py: 2, 
+            fontSize: '1.1rem',
+            boxShadow: 3,
+            '&:hover': {
+              boxShadow: 6,
+              transform: 'translateY(-2px)',
+              transition: 'all 0.2s ease-in-out'
+            }
+          }}
         startIcon={<StartIcon />}
         onClick={handleStartGrading}
         disabled={gradingState.loading || (!canGrade && !isAuthenticated)}
       >
-        {gradingState.loading ? 'Grading...' : 'Start Grading'}
+          {gradingState.loading ? 'Grading in Progress...' : 'Start AI Grading'}
       </Button>
+      </Box>
 
       {gradingState.loading && (
-        <Box sx={{ mt: 2 }}>
+        <Box sx={{ mt: 3 }}>
           <LinearProgress />
           <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
-            AI is analyzing your assignment...
+            🤖 AI is analyzing your assignment and applying the rubric criteria...
+          </Typography>
+          <Typography variant="caption" color="text.secondary" align="center" sx={{ mt: 1, display: 'block' }}>
+            This may take a moment for longer assignments
           </Typography>
         </Box>
       )}
@@ -455,9 +711,14 @@ const HomePage: React.FC = () => {
 
   const renderResults = () => (
     <Card sx={{ p: 4 }}>
+      <Box sx={{ textAlign: 'center', mb: 3 }}>
       <Typography variant="h5" gutterBottom>
-        Grading Results
+          🎯 Grading Complete!
           </Typography>
+        <Typography variant="body1" color="text.secondary">
+          Your assignment has been analyzed and graded using AI-powered evaluation
+        </Typography>
+      </Box>
           
       {gradingState.result && (
         <Box>
@@ -466,7 +727,7 @@ const HomePage: React.FC = () => {
               icon={<GradeIcon />}
               label={`Score: ${gradingState.result.score || 'N/A'}`}
               color="primary"
-              size="large"
+              size="medium"
               sx={{ fontSize: '1.2rem', py: 3, px: 2 }}
             />
             {gradingState.result.percentage && gradingState.result.grade_letter && (
@@ -540,22 +801,211 @@ const HomePage: React.FC = () => {
         </Box>
       )}
 
-      <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
-        <Button variant="outlined" onClick={resetGrading} fullWidth>
-          Grade Another Assignment
+      <Box sx={{ mt: 4 }}>
+        <Typography variant="body2" color="text.secondary" align="center" sx={{ mb: 2 }}>
+          Need to grade more assignments? Consider upgrading for bulk grading and advanced features.
+        </Typography>
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+          <Button 
+            variant="contained" 
+            onClick={regradeAssignment} 
+            disabled={gradingState.loading}
+            sx={{ flex: 1, minWidth: '140px' }}
+          >
+            {gradingState.loading ? 'Regrading...' : 'Regrade'}
         </Button>
-        <Button variant="contained" onClick={() => router.push('/rubrics')} fullWidth>
-          Manage Rubrics
+          <Button 
+            variant="outlined" 
+            onClick={resetGrading} 
+            sx={{ flex: 1, minWidth: '140px' }}
+          >
+            New Assignment
+          </Button>
+          <Button 
+            variant="text" 
+            onClick={() => router.push('/rubrics')} 
+            sx={{ flex: 1, minWidth: '140px' }}
+          >
+            Custom Rubrics
             </Button>
+        </Box>
           </Box>
     </Card>
   );
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      {/* Header */}
+      {/* Header with Process Explanation */}
       <Box sx={{ mb: 4 }}>
-        {/* Header content removed */}
+        <Paper 
+          sx={{ 
+            p: 4, 
+            background: 'linear-gradient(135deg, #2563eb 0%, #1e40af 100%)',
+            color: 'white',
+            borderRadius: 3,
+            mb: 3
+          }}
+        >
+          <Box sx={{ textAlign: 'center', mb: 3 }}>
+            <Typography variant="h3" component="h1" gutterBottom fontWeight="bold">
+              Assignment Grading
+            </Typography>
+            <Typography variant="h6" sx={{ opacity: 0.9, maxWidth: '800px', mx: 'auto' }}>
+              Experience AI-powered assignment grading that's fast, consistent, and detailed. Upload single or multiple files.
+            </Typography>
+          </Box>
+        </Paper>
+
+        <Paper sx={{ p: 4, borderRadius: 3, border: '1px solid #e5e7eb' }}>
+          <Typography variant="h5" gutterBottom color="primary.main" fontWeight="semibold">
+            How Single Grading Works
+          </Typography>
+          <Typography variant="body1" paragraph color="text.secondary" sx={{ mb: 3 }}>
+            Our single grading feature allows you to grade individual assignments quickly and efficiently. 
+            No registration required to get started - try it for free!
+          </Typography>
+          
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={4}>
+              <Box sx={{ textAlign: 'center' }}>
+                <Box 
+                  sx={{ 
+                    width: 60, 
+                    height: 60, 
+                    borderRadius: '50%', 
+                    background: 'linear-gradient(135deg, #3b82f6, #1e40af)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    mx: 'auto',
+                    mb: 2
+                  }}
+                >
+                  <Typography variant="h6" color="white" fontWeight="bold">1</Typography>
+                </Box>
+                <Typography variant="h6" gutterBottom>Upload Assignments</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Upload one or multiple assignment files including documents, code files, data files, or archives. 
+                  Our AI understands all major programming languages and academic formats.
+                </Typography>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} md={4}>
+              <Box sx={{ textAlign: 'center' }}>
+                <Box 
+                  sx={{ 
+                    width: 60, 
+                    height: 60, 
+                    borderRadius: '50%', 
+                    background: 'linear-gradient(135deg, #3b82f6, #1e40af)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    mx: 'auto',
+                    mb: 2
+                  }}
+                >
+                  <Typography variant="h6" color="white" fontWeight="bold">2</Typography>
+                </Box>
+                <Typography variant="h6" gutterBottom>Choose Rubric</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Select from our comprehensive default rubric or use your custom rubrics. 
+                  Each rubric includes detailed criteria for consistent grading.
+                </Typography>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} md={4}>
+              <Box sx={{ textAlign: 'center' }}>
+                <Box 
+                  sx={{ 
+                    width: 60, 
+                    height: 60, 
+                    borderRadius: '50%', 
+                    background: 'linear-gradient(135deg, #3b82f6, #1e40af)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    mx: 'auto',
+                    mb: 2
+                  }}
+                >
+                  <Typography variant="h6" color="white" fontWeight="bold">3</Typography>
+                </Box>
+                <Typography variant="h6" gutterBottom>Get Results</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Receive detailed feedback, scores, and suggestions for improvement. 
+                  Results include criteria breakdown and constructive comments.
+                </Typography>
+              </Box>
+            </Grid>
+          </Grid>
+
+          <Box sx={{ mt: 4, p: 3, bgcolor: 'grey.50', borderRadius: 2 }}>
+            <Typography variant="subtitle1" gutterBottom fontWeight="semibold">
+              ✨ Free Trial Available
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Try our single grading feature for free! No account required. 
+              Sign up for unlimited access and advanced features like bulk grading, 
+              custom rubrics, and integration with learning management systems.
+            </Typography>
+          </Box>
+        </Paper>
+
+        {/* Features and Benefits */}
+        <Paper sx={{ p: 4, borderRadius: 3, border: '1px solid #e5e7eb', mt: 3 }}>
+          <Typography variant="h6" gutterBottom color="primary.main" fontWeight="semibold">
+            Why Choose AI-Powered Grading?
+          </Typography>
+          <Grid container spacing={3} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box sx={{ textAlign: 'center' }}>
+                <StartIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+                <Typography variant="subtitle2" gutterBottom fontWeight="semibold">
+                  Lightning Fast
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Grade assignments in seconds, not hours
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box sx={{ textAlign: 'center' }}>
+                <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+                <Typography variant="subtitle2" gutterBottom fontWeight="semibold">
+                  Consistent Results
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Objective evaluation without bias
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box sx={{ textAlign: 'center' }}>
+                <RubricIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+                <Typography variant="subtitle2" gutterBottom fontWeight="semibold">
+                  Detailed Feedback
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Comprehensive analysis and suggestions
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box sx={{ textAlign: 'center' }}>
+                <GradeIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+                <Typography variant="subtitle2" gutterBottom fontWeight="semibold">
+                  Professional Quality
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  University-grade evaluation standards
+                </Typography>
+              </Box>
+            </Grid>
+          </Grid>
+        </Paper>
           </Box>
 
       {/* Alert */}
@@ -582,16 +1032,38 @@ const HomePage: React.FC = () => {
         </Paper>
       </Box>
 
-      {/* Main Content */}
+      {/* Main Layout with Sidebar */}
+      <Box sx={{ 
+        display: 'flex', 
+        gap: 3,
+        flexDirection: { xs: 'column', lg: 'row' }
+      }}>
+        {/* Main Content - Center */}
+        <Box sx={{ 
+          flex: 1, 
+          maxWidth: { xs: '100%', lg: '800px' }, 
+          mx: { xs: 0, lg: 'auto' },
+          order: { xs: 2, lg: 1 }
+        }}>
       {gradingState.result ? (
         renderResults()
       ) : (
         <>
           {gradingState.step === 0 && renderUploadStep()}
-          {gradingState.step === 1 && renderRubricStep()}
-          {gradingState.step === 2 && renderGradingStep()}
+              {gradingState.step === 1 && renderGradingStep()}
         </>
       )}
+        </Box>
+
+        {/* Right Sidebar - Configuration Panel */}
+        <Box sx={{ 
+          width: { xs: '100%', lg: 320 }, 
+          flexShrink: 0,
+          order: { xs: 1, lg: 2 }
+        }}>
+          {renderConfigurationSidebar()}
+        </Box>
+      </Box>
 
       {/* Login Modal */}
       <Dialog open={showLoginModal} onClose={() => setShowLoginModal(false)}>

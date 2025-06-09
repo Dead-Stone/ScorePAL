@@ -36,8 +36,9 @@ from utils.directory_utils import ensure_directory_structure
 from rubric_api import router as rubric_router
 from canvas_service import CanvasGradingService
 from config import get_settings  # Use absolute import
-from multi_agent_grading import MultiAgentGradingSystem
+from multi_agent_grading import MultiAgentGradingService
 from chat_api import router as chat_router
+from intelligent_grading_router import IntelligentGradingRouter
 
 # Try to import our custom canvas routes
 try:
@@ -113,9 +114,13 @@ try:
     grading_service = GradingService(api_key=os.getenv("GEMINI_API_KEY"))
     logger.info("GradingService initialized")
     
+    # Initialize the intelligent grading router
+    intelligent_router = IntelligentGradingRouter(api_key=os.getenv("GEMINI_API_KEY"))
+    logger.info("Intelligent Grading Router initialized")
+    
     # Initialize the multi-agent grading system
-    multi_agent_grading = MultiAgentGradingSystem()
-    logger.info(f"Multi-Agent Grading System initialized with {multi_agent_grading.max_workers} workers")
+    multi_agent_grading = MultiAgentGradingService(api_key=os.getenv("GEMINI_API_KEY"))
+    logger.info("Multi-Agent Grading Service initialized")
     
     db = Neo4jConnector()
     if db.is_connected():
@@ -1338,38 +1343,74 @@ async def process_and_grade_single(upload_id: str, metadata: Dict[str, Any]):
                 update_upload_status(upload_id, "failed", metadata, error_msg)
                 return
         
-        # Use the default rubric for now
-        # In a future version, we might load a custom rubric
-        default_rubric = {
-            "criteria": [
-                {
-                    "name": "Content Understanding",
-                    "max_points": 30,
-                    "description": "Understanding of core concepts and materials"
-                },
-                {
-                    "name": "Analysis",
-                    "max_points": 25,
-                    "description": "Critical thinking and analytical skills"
-                },
-                {
-                    "name": "Organization",
-                    "max_points": 20,
-                    "description": "Structure, flow, and clarity"
-                },
-                {
-                    "name": "Evidence",
-                    "max_points": 15,
-                    "description": "Use of supporting evidence and examples"
-                },
-                {
-                    "name": "Language & Mechanics",
-                    "max_points": 10,
-                    "description": "Grammar, spelling, and writing mechanics"
-                }
-            ],
-            "total_points": 100
-        }
+        # Load rubric based on metadata or use default rubric
+        rubric_id = metadata.get("rubric_id", "")
+        grading_rubric = None
+        
+        if rubric_id and rubric_id != "default":
+            try:
+                # Import rubric functionality
+                from rubric_api import RUBRICS, load_rubrics_from_disk
+                
+                # Ensure rubrics are loaded from disk
+                if not RUBRICS:
+                    load_rubrics_from_disk()
+                
+                # Get the rubric
+                if rubric_id in RUBRICS:
+                    rubric_obj = RUBRICS[rubric_id]
+                    # Convert to the format expected by the grading service
+                    grading_rubric = {
+                        "criteria": []
+                    }
+                    total_points = 0
+                    for criterion in rubric_obj.criteria:
+                        grading_rubric["criteria"].append({
+                            "name": criterion.name,
+                            "max_points": criterion.max_points,
+                            "description": criterion.description
+                        })
+                        total_points += criterion.max_points
+                    
+                    grading_rubric["total_points"] = total_points
+                    logger.info(f"Successfully loaded custom rubric '{rubric_obj.name}' with {len(grading_rubric['criteria'])} criteria and {total_points} total points")
+                else:
+                    logger.warning(f"Rubric {rubric_id} not found, using default rubric")
+            except Exception as e:
+                logger.warning(f"Could not load rubric {rubric_id}: {str(e)}, using default rubric")
+        
+        # Use default rubric if no custom rubric was loaded
+        if grading_rubric is None:
+            grading_rubric = {
+                "criteria": [
+                    {
+                        "name": "Content Understanding",
+                        "max_points": 30,
+                        "description": "Understanding of core concepts and materials"
+                    },
+                    {
+                        "name": "Analysis",
+                        "max_points": 25,
+                        "description": "Critical thinking and analytical skills"
+                    },
+                    {
+                        "name": "Organization",
+                        "max_points": 20,
+                        "description": "Structure, flow, and clarity"
+                    },
+                    {
+                        "name": "Evidence",
+                        "max_points": 15,
+                        "description": "Use of supporting evidence and examples"
+                    },
+                    {
+                        "name": "Language & Mechanics",
+                        "max_points": 10,
+                        "description": "Grammar, spelling, and writing mechanics"
+                    }
+                ],
+                "total_points": 100
+            }
         
         # Use assignment name as the assignment ID for grouping
         assignment_id = metadata.get("formatted_name", "unnamed_assignment")
@@ -1384,7 +1425,7 @@ async def process_and_grade_single(upload_id: str, metadata: Dict[str, Any]):
                 answer_key=answer_key_text or "",
                 student_name=student_name,
                 assignment_id=assignment_id,
-                rubric=default_rubric,
+                rubric=grading_rubric,
                 strictness=strictness
             )
             
@@ -3173,23 +3214,30 @@ async def get_canvas_submissions_by_post(
 # Add the missing grade-assignment endpoint that the frontend expects
 @app.post("/api/grade-assignment")
 async def grade_single_assignment(
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     rubric_id: str = Form(default="default"),
     strictness: float = Form(default=0.5),
+    model_type: str = Form(default="moderate"),
     version: str = Form(default="free"),  # free or pro
+    multi_agent: bool = Form(default=False),  # Enable multi-agent analysis
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Grade a single assignment file upload from the home page.
-    This endpoint matches what the frontend expects.
+    Grade one or multiple assignment files from the home page.
+    This endpoint handles both single and multiple file uploads.
     
     Args:
-        file: The assignment file to grade
+        files: List of assignment files to grade together
         rubric_id: ID of the rubric to use for grading
         strictness: Grading strictness (0.0 to 1.0, ignored for pro version)
+        model_type: Analysis type (fast, moderate, deep)
         version: Version type ("free" or "pro") - pro version uses optimal strictness
     """
     try:
+        # Validate files
+        if not files or len(files) == 0:
+            raise HTTPException(status_code=400, detail="No files provided")
+        
         # Generate unique ID for this grading task
         task_id = str(uuid.uuid4())
         
@@ -3197,9 +3245,16 @@ async def grade_single_assignment(
         task_dir = directories["grading_results"] / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save the uploaded file
-        file_path = task_dir / file.filename
-        await save_upload_file(file, file_path)
+        # Save all uploaded files
+        file_paths = []
+        filenames = []
+        for i, file in enumerate(files):
+            if not file.filename:
+                raise HTTPException(status_code=400, detail=f"File {i+1} has no filename")
+            file_path = task_dir / file.filename
+            await save_upload_file(file, file_path)
+            file_paths.append(file_path)
+            filenames.append(file.filename)
         
         # Handle strictness based on version
         if version.lower() == "pro":
@@ -3216,15 +3271,17 @@ async def grade_single_assignment(
         # Create metadata
         metadata = {
             "id": task_id,
-            "type": "single_assignment",
-            "filename": file.filename,
+            "type": "multi_assignment" if len(files) > 1 else "single_assignment",
+            "filenames": filenames,
+            "file_count": len(files),
             "rubric_id": rubric_id,
             "strictness": final_strictness,
+            "model_type": model_type,
             "version": version,
             "strictness_note": strictness_note,
             "status": "processing",
             "created_at": datetime.now().isoformat(),
-            "file_path": str(file_path)
+            "file_paths": [str(fp) for fp in file_paths]
         }
         
         # Save metadata
@@ -3232,20 +3289,35 @@ async def grade_single_assignment(
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
         
+        # Initialize progress tracking
+        progress_tracker[task_id] = {
+            "task_id": task_id,
+            "status": "initializing",
+            "progress": 10,
+            "message": "Starting grading process...",
+            "created_at": datetime.now().isoformat(),
+            "multi_agent": multi_agent
+        }
+        
         # Start grading task in background
         background_tasks.add_task(
-            process_single_assignment_grading,
+            process_multiple_assignment_grading,
             task_id=task_id,
-            file_path=file_path,
+            file_paths=file_paths,
             rubric_id=rubric_id,
             strictness=final_strictness,
-            task_dir=task_dir
+            model_type=model_type,
+            task_dir=task_dir,
+            multi_agent=multi_agent
         )
         
         return {
             "status": "success",
-            "message": "Assignment submitted for grading",
+            "message": f"{len(files)} file(s) submitted for grading",
             "task_id": task_id,
+            "file_count": len(files),
+            "filenames": filenames,
+            "model_type": model_type,
             "version": version,
             "strictness": final_strictness,
             "strictness_note": strictness_note,
@@ -3257,14 +3329,16 @@ async def grade_single_assignment(
         logger.error(f"Error grading single assignment: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing assignment: {str(e)}")
 
-async def process_single_assignment_grading(
+async def process_multiple_assignment_grading(
     task_id: str,
-    file_path: Path,
+    file_paths: List[Path],
     rubric_id: str,
     strictness: float,
-    task_dir: Path
+    model_type: str,
+    task_dir: Path,
+    multi_agent: bool = False
 ):
-    """Background task to process single assignment grading."""
+    """Background task to process single or multiple assignment grading."""
     try:
         # Update status to processing
         metadata_path = task_dir / "metadata.json"
@@ -3277,26 +3351,139 @@ async def process_single_assignment_grading(
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
         
-        # Extract text from file
-        text_content = extract_text_from_pdf(str(file_path))
+        # Update progress tracker
+        if task_id in progress_tracker:
+            progress_tracker[task_id].update({
+                "status": "processing",
+                "progress": 25,
+                "message": "Processing files..." if len(file_paths) > 1 else "Processing file...",
+                "updated_at": datetime.now().isoformat()
+            })
         
-        if not text_content:
-            raise ValueError("Could not extract text from file")
+        # Use enhanced file processor
+        from enhanced_file_processor import EnhancedFileProcessor
+        processor = EnhancedFileProcessor()
+        
+        # Process all files
+        all_content = []
+        combined_metadata = {
+            'file_type': 'multi',
+            'files': [],
+            'total_files': len(file_paths)
+        }
+        
+        for file_path in file_paths:
+            # Process each file using enhanced processor
+            file_result = processor.process_file(file_path)
+            
+            if file_result['status'] != 'success':
+                logger.warning(f"Could not process file {file_path.name}: {file_result.get('error', 'Unknown error')}")
+                continue
+            
+            text_content = file_result['content']
+            file_metadata = file_result['metadata']
+            
+            if text_content and len(text_content.strip()) >= 10:
+                all_content.append({
+                    'filename': file_path.name,
+                    'content': text_content,
+                    'metadata': file_metadata
+                })
+                combined_metadata['files'].append({
+                    'filename': file_path.name,
+                    'file_type': file_metadata.get('file_type', 'unknown'),
+                    'size': len(text_content)
+                })
+                
+                logger.info(f"Enhanced processing completed for {file_path.name}: {file_metadata.get('file_type', 'unknown')} file")
+        
+        if not all_content:
+            raise ValueError("No files could be processed or all files appear to be empty")
+        
+        # Combine content for grading
+        if len(all_content) == 1:
+            # Single file - use as is
+            text_content = all_content[0]['content']
+            file_metadata = all_content[0]['metadata']
+        else:
+            # Multiple files - combine them
+            combined_text = []
+            for item in all_content:
+                combined_text.append(f"=== FILE: {item['filename']} ===\n{item['content']}\n")
+            text_content = "\n\n".join(combined_text)
+            file_metadata = combined_metadata
         
         # Get rubric (use default if needed)
         rubric = None
         if rubric_id != "default":
-            # Try to load custom rubric (implement this based on your rubric system)
-            pass
+            try:
+                # Import rubric functionality
+                from rubric_api import RUBRICS, load_rubrics_from_disk
+                
+                # Ensure rubrics are loaded from disk
+                if not RUBRICS:
+                    load_rubrics_from_disk()
+                
+                # Get the rubric
+                if rubric_id in RUBRICS:
+                    rubric_obj = RUBRICS[rubric_id]
+                    # Convert to the format expected by the grading service
+                    rubric = {
+                        "criteria": []
+                    }
+                    total_points = 0
+                    for criterion in rubric_obj.criteria:
+                        rubric["criteria"].append({
+                            "name": criterion.name,
+                            "max_points": criterion.max_points,
+                            "description": criterion.description
+                        })
+                        total_points += criterion.max_points
+                    
+                    rubric["total_points"] = total_points
+                    logger.info(f"Successfully loaded custom rubric '{rubric_obj.name}' with {len(rubric['criteria'])} criteria and {total_points} total points for single assignment grading")
+                else:
+                    logger.warning(f"Rubric {rubric_id} not found, using default rubric")
+            except Exception as e:
+                logger.warning(f"Could not load rubric {rubric_id}: {str(e)}, using default rubric")
         
-        # Grade the assignment
-        grading_result = grading_service.grade_submission(
-            submission_text=text_content,
-            question_text="",  # No question text available for single file grading
-            answer_key="",     # No answer key available for single file grading  
+        # Adjust strictness based on model type
+        if model_type == "fast":
+            effective_strictness = strictness * 0.8  # Slightly more lenient for fast analysis
+        elif model_type == "deep":
+            effective_strictness = min(1.0, strictness * 1.2)  # Slightly stricter for deep analysis
+        else:  # moderate
+            effective_strictness = strictness
+        
+        # Update progress for grading phase
+        if task_id in progress_tracker:
+            progress_tracker[task_id].update({
+                "status": "grading",
+                "progress": 60,
+                "message": "Multi-agent grading in progress..." if multi_agent else "AI grading in progress...",
+                "updated_at": datetime.now().isoformat()
+            })
+        
+        # Use intelligent grading router for optimal approach selection
+        logger.info(f"Using intelligent grading router for task {task_id}")
+        
+        # Convert file paths for router
+        file_paths_for_router = []
+        for item in all_content:
+            # Create temporary files for router analysis if needed
+            temp_path = task_dir / item['filename']
+            if not temp_path.exists():
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    f.write(item['content'])
+            file_paths_for_router.append(temp_path)
+        
+        # Use intelligent router to automatically select best grading approach
+        grading_result = await intelligent_router.route_and_grade(
+            file_paths=file_paths_for_router,
             student_name="Student",
             rubric=rubric,
-            strictness=strictness
+            strictness=effective_strictness,
+            force_multi_agent=multi_agent
         )
         
         # Save results
@@ -3318,7 +3505,16 @@ async def process_single_assignment_grading(
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
         
-        logger.info(f"Single assignment grading completed: {task_id}")
+        # Update progress tracker to completed
+        if task_id in progress_tracker:
+            progress_tracker[task_id].update({
+                "status": "completed",
+                "progress": 100,
+                "message": "Grading completed successfully!",
+                "completed_at": datetime.now().isoformat()
+            })
+        
+        logger.info(f"Assignment grading completed: {task_id} ({len(file_paths)} files, {model_type} analysis)")
         
     except Exception as e:
         logger.error(f"Error in background grading task {task_id}: {e}")
@@ -3334,6 +3530,16 @@ async def process_single_assignment_grading(
             
             with open(metadata_path, "w") as f:
                 json.dump(metadata, f, indent=2)
+            
+            # Update progress tracker to failed
+            if task_id in progress_tracker:
+                progress_tracker[task_id].update({
+                    "status": "failed",
+                    "progress": 0,
+                    "message": f"Grading failed: {str(e)}",
+                    "error": str(e),
+                    "failed_at": datetime.now().isoformat()
+                })
         except Exception as meta_error:
             logger.error(f"Error updating metadata for failed task {task_id}: {meta_error}")
 
@@ -3410,7 +3616,31 @@ async def get_single_assignment_results(task_id: str):
                 "mistakes": grading_result.get("mistakes", []),
                 "student_name": grading_result.get("student_name", "Student"),
                 "completed_at": results.get("completed_at"),
-                "graded_at": metadata.get("completed_at")
+                "graded_at": metadata.get("completed_at"),
+                "accuracy_score": grading_result.get("accuracy_score", 0.0),
+                "accuracy_metrics": grading_result.get("accuracy_metrics", {
+                    "mathematical_accuracy": 0.0,
+                    "feedback_quality": 0.0,
+                    "score_reasonableness": 0.0,
+                    "evidence_quality": 0.0,
+                    "overall_confidence": 0.0,
+                    "accuracy_level": "unknown"
+                }),
+                "model_self_assessment": grading_result.get("model_self_assessment", {
+                    "mathematical_accuracy": 0.0,
+                    "evidence_quality": 0.0,
+                    "feedback_quality": 0.0,
+                    "score_reasonableness": 0.0,
+                    "overall_confidence": 0.0,
+                    "accuracy_notes": "No self-assessment provided"
+                }),
+                "multi_agent_analysis": grading_result.get("multi_agent_analysis", {
+                    "consensus_confidence": 0.0,
+                    "agreement_level": "single_agent",
+                    "consensus_method": "single_agent",
+                    "agent_count": 1,
+                    "individual_scores": []
+                })
             }
         
         # Unknown status
@@ -3466,6 +3696,41 @@ async def get_single_assignment_status(task_id: str):
     except Exception as e:
         logger.error(f"Error getting assignment status: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting assignment status: {str(e)}")
+
+@app.get("/api/supported-file-types")
+async def get_supported_file_types():
+    """
+    Get the list of supported file types for intelligent grading.
+    
+    Returns:
+        Dictionary containing supported extensions and their categories
+    """
+    try:
+        extensions = intelligent_router.document_processor.get_supported_extensions()
+        extension_info = {}
+        
+        for ext in extensions:
+            file_type = intelligent_router.document_processor.supported_extensions.get(ext, 'unknown')
+            if file_type not in extension_info:
+                extension_info[file_type] = []
+            extension_info[file_type].append(ext)
+        
+        return {
+            "supported_extensions": extensions,
+            "file_types": extension_info,
+            "total_supported": len(extensions),
+            "categories": {
+                "code": "Programming and script files",
+                "text": "Plain text and markdown files", 
+                "pdf": "PDF documents",
+                "docx": "Microsoft Word documents",
+                "doc": "Legacy Word documents"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting supported file types: {e}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving supported file types: {str(e)}")
 
 @app.get("/api/grade-assignment/{task_id}/simple")
 async def get_simple_assignment_results(task_id: str):
@@ -3576,6 +3841,89 @@ async def get_simple_assignment_results(task_id: str):
             "task_id": task_id
         }
 
+# Add progress tracking for long-running operations
+progress_tracker = {}
+
+@app.get("/api/grade-assignment/{task_id}/progress")
+async def get_grading_progress(task_id: str):
+    """
+    Get real-time progress for multi-agent grading operations.
+    
+    Args:
+        task_id: The task ID returned from the grade-assignment endpoint
+    """
+    try:
+        # Check if task exists in progress tracker
+        if task_id in progress_tracker:
+            return progress_tracker[task_id]
+        
+        # Fall back to checking file system status
+        task_dir = directories["grading_results"] / task_id
+        
+        if not task_dir.exists():
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "progress": 0,
+                "message": "Task not found"
+            }
+        
+        # Check metadata for status
+        metadata_path = task_dir / "metadata.json"
+        if not metadata_path.exists():
+            return {
+                "task_id": task_id,
+                "status": "initializing",
+                "progress": 5,
+                "message": "Initializing grading task..."
+            }
+        
+        with open(metadata_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        
+        status = metadata.get("status", "unknown")
+        
+        if status == "processing":
+            return {
+                "task_id": task_id,
+                "status": "processing",
+                "progress": 50,
+                "message": "Grading in progress...",
+                "created_at": metadata.get("created_at")
+            }
+        elif status == "completed":
+            return {
+                "task_id": task_id,
+                "status": "completed",
+                "progress": 100,
+                "message": "Grading completed successfully",
+                "completed_at": metadata.get("completed_at")
+            }
+        elif status == "failed":
+            return {
+                "task_id": task_id,
+                "status": "failed",
+                "progress": 0,
+                "message": f"Grading failed: {metadata.get('error', 'Unknown error')}",
+                "error": metadata.get("error")
+            }
+        else:
+            return {
+                "task_id": task_id,
+                "status": status,
+                "progress": 25,
+                "message": f"Status: {status}"
+            }
+        
+    except Exception as e:
+        logger.error(f"Error getting grading progress: {e}")
+        return {
+            "task_id": task_id,
+            "status": "error",
+            "progress": 0,
+            "message": f"Error retrieving progress: {str(e)}"
+        }
+
 if __name__ == "__main__":
     # Adjust directories based on the new project structure
     for dir_name, dir_path in directories.items():
@@ -3583,8 +3931,16 @@ if __name__ == "__main__":
             logger.info(f"Creating directory: {dir_path}")
             dir_path.mkdir(parents=True, exist_ok=True)
             
-    # Start the API server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Start the API server with extended timeout for multi-agent grading
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=8000,
+        timeout_keep_alive=120,  # 2 minutes keep-alive
+        timeout_graceful_shutdown=30,  # 30 seconds graceful shutdown
+        limit_max_requests=1000,  # Prevent memory leaks
+        limit_concurrency=100  # Reasonable concurrency limit
+    )
     
     # Log startup
     logger.info("API server started successfully") 
