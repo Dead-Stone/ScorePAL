@@ -62,7 +62,7 @@ class Rubric:
         name: str,
         description: str,
         criteria: List[GradingCriteria],
-        course_id: Optional[str] = None,
+        strictness: float = 0.5,
         id: Optional[str] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None
@@ -74,7 +74,7 @@ class Rubric:
             name: Name of the rubric
             description: Description of the rubric
             criteria: List of grading criteria
-            course_id: Optional course identifier this rubric belongs to
+            strictness: Grading strictness from 0.0 (lenient) to 1.0 (strict)
             id: Optional unique identifier
             created_at: Optional creation timestamp
             updated_at: Optional last update timestamp
@@ -82,7 +82,7 @@ class Rubric:
         self.name = name
         self.description = description
         self.criteria = criteria
-        self.course_id = course_id
+        self.strictness = max(0.0, min(1.0, strictness))  # Ensure between 0 and 1
         self.id = id or f"rubric_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         self.created_at = created_at or datetime.now().isoformat()
         self.updated_at = updated_at or self.created_at
@@ -99,7 +99,7 @@ class Rubric:
             "name": self.name,
             "description": self.description,
             "criteria": [criterion.to_dict() for criterion in self.criteria],
-            "course_id": self.course_id,
+            "strictness": self.strictness,
             "total_points": self.total_points,
             "created_at": self.created_at,
             "updated_at": self.updated_at
@@ -117,7 +117,7 @@ class Rubric:
             name=data.get("name", ""),
             description=data.get("description", ""),
             criteria=criteria,
-            course_id=data.get("course_id"),
+            strictness=data.get("strictness", 0.5),
             id=data.get("id"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at")
@@ -192,5 +192,6 @@ class Rubric:
         return cls(
             name="Default Assignment Rubric",
             description="A standard rubric for evaluating written assignments",
-            criteria=criteria
+            criteria=criteria,
+            strictness=0.5
         ) 

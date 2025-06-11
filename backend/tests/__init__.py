@@ -1,1 +1,0 @@
-# Test package for GA_Agentic_v2 backend 

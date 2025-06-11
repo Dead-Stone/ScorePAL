@@ -224,14 +224,6 @@ export default function KnowledgeGraphVisualization() {
                 value={selectedAssignment}
                 label="Select Assignment"
                 onChange={(e) => setSelectedAssignment(e.target.value)}
-                MenuProps={{
-                  PaperProps: {
-                    style: {
-                      maxHeight: 300,
-                      overflow: 'auto',
-                    },
-                  },
-                }}
               >
                 {assignments.map((assignment) => (
                   <MenuItem key={assignment.id} value={assignment.id}>
@@ -338,9 +330,10 @@ export default function KnowledgeGraphVisualization() {
                           <Button 
                             variant="outlined" 
                             size="small"
-                            disabled
+                            component={Link}
+                            href={`/results/${assignment.id}`}
                           >
-                            View (Coming Soon)
+                            View
                           </Button>
                         </ListItem>
                       ))}
@@ -422,20 +415,21 @@ export default function KnowledgeGraphVisualization() {
         </Paper>
       )}
 
-      <Box mt={4} display="flex" justifyContent="center">
+      <Box mt={4} display="flex" justifyContent="space-between">
         <Button 
           variant="outlined"
           component={Link}
-          href="/"
+          href="/analytics"
         >
-          Back to Home
+          Back to Analytics
         </Button>
-      </Box>
-      
-      <Box sx={{ mt: 3, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
-        <Typography variant="body2" color="info.dark" textAlign="center">
-          🔬 Advanced analytics and detailed results will be available in future releases!
-        </Typography>
+        <Button 
+          variant="contained"
+          component={Link}
+          href="/results"
+        >
+          View Graded Assignments
+        </Button>
       </Box>
     </Container>
   );

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     api_reload: bool = os.getenv("API_RELOAD", "true").lower() == "true"
     
     # Canvas LMS settings
-    canvas_url: str = os.getenv("CANVAS_URL", "https://sjsu.instructure.com")
+    canvas_url: str = os.getenv("CANVAS_URL", "https://canvas.instructure.com")
     canvas_api_key: str = os.getenv("CANVAS_API_KEY", "")
     
     # AI API keys

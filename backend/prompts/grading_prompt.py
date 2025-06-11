@@ -136,39 +136,28 @@ Action: Assess "Clarity of Explanation" - Deduct 1 point for lack of precision.
 4. Compile the scores and feedback into a structured JSON object.
 5. Always give specific feedback for each criterion.
 6. Apply a {strictness_desc} grading approach as specified.
-7. Read the student's submission carefully and understand the student's intent.
-
-**CRITICAL SCORING REQUIREMENTS:**
-- **MATH MUST BE CORRECT**: The "score" field MUST equal the sum of all criteria "points"
-- **VALIDATE EACH CRITERION**: Each criterion's "points" must be ≤ its "max_points"
-- **USE EXACT RUBRIC**: Use the exact criterion names and max_points from the provided rubric
-- **DOUBLE-CHECK CALCULATION**: Verify your arithmetic before finalizing
-
-**SCORING VERIFICATION PROCESS:**
-1. Award points for each criterion based on student performance
-2. Sum all criterion points to get the total score
-3. Verify: total score = sum of all criterion points
-4. Ensure no criterion exceeds its maximum points
 
 **Output Format:**
 Provide only the JSON object in the following format:
 {{
-  "score": <sum_of_all_criteria_points>,
-  "total": <sum_of_all_max_points_from_rubric>,
+  "student_name": "<Extracted student name if available or leave empty>",
+  "score": <total_score_out_of_max>,
+  "total": <maximum_possible_score>,
   "criteria_scores": [
     {{
-      "name": "<exact_criterion_name_from_rubric>",
-      "points": <points_earned_0_to_max>,
-      "max_points": <exact_max_points_from_rubric>,
-      "feedback": "<Specific feedback explaining why this score was awarded>"
-    }}
+      "name": "<criterion_name>",
+      "points": <points_earned>,
+      "max_points": <maximum_possible_points>,
+      "feedback": "<Specific feedback for this criterion>"
+    }},
+    ...
   ],
-  "grading_feedback": "<Overall assessment covering strengths, weaknesses, and improvement suggestions>",
   "mistakes": {{
-    "error1": "<First notable mistake or area for improvement>",
-    "error2": "<Second notable mistake or area for improvement>",
-    "error3": "<Additional feedback or improvement area>"
-  }}
+    "1": "<First notable mistake or area for improvement>",
+    "2": "<Second notable mistake or area for improvement>",
+    ...
+  }},
+  "grading_feedback": "<Overall feedback highlighting strengths and areas for improvement>"
 }}
 
 **Strictness Level:**
