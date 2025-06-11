@@ -1016,7 +1016,7 @@ async def upload_single(
         student_name: Name of the student
         assignment_name: Name of the assignment
         question_paper: Question paper file (PDF/DOCX)
-        submission: Student submission file (PDF/DOCX/TXT)
+        submission: Student submission file (PDF only)
         answer_key: Optional answer key file
         strictness: Grading strictness (0.0 to 1.0, default: 0.5)
     """
@@ -1036,11 +1036,11 @@ async def upload_single(
             logger.error(f"Invalid question paper format: {question_ext}")
             raise HTTPException(status_code=400, detail=f"Question paper must be PDF or DOCX format, received: {question_ext}")
         
-        # Submission should be PDF/DOCX/TXT
+        # Submission should be PDF only
         submission_ext = Path(submission.filename).suffix.lower()
-        if submission_ext not in ['.pdf', '.docx', '.txt', '.ipynb']:
+        if submission_ext != '.pdf':
             logger.error(f"Invalid submission format: {submission_ext}")
-            raise HTTPException(status_code=400, detail=f"Submission must be PDF, DOCX, TXT, or IPYNB format, received: {submission_ext}")
+            raise HTTPException(status_code=400, detail="Currently, only PDF submissions are supported. Support for other formats coming soon!")
         
         # Answer key should be PDF/DOCX if provided
         if answer_key:

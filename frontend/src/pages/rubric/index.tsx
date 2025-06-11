@@ -126,6 +126,7 @@ const TabPanel = (props: any) => {
       hidden={value !== index}
       id={`rubric-tabpanel-${index}`}
       aria-labelledby={`rubric-tab-${index}`}
+      style={{ minHeight: 0, height: '100%' }}
       {...other}
     >
       {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
@@ -662,7 +663,7 @@ const RubricPage = () => {
           <AssistantIcon />
           Generate Rubric with AI
         </DialogTitle>
-        <DialogContent dividers sx={{ p: 3 }}>
+        <DialogContent dividers sx={{ p: 3, overflowY: 'auto' }}>
           <Typography variant="body2" color="text.secondary" paragraph>
             Let our AI assistant create a detailed grading rubric based on your specific requirements and context.
           </Typography>
@@ -761,7 +762,7 @@ const RubricPage = () => {
           </Tabs>
         </Box>
         
-        <DialogContent dividers sx={{ p: 0, overflow: 'hidden' }}>
+        <DialogContent dividers sx={{ p: 0, overflowY: 'auto', maxHeight: '65vh' }}>
           <TabPanel value={dialogTab} index={0}>
             <Grid container spacing={3}>
               <Grid item xs={12}>
@@ -1065,7 +1066,7 @@ const RubricPage = () => {
             <Chip label={`${selectedRubric?.total_points} points`} />
           </Box>
         </DialogTitle>
-        <DialogContent dividers>
+        <DialogContent dividers sx={{ overflowY: 'auto' }}>
           {selectedRubric && (
             <Grid container spacing={3}>
               <Grid item xs={12}>
