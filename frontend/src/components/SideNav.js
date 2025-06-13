@@ -27,5 +27,5 @@ const navItems = [
   { text: 'Canvas Grading', icon: <SchoolIcon />, path: '/canvas-grading' },
   { text: 'Canvas Processor', icon: <ListAltIcon />, path: '/canvas-processor' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
-  { text: 'Help', icon: <HelpIcon />, path: '/help' },
+  { text: 'Help', icon: <HelpIcon />, path: '/help' }
 ]; 

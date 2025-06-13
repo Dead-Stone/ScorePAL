@@ -58,6 +58,7 @@ import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import Link from 'next/link';
 import axios from 'axios';
 import ChatInterface from '../../components/ChatInterface';
+import SaveIcon from '@mui/icons-material/Save';
 
 // Configure axios
 axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -492,11 +493,27 @@ export default function ResultsPage() {
         </Button>
         
         <Box>
+          <Button
+            variant="outlined"
+            startIcon={<SaveIcon />}
+            onClick={() => {
+              const resultsJson = JSON.stringify(results, null, 2);
+              const blob = new Blob([resultsJson], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `saved_results_${results.assignment_id || 'assignment'}_${new Date().toISOString().split('T')[0]}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            sx={{ mr: 2 }}
+          >
+            Save Results
+          </Button>
         <Button
           variant="contained"
           startIcon={<DownloadIcon />}
             onClick={handleDownloadResults}
-            sx={{ ml: 2 }}
         >
             Download Results
         </Button>

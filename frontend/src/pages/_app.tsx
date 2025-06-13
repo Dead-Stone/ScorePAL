@@ -5,10 +5,6 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import {
   Box,
-  AppBar,
-  Toolbar,
-  Typography,
-  Container,
   Drawer,
   List,
   ListItem,
@@ -18,6 +14,11 @@ import {
   Divider,
   IconButton,
   useMediaQuery,
+  Paper,
+  ListSubheader,
+  Tooltip,
+  Chip,
+  Button,
 } from '@mui/material';
 import Link from 'next/link';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -27,7 +28,7 @@ import CreateIcon from '@mui/icons-material/Create';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import HelpIcon from '@mui/icons-material/Help';
 import GitHubIcon from '@mui/icons-material/GitHub';
-import SchoolIcon from '@mui/icons-material/School';
+import BusinessIcon from '@mui/icons-material/Business';
 import GradingIcon from '@mui/icons-material/Grading';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
@@ -37,25 +38,59 @@ import { useRouter } from 'next/router';
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#1976d2',
+      main: '#1976d2', // blue
+      light: '#63a4ff',
+      dark: '#004ba0',
+      contrastText: '#fff',
     },
     secondary: {
-      main: '#f50057',
+      main: '#ff4081', // pink accent
+      light: '#ff79b0',
+      dark: '#c60055',
+      contrastText: '#fff',
     },
     background: {
-      default: '#f5f5f5',
+      default: '#fff', // Changed to white
+      paper: '#fff',
+    },
+    grey: {
+      100: '#f5f5f5',
+      200: '#eeeeee',
+      300: '#e0e0e0',
+      400: '#bdbdbd',
+      500: '#9e9e9e',
+      600: '#757575',
+      700: '#616161',
+      800: '#424242',
+      900: '#212121',
+    },
+    success: {
+      main: '#43a047',
+    },
+    warning: {
+      main: '#ffa000',
+    },
+    error: {
+      main: '#e53935',
+    },
+    info: {
+      main: '#0288d1',
     },
   },
   typography: {
     fontFamily: [
+      'Inter',
       '-apple-system',
       'BlinkMacSystemFont',
-      '"Segoe UI"',
+      'Segoe UI',
       'Roboto',
-      '"Helvetica Neue"',
+      'Helvetica Neue',
       'Arial',
       'sans-serif',
     ].join(','),
+    fontWeightBold: 700,
+    fontWeightMedium: 600,
+    fontWeightRegular: 400,
   },
   components: {
     MuiButton: {
@@ -63,34 +98,46 @@ const theme = createTheme({
         root: {
           textTransform: 'none',
           borderRadius: 8,
+          fontWeight: 600,
         },
       },
     },
     MuiCard: {
       styleOverrides: {
         root: {
-          borderRadius: 12,
+          borderRadius: 16,
+          boxShadow: '0 4px 24px 0 rgba(80, 120, 200, 0.08)',
         },
       },
     },
     MuiPaper: {
       styleOverrides: {
         rounded: {
-          borderRadius: 12,
+          borderRadius: 16,
+        },
+      },
+    },
+    MuiListSubheader: {
+      styleOverrides: {
+        root: {
+          fontWeight: 700,
+          color: '#616161',
+          background: 'inherit',
         },
       },
     },
   },
 });
 
-const drawerWidth = 240;
+const drawerWidth = 150;
 
 const navigationItems = [
   { text: 'Home', icon: <HomeIcon />, path: '/' },
+  { text: 'Grade', icon: <Box component="img" src="/grade-logo.png" alt="Grade Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/grade' },
   { text: 'Results', icon: <GradingIcon />, path: '/results' },
-  { text: 'Analytics', icon: <BarChartIcon />, path: '/analytics' },
-  { text: 'Rubrics', icon: <FormatListBulletedIcon />, path: '/rubric' },
-  { text: 'Canvas Integration', icon: <SchoolIcon />, path: '/canvas' },
+  { text: 'Rubrics', icon: <Box component="img" src="/rubric-logo.png" alt="Rubric Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/rubric' },
+  { text: 'Canvas', icon: <Box component="img" src="/canvas-logo.jpg" alt="Canvas Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/canvas' },
+  { text: 'Moodle', icon: <Box component="img" src="/moodle-logo.png" alt="Moodle Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/moodle-integration' },
 ];
 
 export default function MyApp({ Component, pageProps }: AppProps) {
@@ -106,58 +153,109 @@ export default function MyApp({ Component, pageProps }: AppProps) {
   const noLayoutPaths = ['/login', '/register'];
   const shouldUseLayout = !noLayoutPaths.includes(router.pathname);
 
+  const FloatingButtons = () => (
+    <Box sx={{
+      position: 'fixed',
+      top: 16,
+      right: 16,
+      zIndex: 1200,
+      display: 'flex',
+      gap: 1,
+    }}>
+      <Button
+        variant="contained"
+        sx={{
+          bgcolor: 'rgba(255, 255, 255, 0.8)',
+          color: 'primary.main',
+          minWidth: 40,
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          p: 0,
+          '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
+        }}
+        component={Link}
+        href="/help"
+      >
+        <HelpIcon />
+      </Button>
+      <Button
+        variant="contained"
+        sx={{
+          bgcolor: 'rgba(255, 255, 255, 0.8)',
+          color: 'text.primary',
+          minWidth: 40,
+          width: 40,
+          height: 40,
+          borderRadius: '50%',
+          p: 0,
+          '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
+        }}
+        href="https://github.com/your-repo"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <GitHubIcon />
+      </Button>
+    </Box>
+  );
+
   const drawer = (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography variant="h6" component="div" fontWeight="bold" color="primary">
-          ScorePAL
-        </Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default', borderRight: '1px solid #e0e0e0', boxShadow: 2, width: 0, minWidth: drawerWidth }}>
+      <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'fill', minHeight: 8 }}>
+        <img
+          src="/scorePAL-logo.png"
+          alt="ScorePAL Logo"
+          style={{
+            height: 128,
+            width: 128,
+            objectFit: 'contain',
+            display: 'block',
+            background: 'transparent',
+          }}
+        />
       </Box>
-      <Divider />
-      <List>
+      <Divider sx={{ my: 1 }} />
+      <List
+        sx={{ pr: 0.5 }}
+      >
         {navigationItems.map((item) => (
-          <ListItem key={item.text} disablePadding>
+          <ListItem key={item.text} disablePadding sx={{ minHeight: 32 }}>
+            <Tooltip title={(item.text === 'Results' || item.text === 'Moodle') ? 'Coming Soon' : item.text} placement="right" arrow disableInteractive={false}>
+              <Box sx={{ flexGrow: 1, display: 'flex' }}>
             <ListItemButton 
               component={Link} 
               href={item.path}
+                  disabled={(item.text === 'Results' || item.text === 'Moodle')}
               selected={router.pathname === item.path || router.pathname.startsWith(`${item.path}/`)}
               sx={{
+                    borderRadius: 2,
+                    mx: 1,
+                    my: 0.5,
+                    ...(item.text === 'Results' || item.text === 'Moodle' ? { color: 'text.disabled' } : {}),
                 '&.Mui-selected': {
-                  backgroundColor: 'rgba(25, 118, 210, 0.08)',
+                      backgroundColor: 'primary.100',
+                      color: 'primary.main',
+                      fontWeight: 'bold',
+                      '& .MuiListItemIcon-root': { color: 'primary.main' },
+                    },
                   '&:hover': {
-                    backgroundColor: 'rgba(25, 118, 210, 0.12)',
-                  },
+                      bgcolor: 'action.hover',
                 },
               }}
             >
-              <ListItemIcon sx={{ color: router.pathname === item.path ? 'primary.main' : 'inherit' }}>
+                  <ListItemIcon sx={{ minWidth: 40, color: (item.text === 'Results' || item.text === 'Moodle') ? 'text.disabled' : 'text.secondary' }}>
                 {item.icon}
               </ListItemIcon>
-              <ListItemText primary={item.text} />
+                  <ListItemText primary={item.text} sx={{ '& .MuiListItemText-primary': { fontSize: 12, fontWeight: 'bold' } }} />
             </ListItemButton>
+              </Box>
+            </Tooltip>
           </ListItem>
         ))}
       </List>
       <Box sx={{ flexGrow: 1 }} />
-      <Divider />
-      <List>
-        <ListItem disablePadding>
-          <ListItemButton component="a" href="https://github.com/Dead-Stone/ScorePAL" target="_blank">
-            <ListItemIcon>
-              <GitHubIcon />
-            </ListItemIcon>
-            <ListItemText primary="GitHub" />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton component={Link} href="/help">
-            <ListItemIcon>
-              <HelpIcon />
-            </ListItemIcon>
-            <ListItemText primary="Help" />
-          </ListItemButton>
-        </ListItem>
-      </List>
+      <Divider sx={{ my: 1 }} />
     </Box>
   );
 
@@ -171,31 +269,6 @@ export default function MyApp({ Component, pageProps }: AppProps) {
         <CssBaseline />
         {shouldUseLayout ? (
           <Box sx={{ display: 'flex' }}>
-            <AppBar 
-              position="fixed" 
-              sx={{ 
-                zIndex: (theme) => theme.zIndex.drawer + 1,
-                boxShadow: 'none',
-                borderBottom: '1px solid #e0e0e0',
-                backgroundColor: 'white',
-                color: 'text.primary',
-              }}
-            >
-              <Toolbar>
-                <IconButton
-                  color="inherit"
-                  aria-label="open drawer"
-                  edge="start"
-                  onClick={handleDrawerToggle}
-                  sx={{ mr: 2, display: { md: 'none' } }}
-                >
-                  <MenuIcon />
-                </IconButton>
-                <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                  ScorePAL
-                </Typography>
-              </Toolbar>
-            </AppBar>
             <Box
               component="nav"
               sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
@@ -227,7 +300,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
                   '& .MuiDrawer-paper': { 
                     boxSizing: 'border-box', 
                     width: drawerWidth,
-                    borderRight: '1px solid #e0e0e0',
+                    borderRight: 'none',
                     boxShadow: 'none',
                   },
                 }}
@@ -243,7 +316,14 @@ export default function MyApp({ Component, pageProps }: AppProps) {
                 width: { md: `calc(100% - ${drawerWidth}px)` },
                 minHeight: '100vh',
                 backgroundColor: 'background.default',
-                marginTop: '64px', // AppBar height
+                marginTop: 0,
+                borderRadius: theme.shape.borderRadius * 4,
+                boxShadow: theme.shadows[1],
+                ml: { md: 4 },
+                mr: { md: 4 },
+                mt: 4,
+                mb: 4,
+                p: 4,
               }}
             >
               <Component {...pageProps} />
@@ -252,6 +332,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
         ) : (
           <Component {...pageProps} />
         )}
+        <FloatingButtons />
       </ThemeProvider>
     </>
   );

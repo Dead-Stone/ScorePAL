@@ -4,7 +4,7 @@ This system provides a hybrid approach to PDF and image text extraction, combini
 
 ## Features
 
-- **Multi-Engine Approach**: Combines PaddleOCR, Tesseract OCR, and UnstructuredIO to leverage the strengths of each
+- **Multi-Engine Approach**: Combines PaddleOCR, EasyOCR, Tesseract OCR, and UnstructuredIO to leverage the strengths of each
 - **Intelligent Document Type Detection**: Automatically identifies document types (tables, academic papers, multi-column layouts) and selects the optimal OCR approach
 - **Advanced Image Preprocessing**: Automatically handles skewed documents, improves contrast, and removes noise
 - **Automatic Engine Selection**: Uses the best OCR engine based on document type and content
@@ -14,7 +14,7 @@ This system provides a hybrid approach to PDF and image text extraction, combini
 
 This OCR system addresses common challenges in text extraction:
 
-1. **Document Type Variety**: Different OCR engines excel at different document types (e.g., PaddleOCR is excellent for tables, while Tesseract handles clean text well)
+1. **Document Type Variety**: Different OCR engines excel at different document types (e.g., PaddleOCR is excellent for tables, EasyOCR handles handwritten text and complex fonts, while Tesseract handles clean text well)
 2. **Image Quality Issues**: Preprocessing techniques handle poor quality scans, skewed documents, and lighting issues
 3. **Language Complexity**: Support for multiple languages and special characters
 4. **Reliability**: 100% open-source, no API dependencies, works offline
