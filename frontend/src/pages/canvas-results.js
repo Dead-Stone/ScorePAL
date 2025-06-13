@@ -328,7 +328,7 @@ const CanvasResultsPage = () => {
           <DialogTitle>
             Grading Job Details - {selectedJob?.assignmentName}
           </DialogTitle>
-          <DialogContent>
+          <DialogContent sx={{ overflowY: 'auto' }}>
             {selectedJob && (
               <Box>
                 <Grid container spacing={3} sx={{ mb: 3 }}>

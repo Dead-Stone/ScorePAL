@@ -32,7 +32,7 @@ class GradingWorker:
     
     def __init__(self, gemini_api_key: str = None):
         """Initialize the grading worker."""
-        self.grading_service = GradingService(api_key=gemini_api_key or os.getenv("GEMINI_API_KEY"))
+        self.grading_service = GradingService(gemini_api_key or os.getenv("GEMINI_API_KEY"))
         self.kg = KnowledgeGraph()
         
     def grade_submission(self, 
@@ -42,9 +42,10 @@ class GradingWorker:
                         student_name: str,
                         assignment_id: str,
                         rubric: Dict[str, Any], 
-                        strictness: float = 0.5) -> Dict[str, Any]:
+                        strictness: float = 0.5,
+                        file_path: str = None) -> Dict[str, Any]:
         """
-        Grade a single submission using the grading service.
+        Grade a single submission using the grading service with enhanced image analysis.
         
         Args:
             submission_text: The student's submission text
@@ -54,14 +55,33 @@ class GradingWorker:
             assignment_id: The assignment ID
             rubric: The grading rubric
             strictness: Grading strictness (0.0 to 1.0)
+            file_path: Optional path to original submission file for image extraction
             
         Returns:
             The grading result
         """
         try:
-            # Use the grading service to grade the submission
+            # Enhance submission with image analysis if file path is provided
+            enhanced_submission = submission_text
+            image_enhanced = False
+            
+            if file_path and os.path.exists(file_path):
+                try:
+                    from enhanced_image_extraction import enhance_submission_with_images
+                    context = f"Assignment: {assignment_id}, Student: {student_name}"
+                    enhanced_submission = enhance_submission_with_images(
+                        submission_text, file_path, context
+                    )
+                    image_enhanced = enhanced_submission != submission_text
+                    if image_enhanced:
+                        logger.info(f"Enhanced submission for {student_name} with AI vision analysis")
+                except Exception as img_error:
+                    logger.warning(f"Image enhancement failed for {student_name}: {img_error}")
+                    # Continue with original submission if image enhancement fails
+            
+            # Use the grading service to grade the enhanced submission
             result = self.grading_service.grade_submission(
-                submission_text=submission_text,
+                submission_text=enhanced_submission,
                 question_text=question_text,
                 answer_key=answer_key,
                 student_name=student_name,
@@ -95,6 +115,9 @@ class GradingWorker:
                 student_name=student_name,
                 result_data=result
             )
+            
+            # Add image enhancement info to result
+            result['image_enhanced'] = image_enhanced
             
             return result
         except Exception as e:
@@ -330,9 +353,10 @@ class MultiAgentGradingSystem:
                          student_name: str,
                          assignment_id: str,
                          rubric: Dict[str, Any],
-                         strictness: float = 0.5) -> Dict[str, Any]:
+                         strictness: float = 0.5,
+                         file_path: str = None) -> Dict[str, Any]:
         """
-        Grade a single submission.
+        Grade a single submission with enhanced image analysis.
         
         Args:
             submission_text: The student's submission text
@@ -342,11 +366,12 @@ class MultiAgentGradingSystem:
             assignment_id: The assignment ID
             rubric: The grading rubric
             strictness: Grading strictness (0.0 to 1.0)
+            file_path: Optional path to original submission file for image enhancement
             
         Returns:
             The grading result
         """
-        logger.info(f"Starting single grading for {student_name}")
+        logger.info(f"Starting single grading for {student_name} with AI vision enhancement")
         worker = GradingWorker(gemini_api_key=self.gemini_api_key)
         result = worker.grade_submission(
             submission_text=submission_text,
@@ -355,7 +380,8 @@ class MultiAgentGradingSystem:
             student_name=student_name,
             assignment_id=assignment_id,
             rubric=rubric,
-            strictness=strictness
+            strictness=strictness,
+            file_path=file_path
         )
         logger.info(f"Completed grading for {student_name}: Score={result.get('score', 'N/A')}")
         return result 

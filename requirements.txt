@@ -2,10 +2,12 @@
 -r backend/requirements.txt
 
 # Core FastAPI
-fastapi==0.103.1
-uvicorn==0.23.2
+fastapi==0.104.1
+uvicorn[standard]==0.24.0.post1
 python-multipart==0.0.6
 requests==2.31.0
+celery==5.3.6
+redis==5.0.1
 
 # Data Processing - Lightweight versions for serverless
 numpy==1.24.3

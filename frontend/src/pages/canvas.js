@@ -1047,7 +1047,7 @@ const CanvasPage = () => {
           <DialogTitle>
             Grading Details - {selectedResult?.user_name}
           </DialogTitle>
-          <DialogContent>
+          <DialogContent sx={{ overflowY: 'auto' }}>
             {selectedResult && (
               <Box>
                 <Typography variant="h6" gutterBottom>
@@ -1087,43 +1087,6 @@ const CanvasPage = () => {
             </Button>
           </DialogActions>
         </Dialog>
-
-        {/* Back to Canvas Button */}
-        <Box sx={{ mt: 4, textAlign: 'center' }}>
-          <Button 
-            variant="outlined" 
-            component={Link} 
-            href="/canvas"
-            size="large"
-          >
-            Back to Canvas Grading
-          </Button>
-        </Box>
-
-        {/* Navigation Links */}
-        <Box sx={{ mt: 4, textAlign: 'center', display: 'flex', gap: 2, justifyContent: 'center' }}>
-          <Button 
-            variant="outlined" 
-            component={Link} 
-            href="/"
-          >
-            Home
-          </Button>
-          <Button 
-            variant="outlined" 
-            component={Link} 
-            href="/canvas-results"
-          >
-            View Past Results
-          </Button>
-          <Button 
-            variant="outlined" 
-            component={Link} 
-            href="/rubric"
-          >
-            Manage Rubrics
-          </Button>
-        </Box>
       </Box>
     </Container>
   );
