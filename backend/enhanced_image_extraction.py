@@ -10,12 +10,15 @@ import base64
 import json
 import logging
 import asyncio
+import time
+import random
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Union, Any
 import cv2
 import numpy as np
 from PIL import Image
+from functools import wraps
 
 # Optional imports for different file formats
 try:
@@ -55,6 +58,87 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Rate limiting configuration
+RATE_LIMIT_CONFIG = {
+    'gemini': {
+        'delay_between_calls': 2.0,  # seconds between API calls
+        'max_retries': 3,
+        'base_retry_delay': 5.0,     # seconds to wait on first retry
+        'max_retry_delay': 60.0,     # maximum retry delay
+        'exponential_base': 2.0      # exponential backoff multiplier
+    },
+    'openai': {
+        'delay_between_calls': 1.0,
+        'max_retries': 3,
+        'base_retry_delay': 3.0,
+        'max_retry_delay': 30.0,
+        'exponential_base': 2.0
+    },
+    'claude': {
+        'delay_between_calls': 1.5,
+        'max_retries': 3,
+        'base_retry_delay': 4.0,
+        'max_retry_delay': 45.0,
+        'exponential_base': 2.0
+    }
+}
+
+def rate_limit(model_name: str):
+    """Decorator to add rate limiting to API calls."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            # Skip rate limiting if disabled
+            if not getattr(self, 'rate_limit_enabled', True):
+                return func(self, *args, **kwargs)
+            
+            config = RATE_LIMIT_CONFIG.get(model_name, RATE_LIMIT_CONFIG['gemini'])
+            
+            for attempt in range(config['max_retries'] + 1):
+                try:
+                    # Add delay before API call (except first call of the session)
+                    if hasattr(self, f'_last_{model_name}_call'):
+                        time_since_last = time.time() - getattr(self, f'_last_{model_name}_call')
+                        if time_since_last < config['delay_between_calls']:
+                            sleep_time = config['delay_between_calls'] - time_since_last
+                            logger.info(f"Rate limiting {model_name}: waiting {sleep_time:.1f}s")
+                            time.sleep(sleep_time)
+                    
+                    # Record call time
+                    setattr(self, f'_last_{model_name}_call', time.time())
+                    
+                    # Make the API call
+                    return func(self, *args, **kwargs)
+                    
+                except Exception as e:
+                    error_str = str(e).lower()
+                    
+                    # Check if it's a rate limit error
+                    if any(code in error_str for code in ['429', 'rate limit', 'quota', 'too many requests']):
+                        if attempt < config['max_retries']:
+                            # Calculate exponential backoff delay
+                            retry_delay = min(
+                                config['base_retry_delay'] * (config['exponential_base'] ** attempt),
+                                config['max_retry_delay']
+                            )
+                            # Add some randomization to avoid thundering herd
+                            jitter = random.uniform(0.1, 0.3) * retry_delay
+                            total_delay = retry_delay + jitter
+                            
+                            logger.warning(f"{model_name} rate limit hit (attempt {attempt + 1}). Retrying in {total_delay:.1f}s")
+                            time.sleep(total_delay)
+                            continue
+                        else:
+                            logger.error(f"{model_name} rate limit exceeded after {config['max_retries']} retries")
+                            raise e
+                    else:
+                        # Non-rate-limit error, re-raise immediately
+                        raise e
+            
+            return None
+        return wrapper
+    return decorator
+
 class EnhancedImageExtractionService:
     """Enhanced service for extracting images and generating comprehensive AI summaries."""
     
@@ -64,36 +148,85 @@ class EnhancedImageExtractionService:
         self.openai_api_key = os.getenv("OPENAI_API_KEY") 
         self.claude_api_key = os.getenv("ANTHROPIC_API_KEY")
         
+        # Rate limiting configuration (can be overridden via environment variables)
+        self.rate_limit_enabled = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
+        self.batch_delay = float(os.getenv("BATCH_IMAGE_DELAY", "1.0"))  # delay between images in batch
+        
         # Initialize available models
         self.available_models = []
         self._initialize_models()
         
-        logger.info(f"Enhanced Image Extraction Service initialized with models: {self.available_models}")
+        if self.rate_limit_enabled:
+            logger.info(f"Enhanced Image Extraction Service initialized with models: {self.available_models} (Rate limiting: ON)")
+        else:
+            logger.info(f"Enhanced Image Extraction Service initialized with models: {self.available_models} (Rate limiting: OFF)")
+    
+    def configure_rate_limits(self, model_name: str, delay_between_calls: float = None, 
+                            max_retries: int = None, base_retry_delay: float = None):
+        """Dynamically configure rate limits for a specific model."""
+        if model_name not in RATE_LIMIT_CONFIG:
+            logger.warning(f"Unknown model name: {model_name}")
+            return
+        
+        config = RATE_LIMIT_CONFIG[model_name]
+        
+        if delay_between_calls is not None:
+            config['delay_between_calls'] = delay_between_calls
+        if max_retries is not None:
+            config['max_retries'] = max_retries
+        if base_retry_delay is not None:
+            config['base_retry_delay'] = base_retry_delay
+        
+        logger.info(f"Updated rate limits for {model_name}: {config}")
+    
+    def get_rate_limit_status(self) -> Dict[str, Any]:
+        """Get current rate limiting configuration and status."""
+        status = {
+            'rate_limiting_enabled': self.rate_limit_enabled,
+            'batch_delay': self.batch_delay,
+            'models_config': RATE_LIMIT_CONFIG.copy(),
+            'last_api_calls': {}
+        }
+        
+        # Add last call timestamps
+        for model in ['gemini', 'openai', 'claude']:
+            last_call_attr = f'_last_{model}_call'
+            if hasattr(self, last_call_attr):
+                last_call_time = getattr(self, last_call_attr)
+                status['last_api_calls'][model] = {
+                    'timestamp': last_call_time,
+                    'seconds_ago': time.time() - last_call_time
+                }
+        
+        return status
     
     def _initialize_models(self):
         """Initialize all available AI vision models."""
         
         # Initialize Gemini
-        if GEMINI_AVAILABLE and self.gemini_api_key:
+        if GEMINI_AVAILABLE and self.gemini_api_key and len(self.gemini_api_key) > 10:
             try:
                 genai.configure(api_key=self.gemini_api_key)
                 self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+                # Test the model with a simple call to verify it works
+                # Skip for now to avoid quota issues
                 self.available_models.append("gemini-1.5-pro")
                 logger.info("Gemini 1.5 Pro vision model initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}")
         
         # Initialize OpenAI GPT-4V
-        if OPENAI_AVAILABLE and self.openai_api_key:
+        if OPENAI_AVAILABLE and self.openai_api_key and len(self.openai_api_key) > 10:
             try:
                 self.openai_client = openai.OpenAI(api_key=self.openai_api_key)
+                # Skip test for now
                 self.available_models.append("gpt-4-vision-preview")
                 logger.info("OpenAI GPT-4 Vision model initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize OpenAI: {e}")
         
         # Initialize Claude 3.5 Sonnet
-        if CLAUDE_AVAILABLE and self.claude_api_key:
+        if CLAUDE_AVAILABLE and self.claude_api_key and len(self.claude_api_key) > 10:
             try:
                 self.claude_client = anthropic.Anthropic(api_key=self.claude_api_key)
                 self.available_models.append("claude-3-5-sonnet")
@@ -102,7 +235,7 @@ class EnhancedImageExtractionService:
                 logger.warning(f"Failed to initialize Claude: {e}")
         
         if not self.available_models:
-            logger.warning("No AI vision models available. Please configure API keys.")
+            logger.info("No AI vision models available. Using computer vision fallback for image analysis.")
     
     def extract_images_from_file(self, file_path: str) -> List[Dict]:
         """Extract images from various file formats."""
@@ -319,8 +452,9 @@ class EnhancedImageExtractionService:
         logger.info("All AI vision models failed, using fallback analysis")
         return self._fallback_image_analysis(image, context)
     
+    @rate_limit('gemini')
     def _analyze_with_gemini_sync(self, image: Image.Image, context: str) -> str:
-        """Analyze image with Gemini synchronously."""
+        """Analyze image with Gemini synchronously with rate limiting."""
         try:
             prompt = self._get_analysis_prompt(context, "Gemini")
             response = self.gemini_model.generate_content([prompt, image])
@@ -329,8 +463,9 @@ class EnhancedImageExtractionService:
             logger.error(f"Gemini analysis failed: {e}")
             raise e
     
+    @rate_limit('openai')
     def _analyze_with_gpt4v_sync(self, image: Image.Image, context: str) -> str:
-        """Analyze image with GPT-4 Vision synchronously."""
+        """Analyze image with GPT-4 Vision synchronously with rate limiting."""
         try:
             # Convert image to base64
             buffer = io.BytesIO()
@@ -361,8 +496,9 @@ class EnhancedImageExtractionService:
             logger.error(f"GPT-4V analysis failed: {e}")
             raise e
     
+    @rate_limit('claude')
     def _analyze_with_claude_sync(self, image: Image.Image, context: str) -> str:
-        """Analyze image with Claude 3.5 Sonnet synchronously."""
+        """Analyze image with Claude 3.5 Sonnet synchronously with rate limiting."""
         try:
             # Convert image to base64
             buffer = io.BytesIO()
@@ -437,6 +573,11 @@ class EnhancedImageExtractionService:
                 try:
                     logger.info(f"Analyzing image {i+1}/{len(images)} from {file_path}")
                     
+                    # Add delay between images to avoid overwhelming APIs
+                    if i > 0 and self.rate_limit_enabled:
+                        logger.info(f"Batch processing delay: {self.batch_delay}s")
+                        time.sleep(self.batch_delay)
+                    
                     # Analyze with best available model
                     analysis_result = self.analyze_image_with_best_model(
                         img_data['pil_image'], 
@@ -485,6 +626,76 @@ class EnhancedImageExtractionService:
                 "combined_text": "",
                 "summary": f"Failed to process images: {str(e)}"
             }
+    
+    def _fallback_image_analysis(self, image: Image.Image, context: str) -> str:
+        """Fallback image analysis without AI models - uses basic computer vision."""
+        try:
+            import cv2
+            import numpy as np
+            
+            # Convert PIL to OpenCV
+            cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            height, width = cv_image.shape[:2]
+            
+            # Basic image analysis
+            analysis_parts = []
+            
+            # Basic image properties
+            analysis_parts.append(f"**Image Analysis (Computer Vision)**")
+            analysis_parts.append(f"- Dimensions: {width}x{height} pixels")
+            analysis_parts.append(f"- Aspect ratio: {width/height:.2f}")
+            
+            # Color analysis
+            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+            mean_brightness = np.mean(gray)
+            analysis_parts.append(f"- Average brightness: {mean_brightness:.1f}/255")
+            
+            # Edge detection for complexity
+            edges = cv2.Canny(gray, 50, 150)
+            edge_density = np.sum(edges > 0) / edges.size
+            analysis_parts.append(f"- Visual complexity: {edge_density:.3f}")
+            
+            # Determine likely content type
+            if edge_density > 0.05:
+                content_type = "complex diagram, chart, or detailed content"
+            elif edge_density > 0.02:
+                content_type = "moderate complexity content (text, simple diagrams)"
+            else:
+                content_type = "simple content or mostly blank"
+            
+            analysis_parts.append(f"- Likely content: {content_type}")
+            
+            # Basic text detection attempt
+            try:
+                # Simple text detection using contours
+                contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                text_like_contours = [c for c in contours if cv2.contourArea(c) > 50 and cv2.contourArea(c) < 5000]
+                
+                if len(text_like_contours) > 10:
+                    analysis_parts.append("- Possible text content detected")
+                elif len(text_like_contours) > 5:
+                    analysis_parts.append("- Some text or symbols may be present")
+                else:
+                    analysis_parts.append("- Primarily graphical content")
+                    
+            except Exception:
+                pass
+            
+            # Academic relevance assessment
+            analysis_parts.append(f"\n**Grading Relevance:**")
+            analysis_parts.append(f"- This appears to be academic content based on image characteristics")
+            analysis_parts.append(f"- Should be considered for grading as visual element of submission")
+            analysis_parts.append(f"- May contain diagrams, equations, handwritten work, or other academic content")
+            
+            if "math" in context.lower() or "equation" in context.lower():
+                analysis_parts.append("- Context suggests mathematical content - likely equations or formulas")
+            elif "diagram" in context.lower() or "chart" in context.lower():
+                analysis_parts.append("- Context suggests graphical content - likely diagrams or charts")
+            
+            return "\n".join(analysis_parts)
+            
+        except Exception as e:
+            return f"Basic image analysis - academic content detected ({width}x{height} pixels). Manual review recommended for grading."
     
     def _extract_text_content_from_analysis(self, analysis: str) -> str:
         """Extract relevant text content from AI analysis."""
