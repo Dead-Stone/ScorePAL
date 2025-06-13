@@ -73,6 +73,14 @@ app.include_router(knowledge_graph_router)
 # Include the chat router
 app.include_router(chat_router)
 
+# Include image extraction router
+try:
+    from api.image_extraction import router as image_extraction_router
+    app.include_router(image_extraction_router, tags=["image-extraction"])
+    logger.info("Image extraction router included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import image extraction router: {e}")
+
 # Include our custom canvas routes if available
 if has_custom_canvas_routes:
     app.include_router(custom_canvas_router, prefix="/api/canvas", tags=["Canvas"])
@@ -1350,9 +1358,9 @@ async def process_and_grade_single(upload_id: str, metadata: Dict[str, Any]):
         # Use assignment name as the assignment ID for grouping
         assignment_id = metadata.get("formatted_name", "unnamed_assignment")
         
-        # Grade the submission using the multi-agent system
+        # Grade the submission using the multi-agent system with enhanced image analysis
         try:
-            logger.info(f"Grading submission for {student_name}")
+            logger.info(f"Grading submission for {student_name} with AI vision enhancement")
             # Use the single submission grading from the multi-agent system
             grading_result = await multi_agent_grading.grade_single(
                 submission_text=submission_text,
@@ -1361,7 +1369,8 @@ async def process_and_grade_single(upload_id: str, metadata: Dict[str, Any]):
                 student_name=student_name,
                 assignment_id=assignment_id,
                 rubric=default_rubric,
-                strictness=strictness
+                strictness=strictness,
+                file_path=submission_path  # Pass the submission file path for image analysis
             )
             
             if not grading_result:

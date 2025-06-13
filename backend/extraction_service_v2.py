@@ -6,6 +6,9 @@ import cv2
 import numpy as np
 import logging
 import subprocess
+import json
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from dotenv import load_dotenv
 
@@ -15,6 +18,16 @@ OCR_ENGINE = os.getenv("OCR_ENGINE", "opensource").lower()
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Create OCR data storage directories
+OCR_DATA_DIR = Path("backend/data/ocr_extractions")
+OCR_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Create subdirectories for organized storage
+(OCR_DATA_DIR / "images").mkdir(exist_ok=True)
+(OCR_DATA_DIR / "extracted_text").mkdir(exist_ok=True)
+(OCR_DATA_DIR / "preprocessed_images").mkdir(exist_ok=True)
+(OCR_DATA_DIR / "metadata").mkdir(exist_ok=True)
 
 # UnstructuredIO import
 try:
@@ -41,6 +54,84 @@ try:
 except ImportError:
     logger.warning("pytesseract package not installed. Tesseract will not be available.")
     tesseract_available = False
+
+# EasyOCR imports
+try:
+    import easyocr
+    easy_ocr_reader = easyocr.Reader(['en'], gpu=False)  # CPU mode for compatibility
+    easyocr_available = True
+except ImportError:
+    logger.warning("easyocr package not installed. EasyOCR will not be available.")
+    easyocr_available = False
+
+def save_extraction_data(file_path: str, images: List[np.ndarray], preprocessed_images: List[np.ndarray], 
+                        extracted_text: str, ocr_engine: str, metadata: dict = None) -> str:
+    """
+    Save images, preprocessed images, extracted text, and metadata for analysis.
+    
+    Args:
+        file_path: Original file path
+        images: List of original images
+        preprocessed_images: List of preprocessed images
+        extracted_text: Extracted text content
+        ocr_engine: OCR engine used
+        metadata: Additional metadata
+        
+    Returns:
+        Session ID for the saved data
+    """
+    try:
+        # Create unique session ID
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = Path(file_path).stem
+        session_id = f"{file_name}_{timestamp}_{ocr_engine}"
+        
+        # Create session directory
+        session_dir = OCR_DATA_DIR / session_id
+        session_dir.mkdir(exist_ok=True)
+        
+        # Save original images
+        images_dir = session_dir / "original_images"
+        images_dir.mkdir(exist_ok=True)
+        
+        for i, image in enumerate(images):
+            image_path = images_dir / f"page_{i+1}.png"
+            cv2.imwrite(str(image_path), image)
+        
+        # Save preprocessed images
+        preprocessed_dir = session_dir / "preprocessed_images"
+        preprocessed_dir.mkdir(exist_ok=True)
+        
+        for i, image in enumerate(preprocessed_images):
+            image_path = preprocessed_dir / f"page_{i+1}_processed.png"
+            cv2.imwrite(str(image_path), image)
+        
+        # Save extracted text
+        text_file = session_dir / "extracted_text.txt"
+        with open(text_file, 'w', encoding='utf-8') as f:
+            f.write(extracted_text)
+        
+        # Save metadata
+        metadata_info = {
+            "session_id": session_id,
+            "original_file": file_path,
+            "ocr_engine": ocr_engine,
+            "timestamp": timestamp,
+            "num_pages": len(images),
+            "text_length": len(extracted_text),
+            "custom_metadata": metadata or {}
+        }
+        
+        metadata_file = session_dir / "metadata.json"
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata_info, f, indent=2)
+        
+        logger.info(f"Saved extraction data to session: {session_id}")
+        return session_id
+        
+    except Exception as e:
+        logger.error(f"Failed to save extraction data: {e}")
+        return ""
 
 def preprocess_image(image: np.ndarray) -> np.ndarray:
     """
@@ -152,12 +243,13 @@ def extract_with_unstructured(file_path: str) -> str:
         logger.error(f"UnstructuredIO extraction failed: {e}")
         return ""
 
-def extract_with_tesseract(file_path: str) -> str:
+def extract_with_tesseract(file_path: str, save_data: bool = True) -> str:
     """
     Extract text using Tesseract OCR.
     
     Args:
         file_path: Path to the document
+        save_data: Whether to save extraction data for analysis
         
     Returns:
         Extracted text as a string
@@ -177,10 +269,12 @@ def extract_with_tesseract(file_path: str) -> str:
                 return ""
                 
             results = []
+            preprocessed_images = []
             
             for image in images:
                 # Preprocess image
                 processed_img = preprocess_image(image)
+                preprocessed_images.append(processed_img)
                 
                 # Convert to PIL Image for Tesseract
                 pil_image = PIL.Image.fromarray(processed_img)
@@ -189,22 +283,42 @@ def extract_with_tesseract(file_path: str) -> str:
                 page_text = pytesseract.image_to_string(pil_image, lang='eng')
                 results.append(page_text)
             
-            return "\n\n".join(results)
+            extracted_text = "\n\n".join(results)
+            
+            # Save extraction data if requested
+            if save_data:
+                save_extraction_data(file_path, images, preprocessed_images, extracted_text, "tesseract")
+            
+            return extracted_text
         else:
             # For single images
             try:
-                processed_img = preprocess_image(cv2.imread(file_path))
+                original_img = cv2.imread(file_path)
+                processed_img = preprocess_image(original_img)
                 pil_image = PIL.Image.fromarray(processed_img)
-                return pytesseract.image_to_string(pil_image, lang='eng')
+                extracted_text = pytesseract.image_to_string(pil_image, lang='eng')
+                
+                # Save extraction data if requested
+                if save_data:
+                    save_extraction_data(file_path, [original_img], [processed_img], extracted_text, "tesseract")
+                
+                return extracted_text
             except Exception as e:
                 logger.error(f"Tesseract image processing failed: {e}")
                 # Try direct processing without preprocessing
-                return pytesseract.image_to_string(PIL.Image.open(file_path), lang='eng')
+                extracted_text = pytesseract.image_to_string(PIL.Image.open(file_path), lang='eng')
+                
+                # Save basic extraction data if requested
+                if save_data:
+                    original_img = cv2.imread(file_path)
+                    save_extraction_data(file_path, [original_img], [original_img], extracted_text, "tesseract")
+                
+                return extracted_text
     except Exception as e:
         logger.error(f"Tesseract OCR extraction failed: {e}")
         return ""
 
-def extract_with_paddleocr(file_path: str) -> str:
+def extract_with_paddleocr(file_path: str, save_data: bool = True) -> str:
     """
     Extract text using PaddleOCR.
     
@@ -225,10 +339,12 @@ def extract_with_paddleocr(file_path: str) -> str:
         if file_path.lower().endswith('.pdf'):
             images = convert_pdf_to_images(file_path)
             results = []
+            preprocessed_images = []
             
             for image in images:
                 # Preprocess image
                 processed_img = preprocess_image(image)
+                preprocessed_images.append(processed_img)
                 
                 # Save to temp file for PaddleOCR
                 temp_img_path = tempfile.mktemp(suffix='.jpg')
@@ -255,7 +371,12 @@ def extract_with_paddleocr(file_path: str) -> str:
                 except:
                     pass
             
-            return "\n\n".join(results)
+            extracted_text = "\n\n".join(results)
+            
+            # Save extraction data for analysis
+            save_extraction_data(file_path, images, preprocessed_images, extracted_text, "paddleocr")
+            
+            return extracted_text
         else:
             # For single images
             try:
@@ -297,6 +418,77 @@ def extract_with_paddleocr(file_path: str) -> str:
                 return "\n".join(texts)
     except Exception as e:
         logger.error(f"PaddleOCR extraction failed: {e}")
+        return ""
+
+def extract_with_easyocr(file_path: str) -> str:
+    """
+    Extract text using EasyOCR.
+    
+    Args:
+        file_path: Path to the document
+        
+    Returns:
+        Extracted text as a string
+    """
+    if not easyocr_available:
+        logger.error("EasyOCR is not available")
+        return ""
+    
+    try:
+        logger.info("Using EasyOCR for extraction")
+        
+        # For PDFs, we need to convert to images first
+        if file_path.lower().endswith('.pdf'):
+            images = convert_pdf_to_images(file_path)
+            results = []
+            
+            for image in images:
+                # Preprocess image
+                processed_img = preprocess_image(image)
+                
+                # Run OCR
+                result = easy_ocr_reader.readtext(processed_img)
+                
+                # Extract text from result
+                page_text = []
+                for detection in result:
+                    text = detection[1]  # Text is the second element
+                    confidence = detection[2]  # Confidence is the third element
+                    if confidence > 0.5:  # Include medium-confidence results
+                        page_text.append(text)
+                
+                results.append(" ".join(page_text))
+            
+            return "\n\n".join(results)
+        else:
+            # For single images
+            try:
+                processed_img = preprocess_image(cv2.imread(file_path))
+                result = easy_ocr_reader.readtext(processed_img)
+                
+                texts = []
+                for detection in result:
+                    text = detection[1]  # Text is the second element
+                    confidence = detection[2]  # Confidence is the third element
+                    if confidence > 0.5:  # Include medium-confidence results
+                        texts.append(text)
+                
+                return " ".join(texts)
+            except Exception as e:
+                logger.error(f"EasyOCR image processing failed, trying direct processing: {e}")
+                # Try direct processing without preprocessing
+                result = easy_ocr_reader.readtext(file_path)
+                
+                texts = []
+                for detection in result:
+                    text = detection[1]  # Text is the second element
+                    confidence = detection[2]  # Confidence is the third element
+                    if confidence > 0.5:  # Include medium-confidence results
+                        texts.append(text)
+                
+                return " ".join(texts)
+    except Exception as e:
+        logger.error(f"EasyOCR extraction failed: {e}")
         return ""
 
 def detect_document_type(file_path: str) -> str:
@@ -406,6 +598,13 @@ def extract_pdf_text_opensource(file_path: str) -> str:
         except Exception as e:
             logger.warning(f"PaddleOCR failed: {e}")
     
+    # Try EasyOCR (good for handwritten text and complex fonts)
+    if easyocr_available and (doc_type in ["academic", "general"] or not results or len(results.get("paddle", "")) < 100):
+        try:
+            results["easyocr"] = extract_with_easyocr(file_path)
+        except Exception as e:
+            logger.warning(f"EasyOCR failed: {e}")
+    
     # Try Tesseract (good for clean text)
     if tesseract_available and (doc_type == "general" or not results or len(results.get("paddle", "")) < 100):
         try:
@@ -428,10 +627,14 @@ def extract_pdf_text_opensource(file_path: str) -> str:
     # Prioritize based on document type
     if doc_type == "table_heavy" and "paddle" in results and len(results["paddle"]) > 100:
         best_result = results["paddle"]
+    elif doc_type == "academic" and "easyocr" in results and len(results["easyocr"]) > 100:
+        best_result = results["easyocr"]
     elif doc_type == "general" and "tesseract" in results and len(results["tesseract"]) > 100:
         best_result = results["tesseract"]
     elif "paddle" in results and len(results["paddle"]) > 100:
         best_result = results["paddle"]
+    elif "easyocr" in results and len(results["easyocr"]) > 100:
+        best_result = results["easyocr"]
     elif "tesseract" in results and len(results["tesseract"]) > 100:
         best_result = results["tesseract"]
     elif "unstructured" in results:
@@ -461,6 +664,11 @@ def extract_pdf_text(file_path: str) -> str:
         if paddle_available:
             try:
                 return extract_with_paddleocr(file_path)
+            except:
+                pass
+        if easyocr_available:
+            try:
+                return extract_with_easyocr(file_path)
             except:
                 pass
         if tesseract_available:

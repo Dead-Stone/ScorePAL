@@ -297,8 +297,8 @@ export default function MyApp({ Component, pageProps }: AppProps) {
                 variant="permanent"
                 sx={{
                   display: { xs: 'none', md: 'block' },
-                  '& .MuiDrawer-paper': {
-                    boxSizing: 'border-box',
+                  '& .MuiDrawer-paper': { 
+                    boxSizing: 'border-box', 
                     width: drawerWidth,
                     borderRight: 'none',
                     boxShadow: 'none',

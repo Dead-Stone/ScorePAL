@@ -510,13 +510,13 @@ export default function ResultsPage() {
           >
             Save Results
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<DownloadIcon />}
+        <Button
+          variant="contained"
+          startIcon={<DownloadIcon />}
             onClick={handleDownloadResults}
-          >
+        >
             Download Results
-          </Button>
+        </Button>
         </Box>
       </Box>
       
