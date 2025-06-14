@@ -1,0 +1,10 @@
+# We are only overriding the 'install' and 'start' phases.
+# Nixpacks will handle the default Python setup (installing python, pip, etc.).
+
+[phases.install]
+# Point to the correct path for the requirements file.
+cmds = ["pip install -r backend/requirements.txt"]
+
+[start]
+# Run the api.py file located in the backend directory.
+cmd = "python backend/api.py" 
