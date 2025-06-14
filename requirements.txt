@@ -1,29 +1,40 @@
-# Root requirements file for Railway deployment
-# This includes all backend dependencies
-
--r backend/requirements.txt
-
-# Core FastAPI
-fastapi==0.104.1
-uvicorn[standard]==0.24.0.post1
+# Railway-optimized requirements for ScorePAL deployment
+# Core API dependencies
+fastapi==0.103.1
+uvicorn==0.23.2
 python-multipart==0.0.6
 requests==2.31.0
-celery==5.3.6
-redis==5.0.1
+httpx==0.24.1
 
-# Data Processing - Lightweight versions for serverless
-numpy==1.24.3
-pandas==2.0.3
+# Canvas LMS API
+canvasapi>=2.0.0
+
+# Data Processing (lightweight versions)
+numpy>=1.20.0,<1.25.0
+pandas>=1.3.0,<2.0.0
 pydantic==2.3.0
 pydantic-settings==2.0.3
 
-# Document Processing - Essential only
+# Document Processing (core only)
 python-docx==0.8.11
+pdfplumber==0.10.2
+pillow>=9.0.0,<11.0.0
+pytesseract==0.3.10
 pypdf==3.16.0
 python-dotenv==1.0.0
 
-# AI/ML - Lightweight
-langchain==0.0.300
+# AI and ML (essential only)
+google-generativeai>=0.3.0
+
+# Database (Optional)
+neo4j>=5.0.0
 
 # Utilities
-python-dateutil==2.8.2 
+tqdm>=4.0.0
+colorama>=0.4.0
+python-dateutil>=2.8.0
+
+# Additional dependencies for basic functionality
+streamlit>=1.28.0
+pathlib2>=2.3.0
+typing-extensions>=4.0.0 
