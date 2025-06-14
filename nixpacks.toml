@@ -1,11 +1,14 @@
+# Tells Nixpacks to use the 'backend' directory
+watch = ["./backend"]
+
 [phases.setup]
 nixPkgs = ["python39", "gcc", "pkg-config"]
-
-[phases.install]
-cmds = ["pip install -r requirements.txt"]
+# The paths are now relative to the root, so we point to backend/requirements.txt
+install_cmd = "pip install -r backend/requirements.txt"
 
 [phases.build]
 cmds = ["echo 'Build phase complete'"]
 
 [start]
-cmd = "python api.py" 
+# The start command is also run from the root
+cmd = "python backend/api.py" 

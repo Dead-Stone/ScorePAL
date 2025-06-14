@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+rootDir = "/backend"
 
 [deploy]
 startCommand = "python api.py"
