@@ -46,6 +46,9 @@ google-generativeai>=0.3.0  # For Gemini AI image analysis
 # Database (Optional)
 neo4j>=5.0.0
 
+# Jupyter/Notebook Processing
+nbformat>=5.0.0
+
 # Utilities
 tqdm>=4.0.0
 colorama>=0.4.0
