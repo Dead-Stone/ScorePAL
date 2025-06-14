@@ -1,37 +1,34 @@
-# Use Python 3.9 with Ubuntu base for better package support
+# Use Python 3.9 slim for smaller base image
 FROM python:3.9-slim
 
-# Install system dependencies for all your packages
+# Install system dependencies in one layer and clean up
 RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    cmake \
-    pkg-config \
-    libfreetype6-dev \
-    libfontconfig1-dev \
-    libjpeg-dev \
-    libpng-dev \
-    libopenblas-dev \
-    liblapack-dev \
-    libhdf5-dev \
-    libssl-dev \
-    libffi-dev \
-    zlib1g-dev \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+    # Essential build tools
+    gcc g++ \
+    # Image processing libraries
+    libfreetype6-dev libjpeg-dev libpng-dev \
+    # Math libraries
+    libopenblas-dev liblapack-dev \
+    # Other dependencies
+    libssl-dev libffi-dev zlib1g-dev \
+    # Cleanup in same layer to reduce size
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY backend/requirements.txt /app/requirements.txt
+# Copy requirements and install Python packages
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    # Remove pip cache to reduce image size
+    && pip cache purge \
+    # Remove unnecessary files
+    && find /usr/local/lib/python3.9/site-packages -name "*.pyc" -delete \
+    && find /usr/local/lib/python3.9/site-packages -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the entire project
-COPY . /app/
+# Copy only the backend directory
+COPY backend/ ./backend/
 
 # Set environment variables
 ENV PYTHONPATH=/app

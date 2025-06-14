@@ -1,0 +1,51 @@
+# Exclude frontend and other unnecessary directories
+frontend/
+.git/
+.github/
+node_modules/
+.next/
+.vercel/
+
+# Exclude development files
+*.md
+.gitignore
+.env*
+.vscode/
+.idea/
+
+# Exclude Python cache and build files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Exclude test files
+tests/
+test_*.py
+*_test.py
+
+# Exclude documentation
+docs/
+*.rst
+
+# Exclude temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db 
