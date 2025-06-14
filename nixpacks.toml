@@ -1,25 +1,13 @@
-# Add system packages required for your dependencies
+# Add essential system packages for Python dependencies
 [phases.setup]
 nixPkgs = [
   "python39",
   "gcc",
   "pkg-config",
   "cmake",
-  "make",
-  "freetype",
-  "fontconfig",
-  "libjpeg",
-  "libpng",
   "zlib",
-  "glib",
-  "cairo",
-  "pango",
-  "harfbuzz",
-  "fribidi",
   "libffi",
-  "openssl",
-  "curl",
-  "git"
+  "openssl"
 ]
 
 # Let Railway handle the default install process
