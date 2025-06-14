@@ -1,7 +1,7 @@
-# Root requirements file for Railway deployment
-# This includes all backend dependencies
+# Deployment requirements for Railway
+# Using deployment-optimized dependencies
 
--r backend/requirements.txt
+-r requirements-deploy.txt
 
 # Core FastAPI
 fastapi==0.104.1
