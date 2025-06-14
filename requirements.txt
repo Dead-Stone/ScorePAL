@@ -1,4 +1,6 @@
-# This file is just a wrapper to install dependencies from the backend directory
+# Root requirements file for Railway deployment
+# This includes all backend dependencies
+
 -r backend/requirements.txt
 
 # Core FastAPI
