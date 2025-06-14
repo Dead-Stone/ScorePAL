@@ -37,5 +37,6 @@ ENV PORT=8000
 # Expose port
 EXPOSE $PORT
 
-# Change to backend directory and start the application
-CMD cd backend && uvicorn api:app --host 0.0.0.0 --port $PORT 
+# Set working directory to backend and start the application
+WORKDIR /app/backend
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"] 
