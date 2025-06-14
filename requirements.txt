@@ -1,3 +1,8 @@
+# Root requirements file for Railway deployment
+# This includes ALL backend dependencies - NO COMPROMISES
+
+-r backend/requirements.txt
+
 # Deployment requirements for Railway
 # Using deployment-optimized dependencies
 

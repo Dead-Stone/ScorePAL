@@ -1,6 +1,7 @@
-# Railway configuration for ScorePAL
+# Railway configuration for ScorePAL - using Docker for full dependency support
 [build]
-builder = "NIXPACKS"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
