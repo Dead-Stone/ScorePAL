@@ -3,7 +3,7 @@ import json
 import re
 import logging
 import google.generativeai as genai
-from google.genai import types
+from google.generativeai import types
 from dotenv import load_dotenv
 
 load_dotenv()
