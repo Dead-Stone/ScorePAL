@@ -1,0 +1,26 @@
+# Add system packages required for your dependencies
+[phases.setup]
+nixPkgs = [
+  "python39",
+  "gcc",
+  "pkg-config",
+  "cmake",
+  "make",
+  "freetype",
+  "fontconfig",
+  "libjpeg",
+  "libpng",
+  "zlib",
+  "glib",
+  "cairo",
+  "pango",
+  "harfbuzz",
+  "fribidi",
+  "libffi",
+  "openssl",
+  "curl",
+  "git"
+]
+
+# Let Railway handle the default install process
+# This ensures pip and venv are properly set up 
