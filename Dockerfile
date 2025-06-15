@@ -60,4 +60,4 @@ EXPOSE $PORT
 
 # Set working directory to backend and start the application
 WORKDIR /app/backend
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["python", "app.py"] 
