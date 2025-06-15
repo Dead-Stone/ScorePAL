@@ -35,7 +35,11 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Remove any conflicting opencv packages and install headless version
+RUN pip uninstall opencv-python opencv-contrib-python opencv-python-headless -y || true
+RUN pip install opencv-python-headless>=4.8.0
+
+# Install remaining Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

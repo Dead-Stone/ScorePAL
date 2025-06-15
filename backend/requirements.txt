@@ -30,7 +30,7 @@ PyMuPDF==1.19.0  # Compatible with PaddleOCR
 
 # Open Source OCR Engines
 # Use binary distributions where possible
-opencv-python-headless>=4.8.0
+# opencv-python-headless installed separately in Dockerfile to avoid conflicts
 unstructured>=0.10.0
 # PaddleOCR for enhanced table and complex layout recognition
 paddlepaddle==2.5.2
