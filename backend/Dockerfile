@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
-    libgthread-2.0-0 \
     libgtk-3-0 \
     libavcodec-dev \
     libavformat-dev \
@@ -29,6 +28,8 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     libpoppler-cpp-dev \
     pkg-config \
+    libgstreamer1.0-0 \
+    libgstreamer-plugins-base1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
