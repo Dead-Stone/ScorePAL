@@ -28,6 +28,9 @@ pypdfium2==4.25.0
 python-dotenv==1.0.0
 PyMuPDF==1.19.0  # Compatible with PaddleOCR
 
+# Computer Vision
+opencv-python-headless>=4.8.0  # Headless version for Docker/server environments
+
 # Open Source OCR Engines
 # Use binary distributions where possible
 # opencv-python-headless installed separately in Dockerfile to avoid conflicts
