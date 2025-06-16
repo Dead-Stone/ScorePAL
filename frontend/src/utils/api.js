@@ -1,5 +1,5 @@
-// API Configuration for ScorePAL Frontend  
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://35.224.196.67:8000';
+// API Configuration for ScorePAL Frontend
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
 
 export const api = {
   baseURL: API_BASE_URL,
