@@ -60,7 +60,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", 
         "http://127.0.0.1:3000",
-        "https://score-3exjgjq7-mohanas-projects-df274cd3.vercel.app",  # Your Vercel URL
+        "https://score-pal.vercel.app",  # Your new Vercel URL
+        "https://score-3exjgjq7-mohanas-projects-df274cd3.vercel.app",  # Old Vercel URL
         "*"  # Allow all origins for testing (remove in production)
     ],
     allow_credentials=True,
