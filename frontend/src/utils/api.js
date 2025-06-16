@@ -8,6 +8,7 @@ export const api = {
   async request(endpoint, options = {}) {
     const url = `${API_BASE_URL}${endpoint}`;
     const config = {
+      mode: 'cors', // Explicitly set CORS mode
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
@@ -29,6 +30,12 @@ export const api = {
       return data;
     } catch (error) {
       console.error('API Error:', error);
+      
+      // Check for specific CORS errors
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        throw new Error('Failed to fetch - This might be a CORS issue or the backend server is not accessible');
+      }
+      
       throw error;
     }
   },
