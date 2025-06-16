@@ -5,6 +5,7 @@ import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import SchoolOutlinedIcon from '@mui/icons-material/SchoolOutlined';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
+import BackendStatus from '../components/BackendStatus';
 
 const HeroSection = styled(Box)(({ theme }) => ({
   background: `linear-gradient(135deg, ${theme.palette.primary.light} 30%, ${theme.palette.primary.main} 90%)`,
@@ -44,6 +45,7 @@ const CallToActionSection = styled(Box)(({ theme }) => ({
 export default function LandingPage() {
   return (
     <Container maxWidth={false} disableGutters>
+      <BackendStatus />
       <HeroSection>
         <Typography variant="h2" component="h1" gutterBottom sx={{ fontWeight: 'bold', maxWidth: 800, mx: 'auto' }}>
           ScorePAL: Your AI-Powered Academic Grading Assistant
