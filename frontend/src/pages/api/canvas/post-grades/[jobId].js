@@ -50,7 +50,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend
     const response = await axios.post(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/canvas/post-grades/${jobId}`,
+      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/canvas/post-grades/${jobId}`,
       formData,
       {
         headers: {

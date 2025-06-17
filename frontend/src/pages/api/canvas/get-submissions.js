@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend
     const response = await axios.post(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/get-submissions`,
+      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/get-submissions`,
       {
         api_key: processedApiKey,
         course_id: course_id,

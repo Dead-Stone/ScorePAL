@@ -13,7 +13,7 @@ def test_image_extraction_api():
     print("=" * 50)
     
     # API endpoint
-    api_url = "http://localhost:8000/api/image-extraction/extract"
+    api_url = "https://34-13-75-235.nip.io/api/image-extraction/extract"
     
     # Test file
     test_file = "test_files/huynhroger_4489590_79107742_CMPE-148_ Networking Homework .pdf"
@@ -69,7 +69,7 @@ def test_health_endpoint():
     print("=" * 50)
     
     try:
-        response = requests.get("http://localhost:8000/api/image-extraction/health", timeout=10)
+        response = requests.get("https://34-13-75-235.nip.io/api/image-extraction/health", timeout=10)
         
         if response.status_code == 200:
             health = response.json()
@@ -92,7 +92,7 @@ def test_sessions_endpoint():
     print("=" * 50)
     
     try:
-        response = requests.get("http://localhost:8000/api/image-extraction/sessions", timeout=10)
+        response = requests.get("https://34-13-75-235.nip.io/api/image-extraction/sessions", timeout=10)
         
         if response.status_code == 200:
             sessions = response.json()

@@ -18,7 +18,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend
     const response = await axios.get(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/canvas/jobs/${jobId}/results`
+      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/canvas/jobs/${jobId}/results`
     );
 
     return res.status(response.status).json(response.data);

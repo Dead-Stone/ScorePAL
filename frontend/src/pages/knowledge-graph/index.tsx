@@ -28,7 +28,7 @@ import axios from 'axios';
 import dynamic from 'next/dynamic';
 
 // Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
 axios.defaults.headers.common['Accept'] = 'application/json';
 
 // Use dynamic import for the React Force Graph component to avoid SSR issues

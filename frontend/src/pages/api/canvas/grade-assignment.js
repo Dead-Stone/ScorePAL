@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     // Forward request to backend - use the session-based endpoint
     // Note: we don't need to pass canvas_url and api_key anymore since they're in the session
     const response = await axios.post(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/courses/${course_id}/assignments/${assignment_id}/grade`
+      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/courses/${course_id}/assignments/${assignment_id}/grade`
     );
 
     // When successful, store the job in localStorage
@@ -52,4 +52,4 @@ export default async function handler(req, res) {
       message: error.response?.data?.detail || error.message || 'Error starting Canvas grading job',
     });
   }
-} 
+}

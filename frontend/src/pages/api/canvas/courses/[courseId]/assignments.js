@@ -25,7 +25,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend - use the session-based /api/canvas endpoint
     const response = await axios.get(
-      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/courses/${courseId}/assignments`
+      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/courses/${courseId}/assignments`
     );
 
     return res.status(response.status).json(response.data);

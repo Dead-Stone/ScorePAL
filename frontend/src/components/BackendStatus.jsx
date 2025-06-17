@@ -84,7 +84,7 @@ const BackendStatus = () => {
       </div>
       
       <div className="mt-3 text-xs text-gray-500">
-        API URL: http://35.224.196.67:8000
+        API URL: https://34-13-75-235.nip.io
       </div>
     </div>
   );

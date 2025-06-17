@@ -11,7 +11,7 @@ def test_backend_status():
     """Test the backend status endpoint"""
     try:
         # Test the health endpoint
-        response = requests.get("http://localhost:8000/health", timeout=5)
+        response = requests.get("https://34-13-75-235.nip.io/health", timeout=5)
         
         if response.status_code == 200:
             data = response.json()
