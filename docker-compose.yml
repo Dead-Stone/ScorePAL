@@ -5,14 +5,13 @@ services:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      - PYTHONPATH=/app
-      - PORT=8000
+    env_file:
+      - docker.env
     volumes:
       - ./backend/data:/app/backend/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "https://34-13-75-235.nip.io/"]
+      test: ["CMD", "curl", "-f", "https://34-13-75-235.nip.io/health"]
       interval: 30s
       timeout: 10s
       retries: 3
