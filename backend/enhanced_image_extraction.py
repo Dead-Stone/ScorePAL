@@ -207,10 +207,10 @@ class EnhancedImageExtractionService:
         if GEMINI_AVAILABLE and self.gemini_api_key and len(self.gemini_api_key) > 10:
             try:
                 genai.configure(api_key=self.gemini_api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
                 # Test the model with a simple call to verify it works
                 # Skip for now to avoid quota issues
-                self.available_models.append("gemini-1.5-pro")
+                self.available_models.append("gemini-1.5-flash")
                 logger.info("Gemini 1.5 Pro vision model initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}")
@@ -433,14 +433,14 @@ class EnhancedImageExtractionService:
             return self._fallback_image_analysis(image, context)
         
         # Prioritize models by capability
-        model_priority = ["claude-3-5-sonnet", "gemini-1.5-pro", "gpt-4-vision-preview"]
+        model_priority = ["claude-3-5-sonnet", "gemini-1.5-flash", "gpt-4-vision-preview"]
         
         for model in model_priority:
             if model in self.available_models:
                 try:
                     if model == "claude-3-5-sonnet":
                         return self._analyze_with_claude_sync(image, context)
-                    elif model == "gemini-1.5-pro":
+                    elif model == "gemini-1.5-flash":
                         return self._analyze_with_gemini_sync(image, context)
                     elif model == "gpt-4-vision-preview":
                         return self._analyze_with_gpt4v_sync(image, context)
