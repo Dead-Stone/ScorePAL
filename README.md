@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-Next.js-blue?style=flat-square&logo=typescript)](https://nextjs.org)
 [![Beta](https://img.shields.io/badge/Status-Open%20Source%20Beta-orange?style=flat-square)](https://github.com/Dead-Stone/ScorePAL/releases)
 
-### ✨ Grade assignments 10x faster with AI - Built for educators, by educators
+### ✨ Grade assignments faster with AI - Built for educators, by educators
 
 🚧 **Beta Release** - Expect bugs and frequent updates as we improve the platform
 
@@ -20,14 +20,14 @@
 
 ## ✨ Grade for Free
 
-Simple setup. Add your assignment files, click "Grade", and export your results to CSV, Canvas, or PDF reports.
+Simple setup. Add your assignment files, click "Grade", and export your results.
 
-| ScorePAL supports | Performance | Accuracy | Features |
-|-------------------|-------------|----------|----------|
-| **Essays & Reports** | 10x faster | 95% consistency | Auto feedback generation |
-| **Python Code** | 5x faster | 98% syntax accuracy | Code quality analysis |
-| **Jupyter Notebooks** | 8x faster | 92% cell analysis | Code + markdown parsing |
-| **Canvas Integration** | Seamless sync | 94% gradebook accuracy | Direct LMS workflow |
+| ScorePAL supports | Status | Features |
+|-------------------|--------|----------|
+| **Essays & Reports** | ✅ Ready | AI feedback generation |
+| **Python Code** | ✅ Ready | Code quality analysis |
+| **Jupyter Notebooks** | ✅ Ready | Code + markdown parsing |
+| **Canvas Integration** | 🚧 Beta | Direct LMS workflow |
 
 ---
 
@@ -39,13 +39,13 @@ ScorePAL revolutionizes academic grading by using Google's Gemini AI to automati
 
 ### 🚀 Key Features
 
-- ⚡ **Lightning Fast**: Grade entire classes in minutes
-- 🎯 **Consistent Scoring**: Eliminate grading bias with AI consistency  
-- 📝 **Detailed Feedback**: Get comprehensive comments for each criterion
+- ⚡ **AI-Powered**: Automated grading with detailed feedback
+- 🎯 **Consistent Scoring**: Standardized evaluation criteria  
+- 📝 **Detailed Feedback**: AI-generated comments for each criterion
 - 💻 **Programming Support**: Grade Python code and Jupyter notebooks
-- 🔗 **Canvas Integration**: Direct LMS workflow integration
-- 📊 **Rich Analytics**: Track student performance trends
-- 🎨 **Custom Rubrics**: Create reusable scoring frameworks
+- 🔗 **Canvas Integration**: LMS workflow integration (Beta)
+- 📊 **Analytics**: Basic performance tracking
+- 🎨 **Custom Rubrics**: Create and reuse scoring frameworks
 
 ---
 
@@ -215,16 +215,18 @@ CANVAS_API_TOKEN=your_canvas_token
 
 ---
 
-## 🥇 Performance Benchmarking
+## 📊 Current Capabilities
 
-We tested ScorePAL against manual grading on real academic assignments:
+ScorePAL is in active development. Here's what works now:
 
-| Assignment Type | Manual Time | ScorePAL Time | Speed Improvement | Consistency Score |
-|----------------|-------------|---------------|-------------------|-------------------|
-| **Essays (500 words)** | 15 min | 1.5 min | **10x faster** | 95% reliability |
-| **Python Assignments** | 20 min | 4 min | **5x faster** | 98% accuracy |
-| **Research Papers** | 45 min | 6 min | **7.5x faster** | 92% compliance |
-| **Lab Reports** | 25 min | 3 min | **8x faster** | 94% coverage |
+| File Type | Status | Processing |
+|-----------|--------|------------|
+| **PDF Documents** | ✅ Stable | Text extraction + OCR |
+| **DOCX Files** | ✅ Stable | Native document parsing |
+| **Python Code** | ✅ Stable | Syntax analysis + feedback |
+| **Jupyter Notebooks** | ✅ Stable | Cell-by-cell processing |
+| **Canvas LMS** | 🚧 Beta | Basic integration |
+| **Images** | 🧪 Experimental | OCR processing |
 
 ---
 
