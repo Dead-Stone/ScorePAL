@@ -254,13 +254,3 @@ As an open source project, we welcome contributions! Please see our contributing
 MIT License - see [LICENSE](LICENSE) for details.
 
 This project is open source and free to use for educational purposes.
-
----
-
-<div align="center">
-
-**Start grading smarter today**
-
-[📚 Documentation](https://github.com/Dead-Stone/ScorePAL/wiki) • [🐛 Issues](https://github.com/Dead-Stone/ScorePAL/issues) • [💬 Discussions](https://github.com/Dead-Stone/ScorePAL/discussions)
-
-</div> 
