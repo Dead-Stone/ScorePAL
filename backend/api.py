@@ -19,6 +19,8 @@ import asyncio
 import uvicorn
 import mimetypes
 import tempfile
+import time
+import psutil
 
 # Import our existing services
 from preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
@@ -42,6 +44,15 @@ except ImportError:
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
+
+# Import system modules for health checks
+import time
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    logger.warning("psutil not available - system metrics will be limited")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -174,33 +185,116 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Enhanced health check endpoint with detailed status information."""
     try:
+        start_time = time.time()
+        
         # Check if required directories exist
-        for dir_name, dir_path in directories.items():
-            if not dir_path.exists():
-                dir_path.mkdir(parents=True, exist_ok=True)
+        directories_ok = True
+        directory_status = {}
+        
+        try:
+            for dir_name, dir_path in directories.items():
+                if not dir_path.exists():
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                directory_status[dir_name] = "exists"
+        except Exception as e:
+            directories_ok = False
+            logger.error(f"Directory check failed: {e}")
         
         # Check if we can write to the temp directory
-        test_file = directories["temp_uploads"] / "health_check.txt"
+        file_system_ok = True
         try:
+            test_file = directories["temp_uploads"] / "health_check.txt"
             test_file.write_text("health check")
             test_file.unlink()  # Clean up
         except Exception as e:
-            raise Exception(f"Failed to write to temp directory: {str(e)}")
+            file_system_ok = False
+            logger.error(f"File system check failed: {e}")
+        
+        # Test API endpoints
+        endpoint_status = {}
+        try:
+            # Test rubric API
+            from rubric_api import RUBRICS
+            endpoint_status["rubrics"] = True
+        except Exception as e:
+            endpoint_status["rubrics"] = False
+            logger.error(f"Rubric API check failed: {e}")
+        
+        try:
+            # Test grading service
+            grading_service_ok = hasattr(grading_service, 'grade_submission')
+            endpoint_status["grading"] = grading_service_ok
+        except Exception as e:
+            endpoint_status["grading"] = False
+            logger.error(f"Grading service check failed: {e}")
+        
+        try:
+            # Test canvas integration
+            canvas_service_ok = has_custom_canvas_routes
+            endpoint_status["canvas"] = canvas_service_ok
+        except Exception as e:
+            endpoint_status["canvas"] = False
+            logger.error(f"Canvas service check failed: {e}")
+        
+        # Check database connection (if available)
+        database_status = "unknown"
+        try:
+            if 'db' in globals() and db:
+                database_status = "connected" if db.is_connected() else "disconnected"
+            else:
+                database_status = "not_configured"
+        except Exception as e:
+            database_status = "error"
+            logger.error(f"Database check failed: {e}")
+        
+        # Get system information
+        system_info = {}
+        if PSUTIL_AVAILABLE:
+            try:
+                process = psutil.Process()
+                system_info = {
+                    "uptime": f"{(time.time() - process.create_time()):.0f}s",
+                    "memory_usage": f"{process.memory_info().rss / 1024 / 1024:.1f}MB",
+                    "cpu_percent": f"{process.cpu_percent():.1f}%"
+                }
+            except Exception as e:
+                logger.error(f"Error getting system info: {e}")
+                system_info = {"error": "Unable to get system metrics"}
+        else:
+            system_info = {"uptime": "unknown", "note": "psutil not available"}
+        
+        # Determine overall status
+        overall_status = "healthy"
+        if not (directories_ok and file_system_ok):
+            overall_status = "error"
+        elif not all(endpoint_status.values()):
+            overall_status = "warning"
+        
+        response_time = (time.time() - start_time) * 1000  # in milliseconds
         
         return {
-            "status": "healthy",
+            "status": overall_status,
+            "message": f"Backend is {'running smoothly' if overall_status == 'healthy' else 'experiencing issues'}",
             "timestamp": datetime.now().isoformat(),
             "version": "1.0.0",
+            "uptime": system_info["uptime"],
+            "database": database_status,
+            "endpoints": endpoint_status,
+            "system": system_info,
+            "directories": directory_status,
+            "response_time_ms": round(response_time, 2),
             "environment": "development" if os.getenv("DEBUG", "true").lower() == "true" else "production"
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}", exc_info=True)
         return {
-            "status": "unhealthy",
+            "status": "error",
+            "message": f"Health check failed: {str(e)}",
             "error": str(e),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0"
         }
 
 @app.post("/system/initialize")

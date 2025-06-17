@@ -33,6 +33,7 @@ import GradingIcon from '@mui/icons-material/Grading';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { useRouter } from 'next/router';
+import BackendStatus from '../components/BackendStatus';
 
 // Create a theme instance
 const theme = createTheme({
@@ -162,6 +163,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
       display: 'flex',
       gap: 1,
     }}>
+      <BackendStatus />
       <Button
         variant="contained"
         sx={{
@@ -191,7 +193,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
           p: 0,
           '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
         }}
-        href="https://github.com/your-repo"
+        href="https://github.com/Dead-Stone"
         target="_blank"
         rel="noopener noreferrer"
       >
