@@ -257,14 +257,6 @@ This project is open source and free to use for educational purposes.
 
 ---
 
-## 🙏 Acknowledgments
-
-- **Google Gemini**: AI grading engine
-- **Canvas LMS**: Educational platform integration  
-- **Educators worldwide**: Real-world testing and feedback
-
----
-
 <div align="center">
 
 **Start grading smarter today**
