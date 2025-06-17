@@ -1,4 +1,13 @@
 """
+ScorePAL - AI-Powered Academic Grading Assistant
+Main FastAPI Backend Server & API Endpoints
+
+@author: Mohana Moganti (@Dead-Stone)
+@license: MIT
+@repository: https://github.com/Dead-Stone/ScorePAL
+"""
+
+"""
 API endpoints for ScorePAL.
 This module defines the FastAPI routes for the application.
 """

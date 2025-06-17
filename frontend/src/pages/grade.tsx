@@ -1,3 +1,12 @@
+/**
+ * ScorePAL - AI-Powered Academic Grading Assistant
+ * Single & Batch Grading Interface
+ * 
+ * @author Mohana Moganti (@Dead-Stone)
+ * @license MIT
+ * @repository https://github.com/Dead-Stone/ScorePAL
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   Box,

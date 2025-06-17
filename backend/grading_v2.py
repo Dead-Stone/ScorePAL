@@ -1,3 +1,12 @@
+"""
+ScorePAL - AI-Powered Academic Grading Assistant
+AI Grading Service with Google Gemini Integration
+
+@author: Mohana Moganti (@Dead-Stone)
+@license: MIT
+@repository: https://github.com/Dead-Stone/ScorePAL
+"""
+
 #grading_v2.py
 from datetime import datetime
 import logging
@@ -9,6 +18,7 @@ from prompts.answer_key_prompt import get_answer_key_prompt
 from prompts.grading_prompt import get_grading_prompt 
 from prompts.image_prompt import get_image_description_prompt
 from models.rubric import Rubric, GradingCriteria
+import os
 
 class GradingResult:
     """Class to store and format grading results."""

@@ -1,3 +1,12 @@
+/**
+ * ScorePAL - AI-Powered Academic Grading Assistant
+ * Main Application Layout & Theme Configuration
+ * 
+ * @author Mohana Moganti (@Dead-Stone)
+ * @license MIT
+ * @repository https://github.com/Dead-Stone/ScorePAL
+ */
+
 import React, { useState } from 'react';
 import Head from 'next/head';
 import { AppProps } from 'next/app';

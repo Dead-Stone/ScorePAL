@@ -1,3 +1,12 @@
+"""
+ScorePAL - AI-Powered Academic Grading Assistant
+Main Application Startup Script
+
+@author: Mohana Moganti (@Dead-Stone)
+@license: MIT
+@repository: https://github.com/Dead-Stone/ScorePAL
+"""
+
 #!/usr/bin/env python
 """
 Entry point for the application.

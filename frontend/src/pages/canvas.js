@@ -1,3 +1,12 @@
+/**
+ * ScorePAL - AI-Powered Academic Grading Assistant
+ * Canvas LMS Integration Interface
+ * 
+ * @author Mohana Moganti (@Dead-Stone)
+ * @license MIT
+ * @repository https://github.com/Dead-Stone/ScorePAL
+ */
+
 import { useState, useEffect } from 'react';
 import { 
   Box, Button, Card, CardContent, Container, Typography, TextField, 

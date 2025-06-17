@@ -1,6 +1,10 @@
 """
-Canvas Grading Service for ScorePAL.
-This module handles Canvas LMS integration with our grading system.
+ScorePAL - AI-Powered Academic Grading Assistant
+Canvas LMS Integration Service
+
+@author: Mohana Moganti (@Dead-Stone)
+@license: MIT
+@repository: https://github.com/Dead-Stone/ScorePAL
 """
 
 import os

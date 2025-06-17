@@ -1,3 +1,12 @@
+"""
+ScorePAL - AI-Powered Academic Grading Assistant
+Rubric Management API Endpoints
+
+@author: Mohana Moganti (@Dead-Stone)
+@license: MIT
+@repository: https://github.com/Dead-Stone/ScorePAL
+"""
+
 from fastapi import APIRouter, HTTPException, Body
 from typing import Dict, List, Any, Optional
 from models.rubric import Rubric, GradingCriteria
