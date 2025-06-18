@@ -250,6 +250,8 @@ const CanvasPage = () => {
         course_id: parseInt(selectedCourseId),
         assignment_id: parseInt(selectedAssignmentId),
         force_sync: forceSync
+      }, {
+        timeout: 300000, // 5 minutes timeout for frontend
       });
       
       if (response.data.status === 'success') {
@@ -272,7 +274,13 @@ const CanvasPage = () => {
       }
     } catch (err) {
       console.error('Sync error:', err);
-      setError(err.response?.data?.message || err.message || 'An error occurred syncing submissions');
+      
+      // Handle timeout errors specifically
+      if (err.code === 'ECONNABORTED' || err.response?.status === 408) {
+        setError('The sync operation is taking longer than expected. This is normal for large assignments. Please wait a few minutes and try again - your data may already be synced in the background.');
+      } else {
+        setError(err.response?.data?.message || err.message || 'An error occurred syncing submissions');
+      }
     } finally {
       setLoading(false);
     }
@@ -297,6 +305,8 @@ const CanvasPage = () => {
         selected_user_ids: selectedUserIds,
         rubric_id: selectedRubric || null,
         strictness: strictness
+      }, {
+        timeout: 600000, // 10 minutes timeout for grading
       });
       
       if (response.data.status === 'success') {
@@ -309,7 +319,13 @@ const CanvasPage = () => {
       }
     } catch (err) {
       console.error('Grading error:', err);
-      setError(err.response?.data?.message || err.message || 'An error occurred grading submissions');
+      
+      // Handle timeout errors specifically
+      if (err.code === 'ECONNABORTED' || err.response?.status === 408) {
+        setError('The grading operation is taking longer than expected. This is normal for large assignments. Please check back in a few minutes - your grading may complete in the background.');
+      } else {
+        setError(err.response?.data?.message || err.message || 'An error occurred grading submissions');
+      }
     } finally {
       setLoading(false);
       setGradingInProgress(false);
