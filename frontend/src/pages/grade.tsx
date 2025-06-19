@@ -33,6 +33,9 @@ import {
   FormHelperText,
   Divider,
 } from '@mui/material';
+import { ProtectedRoute } from '../components/ProtectedRoute';
+import { GradePageDocumentation } from '../components/PageDocumentation';
+import { useAuth } from '../contexts/AuthContext';
 import { styled } from '@mui/material/styles';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AssignmentIcon from '@mui/icons-material/Assignment';
@@ -48,9 +51,10 @@ import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { API_BASE_URL } from '@/config/api';
 
 // Configure axios with base URL and default headers
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.post['Content-Type'] = 'application/json';
 
@@ -140,6 +144,7 @@ function TabPanel(props: TabPanelProps) {
 // Main component
 export default function Home() {
   const router = useRouter();
+  const { checkGradingPermission, incrementGradingCount } = useAuth();
   
   // State for single submission form
   const [singleForm, setSingleForm] = useState({
@@ -329,7 +334,11 @@ export default function Home() {
   };
   
   return (
+    <ProtectedRoute>
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        {/* Documentation */}
+        <GradePageDocumentation />
+        
       {/* Header Section */}
       <GradientPaper elevation={3}>
         <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
@@ -558,5 +567,6 @@ export default function Home() {
         </Alert>
       </Snackbar>
     </Container>
+    </ProtectedRoute>
   );
 } 

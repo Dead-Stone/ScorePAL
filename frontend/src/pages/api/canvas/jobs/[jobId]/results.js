@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { API_BASE_URL } from '../../../../../config/api';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -16,9 +17,10 @@ export default async function handler(req, res) {
       });
     }
 
-    // Forward request to backend
+    // Using centralized API config - change in /src/config/api.js for all endpoints
+    // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/canvas/jobs/${jobId}/results`);
     const response = await axios.get(
-      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/canvas/jobs/${jobId}/results`
+      `${API_BASE_URL}/canvas/jobs/${jobId}/results`
     );
 
     return res.status(response.status).json(response.data);

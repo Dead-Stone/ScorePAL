@@ -46,6 +46,10 @@ const BackendStatus = () => {
     return '❓';
   };
 
+  const getApiUrl = () => {
+    return 'http://localhost:8000';
+  };
+
   return (
     <div className="bg-white shadow-md rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between">
@@ -84,7 +88,7 @@ const BackendStatus = () => {
       </div>
       
       <div className="mt-3 text-xs text-gray-500">
-        API URL: https://34-13-75-235.nip.io
+        API URL: {getApiUrl()}
       </div>
     </div>
   );

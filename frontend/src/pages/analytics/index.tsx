@@ -42,6 +42,7 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import StarIcon from '@mui/icons-material/Star';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
+import { API_BASE_URL } from '@/config/api';
 
 // Dynamic import for Chart.js components
 import dynamic from 'next/dynamic';
@@ -74,7 +75,7 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ children }) => {
 };
 
 // Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 
 // Types

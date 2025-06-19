@@ -18,6 +18,9 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Slider,
   List, ListItem, ListItemText, ListItemIcon, FormHelperText
 } from '@mui/material';
+import { ProtectedRoute } from '../components/ProtectedRoute';
+import { CanvasPageDocumentation } from '../components/PageDocumentation';
+import { useAuth } from '../contexts/AuthContext';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
@@ -1030,8 +1033,12 @@ const CanvasPage = () => {
   const steps = ['Connect', 'Select Course', 'Sync', 'Select', 'Grade', 'Results'];
 
   return (
+    <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
     <Container maxWidth="lg">
       <Box sx={{ mt: 4, mb: 4 }}>
+          {/* Documentation */}
+          <CanvasPageDocumentation />
+          
       <Typography variant="h4" gutterBottom>
           Canvas Grading System
       </Typography>
@@ -1114,6 +1121,7 @@ const CanvasPage = () => {
         </Dialog>
       </Box>
     </Container>
+    </ProtectedRoute>
   );
 };
 

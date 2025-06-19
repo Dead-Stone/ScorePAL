@@ -33,9 +33,12 @@ import DownloadIcon from '@mui/icons-material/Download';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import EventIcon from '@mui/icons-material/Event';
 import PeopleIcon from '@mui/icons-material/People';
+import { API_BASE_URL } from '@/config/api';
 
 // Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+// Using centralized API config - change in /src/config/api.js for all endpoints
+// axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 
 // Types

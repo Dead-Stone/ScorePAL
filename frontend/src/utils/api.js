@@ -1,5 +1,7 @@
-// API Configuration for ScorePAL Frontend - Updated for HTTPS Load Balancer
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+// API Configuration for ScorePAL Frontend - Using centralized config
+// Change API URLs in /src/config/api.js for all endpoints
+// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { API_BASE_URL } from '../config/api';
 
 // Timeout configurations
 const DEFAULT_TIMEOUT = 30000; // 30 seconds

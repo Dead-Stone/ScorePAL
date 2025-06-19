@@ -12,6 +12,8 @@ import Head from 'next/head';
 import { AppProps } from 'next/app';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import '../styles/globals.css';
+import { AuthProvider } from '../contexts/AuthContext';
 import {
   Box,
   Drawer,
@@ -28,6 +30,8 @@ import {
   Tooltip,
   Chip,
   Button,
+  Avatar,
+  Typography,
 } from '@mui/material';
 import Link from 'next/link';
 import MenuIcon from '@mui/icons-material/Menu';
@@ -41,8 +45,11 @@ import BusinessIcon from '@mui/icons-material/Business';
 import GradingIcon from '@mui/icons-material/Grading';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import PersonIcon from '@mui/icons-material/Person';
+import LogoutIcon from '@mui/icons-material/Logout';
 import { useRouter } from 'next/router';
 import BackendStatus from '../components/BackendStatus';
+import { useAuth } from '../contexts/AuthContext';
 
 // Create a theme instance
 const theme = createTheme({
@@ -141,16 +148,95 @@ const theme = createTheme({
 
 const drawerWidth = 150;
 
+// User Profile Section Component
+function UserProfileSection() {
+  const { user, logout, isAuthenticated } = useAuth();
+  
+  if (!isAuthenticated || !user) {
+    return (
+      <Box sx={{ p: 2 }}>
+        <Button
+          component={Link}
+          href="/auth/login"
+          variant="contained"
+          size="small"
+          fullWidth
+          sx={{ mb: 1, fontSize: 10 }}
+        >
+          Sign In
+        </Button>
+        <Button
+          component={Link}
+          href="/auth/register"
+          variant="outlined"
+          size="small"
+          fullWidth
+          sx={{ fontSize: 10 }}
+        >
+          Sign Up
+        </Button>
+      </Box>
+    );
+  }
+
+  const getInitials = () => {
+    if (user.first_name && user.last_name) {
+      return `${user.first_name[0]}${user.last_name[0]}`.toUpperCase();
+    }
+    return user.email[0].toUpperCase();
+  };
+
+  return (
+    <Box sx={{ p: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+        <Avatar sx={{ width: 32, height: 32, fontSize: 12, mr: 1 }}>
+          {getInitials()}
+        </Avatar>
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block', lineHeight: 1 }}>
+            {user.first_name && user.last_name 
+              ? `${user.first_name} ${user.last_name}` 
+              : user.email}
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: 9 }}>
+            {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+          </Typography>
+        </Box>
+      </Box>
+      <Box sx={{ display: 'flex', gap: 0.5 }}>
+        <Tooltip title="Profile" placement="top">
+          <IconButton
+            component={Link}
+            href="/profile"
+            size="small"
+            sx={{ flex: 1 }}
+          >
+            <PersonIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Logout" placement="top">
+          <IconButton
+            onClick={logout}
+            size="small"
+            sx={{ flex: 1 }}
+          >
+            <LogoutIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Box>
+    </Box>
+  );
+}
+
 const navigationItems = [
-  { text: 'Home', icon: <HomeIcon />, path: '/' },
   { text: 'Grade', icon: <Box component="img" src="/grade-logo.png" alt="Grade Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/grade' },
-  { text: 'Results', icon: <GradingIcon />, path: '/results' },
-  { text: 'Rubrics', icon: <Box component="img" src="/rubric-logo.png" alt="Rubric Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/rubric' },
   { text: 'Canvas', icon: <Box component="img" src="/canvas-logo.jpg" alt="Canvas Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/canvas' },
+  { text: 'Rubrics', icon: <Box component="img" src="/rubric-logo.png" alt="Rubric Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/rubric' },
+  { text: 'Results', icon: <GradingIcon />, path: '/results' },
   { text: 'Moodle', icon: <Box component="img" src="/moodle-logo.png" alt="Moodle Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/moodle-integration' },
 ];
 
-export default function MyApp({ Component, pageProps }: AppProps) {
+function AppContent({ Component, pageProps }: AppProps) {
   const router = useRouter();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -159,8 +245,8 @@ export default function MyApp({ Component, pageProps }: AppProps) {
     setMobileOpen(!mobileOpen);
   };
 
-  // Pages that should not use the layout (like auth pages)
-  const noLayoutPaths = ['/login', '/register'];
+  // Pages that should not use the layout (like auth pages and landing)
+  const noLayoutPaths = ['/landing', '/auth/login', '/auth/register', '/auth/forgot-password'];
   const shouldUseLayout = !noLayoutPaths.includes(router.pathname);
 
   const FloatingButtons = () => (
@@ -267,6 +353,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
       </List>
       <Box sx={{ flexGrow: 1 }} />
       <Divider sx={{ my: 1 }} />
+      <UserProfileSection />
     </Box>
   );
 
@@ -346,5 +433,13 @@ export default function MyApp({ Component, pageProps }: AppProps) {
         <FloatingButtons />
       </ThemeProvider>
     </>
+  );
+}
+
+export default function MyApp(props: AppProps) {
+  return (
+    <AuthProvider>
+      <AppContent {...props} />
+    </AuthProvider>
   );
 } 

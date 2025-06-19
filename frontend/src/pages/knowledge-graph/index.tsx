@@ -26,9 +26,12 @@ import { useRouter } from 'next/router';
 import Link from 'next/link';
 import axios from 'axios';
 import dynamic from 'next/dynamic';
+import { API_BASE_URL } from '@/config/api';
 
 // Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+// Using centralized API config - change in /src/config/api.js for all endpoints
+// axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 
 // Use dynamic import for the React Force Graph component to avoid SSR issues

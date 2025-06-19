@@ -6,7 +6,7 @@
 # Deployment requirements for Railway
 # Using deployment-optimized dependencies
 
--r requirements-deploy.txt
+# -r requirements-deploy.txt
 
 # Core FastAPI
 fastapi==0.104.1

@@ -12,10 +12,18 @@ const nextConfig = {
     // fastRefresh: false,
   },
   async rewrites() {
+    // Using centralized API config - change in /src/config/api.js for all endpoints
+    // const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const apiUrl = 'http://localhost:8000';
+    
     return [
       {
         source: '/api/:path*',
-        destination: 'https://scorepal-production.up.railway.app/:path*',
+        destination: `${apiUrl}/:path*`,
+      },
+      {
+        source: '/auth/:path*',
+        destination: `${apiUrl}/auth/:path*`,
       },
     ]
   },

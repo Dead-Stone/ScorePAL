@@ -59,9 +59,10 @@ import Link from 'next/link';
 import axios from 'axios';
 import ChatInterface from '../../components/ChatInterface';
 import SaveIcon from '@mui/icons-material/Save';
+import { API_BASE_URL } from '@/config/api';
 
 // Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 
 // Define types for the data

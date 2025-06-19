@@ -42,13 +42,9 @@ from config import get_settings  # Use absolute import
 from multi_agent_grading import MultiAgentGradingSystem
 from chat_api import router as chat_router
 
-# Try to import our custom canvas routes
-try:
-    from api.canvas_routes import router as custom_canvas_router
-    has_custom_canvas_routes = True
-except ImportError:
-    has_custom_canvas_routes = False
-    logger.warning("Could not import custom canvas routes")
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -63,9 +59,22 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     logger.warning("psutil not available - system metrics will be limited")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Try to import our custom canvas routes
+try:
+    from api.canvas_routes import router as custom_canvas_router
+    has_custom_canvas_routes = True
+except ImportError:
+    has_custom_canvas_routes = False
+    logger.warning("Could not import custom canvas routes")
+
+# Import authentication system
+try:
+    from auth import auth_router, create_db_sync, current_active_user
+    has_auth_system = True
+    logger.info("Authentication system imported successfully")
+except ImportError as e:
+    has_auth_system = False
+    logger.warning(f"Could not import authentication system: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -105,6 +114,11 @@ except ImportError as e:
 if has_custom_canvas_routes:
     app.include_router(custom_canvas_router, prefix="/api/canvas", tags=["Canvas"])
 
+# Include authentication routes if available
+if has_auth_system:
+    app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+    logger.info("Authentication routes included successfully")
+
 # Initialize services
 try:
     # Ensure directories exist before initializing services
@@ -126,6 +140,14 @@ try:
         logger.info("Neo4j database connected")
     else:
         logger.warning("Neo4j database not connected")
+    
+    # Initialize authentication database
+    if has_auth_system:
+        try:
+            create_db_sync()
+            logger.info("Authentication database initialized successfully")
+        except Exception as auth_error:
+            logger.error(f"Error initializing authentication database: {auth_error}")
 except Exception as e:
     logger.error(f"Error initializing services: {e}", exc_info=True)
     # We'll continue without failing, but the API might not function properly
