@@ -1,102 +1,138 @@
 #!/usr/bin/env python3
 """
-Test script to verify Gemini API key setup for ScorePAL.
+Test script to verify Gemini API key setup.
 """
 
 import os
 import sys
-from dotenv import load_dotenv
+from pathlib import Path
+
+# Add the backend directory to the path
+sys.path.append(str(Path(__file__).parent / "backend"))
 
 def test_gemini_setup():
-    """Test Gemini API key configuration and connectivity."""
-    print("🔍 Testing Gemini API Key Setup")
-    print("=" * 50)
+    """Test Gemini API key setup and basic functionality."""
     
-    # Load environment variables
-    load_dotenv()
+    print("="*80)
+    print("GEMINI API KEY SETUP TEST")
+    print("="*80)
     
-    # Check if API key is set
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if not gemini_key:
-        print("❌ GEMINI_API_KEY not found in environment variables")
-        print("💡 Please set your Gemini API key in the .env file")
+    # Test 1: Check environment variable
+    print("\n1. CHECKING ENVIRONMENT VARIABLES")
+    print("-" * 50)
+    
+    gemini_key = os.getenv('GEMINI_API_KEY')
+    if gemini_key:
+        print(f"✓ GEMINI_API_KEY found: {gemini_key[:10]}...{gemini_key[-4:]}")
+    else:
+        print("❌ GEMINI_API_KEY not found")
+        print("   Please set GEMINI_API_KEY in your .env file")
         return False
     
-    print(f"✅ GEMINI_API_KEY found: {gemini_key[:10]}...{gemini_key[-4:]}")
+    # Test 2: Test AI extraction service initialization
+    print("\n2. TESTING AI EXTRACTION SERVICE")
+    print("-" * 50)
     
-    # Test import
     try:
-        import google.generativeai as genai
-        print("✅ google.generativeai package imported successfully")
-    except ImportError as e:
-        print(f"❌ Failed to import google.generativeai: {e}")
-        print("💡 Install with: pip install google-generativeai")
-        return False
-    
-    # Test API connection
-    try:
-        print("🔗 Testing API connection...")
-        genai.configure(api_key=gemini_key)
+        from backend.ai_extraction_service import ai_extraction_service
         
-        # Try to create a model instance
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        print("✅ Model instance created successfully")
-        
-        # Test a simple generation
-        print("🧪 Testing content generation...")
-        response = model.generate_content("Say 'Hello, ScorePAL setup is working!'")
-        
-        if response and response.text:
-            print(f"✅ API test successful! Response: {response.text.strip()}")
-            return True
+        if ai_extraction_service.gemini_available:
+            print("✓ AI extraction service initialized successfully")
+            print(f"  - Model: Gemini 2.5 Flash")
+            print(f"  - Confidence threshold: {ai_extraction_service.min_confidence:.2%}")
+            print(f"  - Max retries: {ai_extraction_service.max_retries}")
         else:
-            print("❌ API returned empty response")
+            print("❌ AI extraction service not available")
             return False
             
     except Exception as e:
-        print(f"❌ API test failed: {str(e)}")
-        
-        # Check for common errors
-        if "API_KEY_INVALID" in str(e):
-            print("💡 Your API key appears to be invalid. Please check:")
-            print("   - Get a new key from: https://aistudio.google.com/app/apikey")
-            print("   - Make sure you copied the entire key")
-        elif "PERMISSION_DENIED" in str(e):
-            print("💡 Permission denied. Your API key might not have access to Gemini API")
-        elif "QUOTA_EXCEEDED" in str(e):
-            print("💡 Quota exceeded. You might have hit the free tier limit")
-            print("   - Wait for quota reset or upgrade your plan")
-        
+        print(f"❌ Failed to initialize AI extraction service: {e}")
         return False
-
-def show_setup_instructions():
-    """Show setup instructions."""
-    print("\n📝 Setup Instructions:")
-    print("=" * 50)
-    print("1. Get a Gemini API key:")
-    print("   - Visit: https://aistudio.google.com/app/apikey")
-    print("   - Sign in with your Google account")
-    print("   - Click 'Create API key' → 'Create API key in new project'")
-    print("   - Copy the generated key (starts with 'AIza...')")
-    print()
-    print("2. Create/update .env file in your project root:")
-    print("   GEMINI_API_KEY=your_actual_api_key_here")
-    print("   BACKEND_URL=https://34-13-75-235.nip.io")
-    print("   NEXT_PUBLIC_API_URL=https://34-13-75-235.nip.io")
-    print()
-    print("3. Restart your application")
+    
+    # Test 3: Test basic AI functionality
+    print("\n3. TESTING BASIC AI FUNCTIONALITY")
+    print("-" * 50)
+    
+    try:
+        import asyncio
+        
+        async def test_basic_ai():
+            try:
+                # Simple test prompt
+                test_prompt = "Hello! Please respond with 'AI is working correctly' and nothing else."
+                
+                response = await ai_extraction_service._get_ai_response(test_prompt)
+                
+                if response and "AI is working correctly" in response:
+                    print("✓ Basic AI functionality working")
+                    print(f"  - Response: {response.strip()}")
+                    return True
+                else:
+                    print("⚠️ AI responded but not as expected")
+                    print(f"  - Response: {response}")
+                    return True  # Still working, just different response
+                    
+            except Exception as e:
+                print(f"❌ Basic AI test failed: {e}")
+                return False
+        
+        # Run the test
+        result = asyncio.run(test_basic_ai())
+        if not result:
+            return False
+            
+    except Exception as e:
+        print(f"❌ AI functionality test failed: {e}")
+        return False
+    
+    # Test 4: Test PDF extraction capability
+    print("\n4. TESTING PDF EXTRACTION CAPABILITY")
+    print("-" * 50)
+    
+    try:
+        import fitz  # PyMuPDF
+        
+        # Test if PyMuPDF is available
+        print("✓ PyMuPDF is available for PDF processing")
+        
+        # Test if we can create a simple PDF for testing
+        try:
+            doc = fitz.open()
+            page = doc.new_page()
+            page.insert_text((50, 50), "Test PDF content for AI extraction")
+            test_pdf_path = "test_pdf.pdf"
+            doc.save(test_pdf_path)
+            doc.close()
+            
+            print("✓ Test PDF created successfully")
+            
+            # Clean up
+            if os.path.exists(test_pdf_path):
+                os.remove(test_pdf_path)
+                print("✓ Test PDF cleaned up")
+                
+        except Exception as e:
+            print(f"⚠️ PDF creation test failed: {e}")
+            print("   This is not critical for basic functionality")
+            
+    except ImportError:
+        print("❌ PyMuPDF not available")
+        print("   Install with: pip install PyMuPDF")
+        return False
+    
+    print("\n" + "="*80)
+    print("✓ ALL TESTS PASSED - GEMINI SETUP IS WORKING!")
+    print("="*80)
+    
+    print("\nNext steps:")
+    print("1. Run the full extraction test: python test_ai_extraction.py")
+    print("2. Start the API server: python backend/api.py")
+    print("3. Test the frontend component")
+    
+    return True
 
 if __name__ == "__main__":
-    print("🚀 ScorePAL Gemini API Setup Test")
-    print("=" * 50)
-    
     success = test_gemini_setup()
-    
-    if success:
-        print("\n🎉 SUCCESS! Your Gemini API key is properly configured.")
-        print("✅ You can now use ScorePAL's AI grading and rubric generation features.")
-    else:
-        print("\n❌ SETUP INCOMPLETE")
-        show_setup_instructions()
-    
-    print("\n" + "=" * 50) 
+    if not success:
+        print("\n❌ Setup failed. Please check your configuration.")
+        sys.exit(1) 

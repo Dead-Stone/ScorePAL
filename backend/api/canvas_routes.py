@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, root_validator, validator
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+GEMINI_GRADING_MODEL = os.getenv("GEMINI_GRADING_MODEL", "gemini-2.0-flash")
 
 from canvas_service import CanvasGradingService
 from config import get_settings
@@ -25,6 +26,11 @@ from preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
 
 # Import rubric functionality directly
 from rubric_api import RUBRICS, load_rubrics_from_disk
+
+# Import MongoDB services
+from services.results_service import save_grading_result
+from services.mongodb_service import get_submissions_collection, get_assignments_collection
+from services.analytics_service import compute_assignment_analytics
 
 settings = get_settings()
 
@@ -619,30 +625,46 @@ async def grade_selected_submissions(request: Request):
         rubric = None
         if rubric_id:
             try:
-                # Ensure rubrics are loaded from disk
-                if not RUBRICS:
-                    load_rubrics_from_disk()
-                
-                # Get the rubric directly from the in-memory store
-                if rubric_id in RUBRICS:
-                    rubric_obj = RUBRICS[rubric_id]
-                    # Convert to the format expected by the grading service
-                    rubric = {
-                        "criteria": []
-                    }
-                    total_points = 0
-                    for criterion in rubric_obj.criteria:
-                        rubric["criteria"].append({
-                            "name": criterion.name,
-                            "max_points": criterion.max_points,
-                            "description": criterion.description
-                        })
-                        total_points += criterion.max_points
-                    
-                    rubric["total_points"] = total_points
-                    logger.info(f"Successfully loaded custom rubric '{rubric_obj.name}' with {len(rubric['criteria'])} criteria and {total_points} total points")
+                # Special handling for AI-generated rubric
+                if rubric_id == "ai_generated":
+                    # Load the AI-generated rubric from the sync summary
+                    analysis_file = os.path.join(sync_output_dir, "assignment_analysis", "assignment_analysis.json")
+                    if os.path.exists(analysis_file):
+                        with open(analysis_file, 'r', encoding='utf-8') as f:
+                            analysis_data = json.load(f)
+                            ai_rubric = analysis_data.get("content_analysis", {}).get("generated_rubric")
+                            if ai_rubric:
+                                rubric = ai_rubric
+                                logger.info(f"Successfully loaded AI-generated rubric with {rubric.get('total_points', 0)} total points")
+                            else:
+                                logger.warning("AI-generated rubric not found in analysis data")
+                    else:
+                        logger.warning("Assignment analysis file not found for AI-generated rubric")
                 else:
-                    logger.warning(f"Rubric {rubric_id} not found in RUBRICS store")
+                    # Ensure rubrics are loaded from disk
+                    if not RUBRICS:
+                        load_rubrics_from_disk()
+                    
+                    # Get the rubric directly from the in-memory store
+                    if rubric_id in RUBRICS:
+                        rubric_obj = RUBRICS[rubric_id]
+                        # Convert to the format expected by the grading service
+                        rubric = {
+                            "criteria": []
+                        }
+                        total_points = 0
+                        for criterion in rubric_obj.criteria:
+                            rubric["criteria"].append({
+                                "name": criterion.name,
+                                "max_points": criterion.max_points,
+                                "description": criterion.description
+                            })
+                            total_points += criterion.max_points
+                        
+                        rubric["total_points"] = total_points
+                        logger.info(f"Successfully loaded custom rubric '{rubric_obj.name}' with {len(rubric['criteria'])} criteria and {total_points} total points")
+                    else:
+                        logger.warning(f"Rubric {rubric_id} not found in RUBRICS store")
             except Exception as e:
                 logger.warning(f"Could not load rubric {rubric_id}: {str(e)}")
                 # Will fall back to default rubric
@@ -678,29 +700,52 @@ async def grade_selected_submissions(request: Request):
         for submission_data in sync_summary["submissions"]:
             if (submission_data.get("user_id") in selected_user_ids and 
                 submission_data.get("sync_status") == "synced" and 
-                submission_data.get("downloaded_files")):
+                submission_data.get("attachments")):  # Check for attachments instead of downloaded_files
                 selected_submissions.append(submission_data)
         
         if not selected_submissions:
+            # Log debug information
+            logger.warning(f"No valid submissions found. Selected user IDs: {selected_user_ids}")
+            logger.warning(f"Total submissions in sync: {len(sync_summary.get('submissions', []))}")
+            
+            # Check what submissions are available
+            available_submissions = []
+            for submission_data in sync_summary["submissions"]:
+                available_submissions.append({
+                    "user_id": submission_data.get("user_id"),
+                    "sync_status": submission_data.get("sync_status"),
+                    "has_attachments": bool(submission_data.get("attachments")),
+                    "attachment_count": len(submission_data.get("attachments", []))
+                })
+            
+            logger.warning(f"Available submissions: {available_submissions}")
+            
             return {
                 "status": "error",
-                "message": "No valid submissions found for the selected users"
+                "message": f"No valid submissions found for the selected users. Available submissions: {len(available_submissions)}",
+                "debug": {
+                    "selected_user_ids": selected_user_ids,
+                    "available_submissions": available_submissions
+                }
             }
         
         logger.info(f"Found {len(selected_submissions)} valid submissions to grade")
         
-        # Grade selected submissions (simplified sequential processing for now)
+        # Grade selected submissions (download files on-demand)
         grading_results = []
+        
+        # Get Canvas connection details from sync summary
+        canvas_url = "https://sjsu.instructure.com"  # Default Canvas URL
         
         for idx, submission_data in enumerate(selected_submissions):
             try:
                 user_id = submission_data.get("user_id")
                 user_name = submission_data.get("user_name")
-                downloaded_files = submission_data.get("downloaded_files", [])
+                attachments = submission_data.get("attachments", [])
                 
                 logger.info(f"Processing submission {idx + 1}/{len(selected_submissions)} for user {user_id}")
                 
-                if not downloaded_files:
+                if not attachments:
                     # Determine rubric name for display
                     rubric_name = "default"
                     if rubric_id and rubric_id in RUBRICS:
@@ -725,28 +770,165 @@ async def grade_selected_submissions(request: Request):
                         "percentage_display": "0.0%",
                         "feedback": "No files available for grading",
                         "files_processed": 0,
-                        "rubric_used": rubric_name
+                        "rubric_used": rubric_name,
+                        "rubric_breakdown": create_default_rubric_result(rubric or {"criteria": []}, "No files submitted").get("rubric_breakdown", []),
+                        "submission_content": "No files submitted",
+                        "submission_files": []
                     })
                     continue
                 
-                # Extract text from downloaded files
+                # Download and extract text from files on-demand with enhanced processing
                 submission_texts = []
-                for file_path in downloaded_files:
+                files_processed = 0
+                download_errors = []
+                
+                logger.info(f"Processing {len(attachments)} attachments for user {user_id}")
+                
+                for attachment_idx, attachment in enumerate(attachments):
                     try:
-                        logger.info(f"Extracting text from {file_path}")
-                        if file_path.lower().endswith('.pdf'):
-                            extracted_text = extract_text_from_pdf(file_path)
-                        else:
-                            extracted_text = file_preprocessor.extract_text_from_file(file_path)
+                        file_id = attachment.get("id")
+                        file_name = attachment.get("name", f"file_{attachment_idx}")
+                        file_uuid = attachment.get("uuid")
+                        file_url = attachment.get("url")
+                        file_size = attachment.get("size", 0)
                         
-                        if extracted_text and extracted_text.strip():
-                            submission_texts.append({
-                                "file_name": os.path.basename(file_path),
-                                "content": extracted_text.strip()
-                            })
-                            logger.info(f"Successfully extracted {len(extracted_text)} characters from {os.path.basename(file_path)}")
+                        logger.info(f"Processing attachment {attachment_idx + 1}/{len(attachments)}: {file_name} (ID: {file_id}, Size: {file_size} bytes)")
+                        
+                        # Skip very large files (> 50MB) to avoid memory issues
+                        if file_size > 50 * 1024 * 1024:
+                            logger.warning(f"Skipping large file {file_name} ({file_size} bytes)")
+                            download_errors.append(f"File {file_name} too large ({file_size} bytes)")
+                            continue
+                        
+                        # Try to download the file with multiple methods
+                        downloaded_content = None
+                        download_method = None
+                        
+                        # Method 1: Try direct URL if available
+                        if file_url:
+                            try:
+                                import requests
+                                headers = {
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                                }
+                                response = requests.get(file_url, timeout=60, headers=headers, stream=True)
+                                if response.status_code == 200:
+                                    downloaded_content = response.content
+                                    download_method = "direct_url"
+                                    logger.info(f"Downloaded {file_name} via direct URL ({len(downloaded_content)} bytes)")
+                                else:
+                                    logger.warning(f"Direct URL download failed for {file_name}: HTTP {response.status_code}")
+                            except Exception as e:
+                                logger.warning(f"Direct URL download failed for {file_name}: {str(e)}")
+                        
+                        # Method 2: Try alternative URL patterns if available
+                        if not downloaded_content and file_id:
+                            try:
+                                # Try common Canvas file URL patterns
+                                alternative_urls = [
+                                    f"https://sjsu.instructure.com/files/{file_id}/download",
+                                    f"https://sjsu.instructure.com/api/v1/files/{file_id}",
+                                ]
+                                
+                                for alt_url in alternative_urls:
+                                    try:
+                                        response = requests.get(alt_url, timeout=30, headers=headers)
+                                        if response.status_code == 200:
+                                            downloaded_content = response.content
+                                            download_method = "alternative_url"
+                                            logger.info(f"Downloaded {file_name} via alternative URL ({len(downloaded_content)} bytes)")
+                                            break
+                                    except:
+                                        continue
+                            except Exception as e:
+                                logger.warning(f"Alternative URL download failed for {file_name}: {str(e)}")
+                        
+                        if downloaded_content:
+                            # Create unique filename to avoid conflicts
+                            safe_file_name = "".join(c for c in file_name if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+                            temp_file_path = os.path.join(downloads_dir, f"{user_id}_{attachment_idx}_{safe_file_name}")
+                            
+                            try:
+                                # Save file temporarily for text extraction
+                                with open(temp_file_path, 'wb') as f:
+                                    f.write(downloaded_content)
+                                
+                                logger.info(f"Saved {file_name} to {temp_file_path} for text extraction")
+                                
+                                # Extract text from the downloaded file using enhanced methods
+                                extracted_text = None
+                                extraction_method = None
+                                
+                                try:
+                                    file_extension = file_name.lower().split('.')[-1] if '.' in file_name else 'unknown'
+                                    
+                                    if file_extension == 'pdf':
+                                        extracted_text = extract_text_from_pdf(temp_file_path)
+                                        extraction_method = "enhanced_pdf_extraction"
+                                    elif file_extension in ['docx', 'doc']:
+                                        extracted_text = file_preprocessor.extract_text_from_file(temp_file_path)
+                                        extraction_method = "docx_extraction"
+                                    elif file_extension in ['txt', 'md']:
+                                        with open(temp_file_path, 'r', encoding='utf-8', errors='replace') as f:
+                                            extracted_text = f.read()
+                                        extraction_method = "text_file_read"
+                                    elif file_extension in ['jpg', 'jpeg', 'png', 'bmp', 'tiff']:
+                                        extracted_text = file_preprocessor.extract_text_from_file(temp_file_path)
+                                        extraction_method = "ocr_extraction"
+                                    else:
+                                        # Try general file preprocessor
+                                        extracted_text = file_preprocessor.extract_text_from_file(temp_file_path)
+                                        extraction_method = "general_extraction"
+                                    
+                                    if extracted_text and extracted_text.strip():
+                                        # Clean and validate extracted text
+                                        cleaned_text = extracted_text.strip()
+                                        
+                                        # Skip very short extractions that are likely errors
+                                        if len(cleaned_text) < 10:
+                                            logger.warning(f"Extracted text too short from {file_name}: '{cleaned_text[:50]}'")
+                                            download_errors.append(f"File {file_name}: extracted text too short")
+                                        else:
+                                            submission_texts.append({
+                                                "file_name": file_name,
+                                                "content": cleaned_text,
+                                                "file_size": len(downloaded_content),
+                                                "extraction_method": extraction_method,
+                                                "download_method": download_method,
+                                                "text_length": len(cleaned_text)
+                                            })
+                                            files_processed += 1
+                                            logger.info(f"Successfully extracted {len(cleaned_text)} characters from {file_name} using {extraction_method}")
+                                    else:
+                                        logger.warning(f"No text content extracted from {file_name}")
+                                        download_errors.append(f"File {file_name}: no readable content")
+                                        
+                                except Exception as e:
+                                    logger.error(f"Error extracting text from {file_name}: {str(e)}")
+                                    download_errors.append(f"File {file_name}: extraction error - {str(e)}")
+                                
+                                # Clean up temporary file
+                                try:
+                                    os.remove(temp_file_path)
+                                    logger.debug(f"Cleaned up temporary file: {temp_file_path}")
+                                except Exception as cleanup_error:
+                                    logger.warning(f"Could not clean up temporary file {temp_file_path}: {cleanup_error}")
+                                    
+                            except Exception as e:
+                                logger.error(f"Error saving/processing downloaded file {file_name}: {str(e)}")
+                                download_errors.append(f"File {file_name}: processing error - {str(e)}")
+                        else:
+                            logger.warning(f"Could not download file: {file_name}")
+                            download_errors.append(f"File {file_name}: download failed")
+                            
                     except Exception as e:
-                        logger.error(f"Error extracting text from {file_path}: {str(e)}")
+                        logger.error(f"Error processing attachment {attachment}: {str(e)}")
+                        download_errors.append(f"Attachment processing error: {str(e)}")
+                
+                # Log summary of file processing
+                logger.info(f"File processing summary for user {user_id}: {files_processed}/{len(attachments)} files successfully processed")
+                if download_errors:
+                    logger.warning(f"Download/extraction errors for user {user_id}: {download_errors}")
                 
                 if submission_texts:
                     # Combine all file contents
@@ -760,7 +942,7 @@ async def grade_selected_submissions(request: Request):
                     # Use provided rubric or create default
                     if rubric:
                         grading_rubric = rubric
-                        logger.info(f"Using custom rubric with {len(rubric['criteria'])} criteria, total points: {rubric.get('total_points', 'unknown')}")
+                        logger.info(f"Using custom rubric with {len(rubric.get('criteria', []))} criteria, total points: {rubric.get('total_points', 'unknown')}")
                     else:
                         grading_rubric = {
                             "criteria": [
@@ -791,26 +973,27 @@ async def grade_selected_submissions(request: Request):
                     
                     logger.info(f"Starting AI grading for user {user_id}")
                     
-                    # Grade using the grading service
-                    grade_result = grading_service.grade_submission(
+                    # Grade using strict rubric-based evaluation
+                    grade_result = await grade_submission_with_strict_rubric(
                         submission_text=combined_content,
-                        question_text="Assignment submission - Please analyze and evaluate the work",
-                        answer_key="Evaluate based on assignment requirements and rubric criteria",
-                        student_name=user_name,
+                        submission_files=submission_texts,
                         rubric=grading_rubric,
+                        student_name=user_name,
                         strictness=strictness
                     )
                     
-                    raw_score = grade_result.get("score", 0)
+                    raw_score = grade_result.get("total_score", 0)
                     max_possible = grading_rubric.get("total_points", 100)
                     percentage = (raw_score / max_possible * 100) if max_possible > 0 else 0
                     
-                    logger.info(f"Grading completed for user {user_id}, score: {raw_score}/{max_possible} ({percentage:.1f}%)")
+                    logger.info(f"Strict rubric grading completed for user {user_id}, score: {raw_score}/{max_possible} ({percentage:.1f}%)")
                     
                     # Determine rubric name for display
                     rubric_name = "default"
                     if rubric_id and rubric_id in RUBRICS:
                         rubric_name = f"{RUBRICS[rubric_id].name} (ID: {rubric_id})"
+                    elif rubric_id == "ai_generated":
+                        rubric_name = "AI Generated Rubric"
                     elif rubric_id:
                         rubric_name = f"Custom (ID: {rubric_id})"
                     
@@ -821,14 +1004,36 @@ async def grade_selected_submissions(request: Request):
                         "raw_score": raw_score,
                         "total_points": max_possible,
                         "percentage": round(percentage, 1),
-                        "grade": round(percentage, 1),  # Just the percentage for display
+                        "grade": round(percentage, 1),
                         "score_display": f"{raw_score}/{max_possible}",
                         "percentage_display": f"{percentage:.1f}%",
-                        "feedback": grade_result.get("feedback", ""),
-                        "files_processed": len(submission_texts),
-                        "rubric_used": rubric_name
+                        "feedback": grade_result.get("overall_feedback", ""),
+                        "files_processed": files_processed,
+                        "total_attachments": len(attachments),
+                        "download_errors": download_errors if download_errors else None,
+                        "rubric_used": rubric_name,
+                        "rubric_breakdown": grade_result.get("rubric_breakdown", []),
+                        "submission_content": combined_content[:2000] + "..." if len(combined_content) > 2000 else combined_content,
+                        "submission_files": [
+                            {
+                                "name": f["file_name"], 
+                                "preview": f["content"][:500] + "..." if len(f["content"]) > 500 else f["content"],
+                                "file_size": f.get("file_size", 0),
+                                "text_length": f.get("text_length", 0),
+                                "extraction_method": f.get("extraction_method", "unknown"),
+                                "download_method": f.get("download_method", "unknown")
+                            } for f in submission_texts
+                        ],
+                        "processing_summary": {
+                            "total_files": len(attachments),
+                            "successfully_processed": files_processed,
+                            "failed_files": len(download_errors) if download_errors else 0,
+                            "total_text_extracted": sum(f.get("text_length", 0) for f in submission_texts),
+                            "extraction_methods_used": list(set(f.get("extraction_method", "unknown") for f in submission_texts))
+                        }
                     })
                 else:
+                    # No readable content found
                     # Determine rubric name for display
                     rubric_name = "default"
                     if rubric_id and rubric_id in RUBRICS:
@@ -837,7 +1042,9 @@ async def grade_selected_submissions(request: Request):
                         rubric_name = f"Custom (ID: {rubric_id})"
                     
                     # Get total points for proper display
-                    total_points = grading_rubric.get("total_points", 100)
+                    total_points = 100  # default
+                    if rubric:
+                        total_points = rubric.get("total_points", 100)
                     
                     grading_results.append({
                         "user_id": user_id,
@@ -849,9 +1056,30 @@ async def grade_selected_submissions(request: Request):
                         "grade": 0.0,
                         "score_display": f"0/{total_points}",
                         "percentage_display": "0.0%",
-                        "feedback": "No readable content could be extracted from submitted files",
-                        "files_processed": 0,
-                        "rubric_used": rubric_name
+                        "feedback": f"No readable content could be extracted from {len(attachments)} submitted file(s). Errors: {'; '.join(download_errors[:3]) if download_errors else 'Unknown extraction issues'}",
+                        "files_processed": files_processed,
+                        "total_attachments": len(attachments),
+                        "download_errors": download_errors if download_errors else None,
+                        "rubric_used": rubric_name,
+                        "rubric_breakdown": create_default_rubric_result(rubric or {"criteria": []}, "No readable content").get("rubric_breakdown", []),
+                        "submission_content": f"Files submitted but no readable content extracted from {len(attachments)} file(s)",
+                        "submission_files": [
+                            {
+                                "name": att.get("name", "Unknown"), 
+                                "preview": "Content could not be extracted",
+                                "file_size": att.get("size", 0),
+                                "text_length": 0,
+                                "extraction_method": "failed",
+                                "download_method": "failed"
+                            } for att in attachments[:3]
+                        ],
+                        "processing_summary": {
+                            "total_files": len(attachments),
+                            "successfully_processed": files_processed,
+                            "failed_files": len(download_errors) if download_errors else len(attachments),
+                            "total_text_extracted": 0,
+                            "extraction_methods_used": ["failed"]
+                        }
                     })
                     
             except Exception as e:
@@ -864,16 +1092,14 @@ async def grade_selected_submissions(request: Request):
                 elif rubric_id:
                     rubric_name = f"Custom (ID: {rubric_id})"
                 
-                # Get total points for proper display (use rubric if available, otherwise default)
-                total_points = 100
-                if 'grading_rubric' in locals():
-                    total_points = grading_rubric.get("total_points", 100)
-                elif rubric:
+                # Get total points for proper display
+                total_points = 100  # default
+                if rubric:
                     total_points = rubric.get("total_points", 100)
                 
                 grading_results.append({
                     "user_id": user_id,
-                    "user_name": user_name,
+                    "user_name": submission_data.get("user_name", f"User {user_id}"),
                     "status": "error",
                     "raw_score": 0,
                     "total_points": total_points,
@@ -881,9 +1107,12 @@ async def grade_selected_submissions(request: Request):
                     "grade": 0.0,
                     "score_display": f"0/{total_points}",
                     "percentage_display": "0.0%",
-                    "feedback": f"Error during grading: {str(e)}",
+                    "feedback": f"Error processing submission: {str(e)}",
                     "files_processed": 0,
-                    "rubric_used": rubric_name
+                    "rubric_used": rubric_name,
+                    "rubric_breakdown": create_default_rubric_result(rubric or {"criteria": []}, f"Processing error: {str(e)}").get("rubric_breakdown", []),
+                    "submission_content": "Error occurred during processing",
+                    "submission_files": []
                 })
         
         # Save results with the same comprehensive structure as before
@@ -1111,12 +1340,139 @@ async def grade_selected_submissions(request: Request):
         logger.info(f"Grading completed for {len(selected_user_ids)} selected submissions")
         logger.info(f"Results saved to top-level folder: {attempt_folder_name}")
         
+        # Save results to MongoDB for analytics and persistence
+        assignment_id = f"canvas_{sync_summary['course_id']}_{sync_summary['assignment_id']}"
+        saved_result_ids = []
+        
+        try:
+            for result in grading_results:
+                if result.get("status") == "graded":
+                    try:
+                        # Create or find submission record
+                        submissions_collection = await get_submissions_collection()
+                        existing_submission = await submissions_collection.find_one({
+                            "assignment_id": assignment_id,
+                            "student_name": result.get("user_name", ""),
+                            "canvas_user_id": str(result.get("user_id", ""))
+                        })
+                        
+                        submission_id = None
+                        if existing_submission:
+                            submission_id = str(existing_submission["_id"])
+                        else:
+                            # Create new submission record
+                            submission_doc = {
+                                "assignment_id": assignment_id,
+                                "student_name": result.get("user_name", ""),
+                                "student_id": None,  # Canvas users may not be in our system
+                                "canvas_submission_id": None,
+                                "canvas_user_id": str(result.get("user_id", "")),
+                                "files": [],
+                                "submission_text": result.get("submission_content", ""),
+                                "file_count": result.get("files_processed", 0),
+                                "submitted_at": datetime.utcnow(),
+                                "status": "graded",
+                                "metadata": {
+                                    "sync_job_id": sync_job_id,
+                                    "grading_job_id": grading_job_id,
+                                    "canvas_course_id": sync_summary["course_id"],
+                                    "canvas_assignment_id": sync_summary["assignment_id"]
+                                }
+                            }
+                            sub_result = await submissions_collection.insert_one(submission_doc)
+                            submission_id = str(sub_result.inserted_id)
+                        
+                        # Transform rubric breakdown to criteria_scores format
+                        criteria_scores = []
+                        rubric_breakdown = result.get("rubric_breakdown", [])
+                        for criterion in rubric_breakdown:
+                            criteria_scores.append({
+                                "criterion_name": criterion.get("criterion_name", ""),
+                                "criterion_description": "",
+                                "score": criterion.get("points_awarded", 0),
+                                "max_points": criterion.get("max_points", 0),
+                                "weight": 1.0,
+                                "feedback": criterion.get("feedback", ""),
+                                "level": None
+                            })
+                        
+                        # Get grading rubric for saving
+                        grading_rubric_to_save = rubric if rubric else {
+                            "criteria": [
+                                {
+                                    "name": "Technical Accuracy",
+                                    "max_points": 40,
+                                    "description": "Correctness of concepts and calculations"
+                                },
+                                {
+                                    "name": "Problem Analysis", 
+                                    "max_points": 25,
+                                    "description": "Understanding and approach to solving"
+                                },
+                                {
+                                    "name": "Completeness",
+                                    "max_points": 20,
+                                    "description": "All parts of assignment addressed"
+                                },
+                                {
+                                    "name": "Clarity and Organization",
+                                    "max_points": 15,
+                                    "description": "Clear explanations and organization"
+                                }
+                            ],
+                            "total_points": 100
+                        }
+                        
+                        # Save grading result to MongoDB
+                        result_id = await save_grading_result(
+                            result_data={
+                                "score": result.get("raw_score", 0),
+                                "max_score": result.get("total_points", 100),
+                                "percentage": result.get("percentage", 0),
+                                "grade_letter": _calculate_grade_letter(result.get("percentage", 0)),
+                                "overall_feedback": result.get("feedback", ""),
+                                "criteria_scores": criteria_scores,
+                                "rubric": grading_rubric_to_save,
+                                "rubric_id": rubric_id,
+                                "mistakes": [],
+                                "submission_text": result.get("submission_content", ""),
+                                "ai_model_used": GEMINI_GRADING_MODEL,
+                                "strictness": strictness
+                            },
+                            submission_id=submission_id,
+                            assignment_id=assignment_id,
+                            student_name=result.get("user_name", ""),
+                            grader_id=None,  # Can be added if we track grader
+                            grader_name="AI Grader"
+                        )
+                        saved_result_ids.append(result_id)
+                        logger.info(f"Saved Canvas grading result {result_id} to MongoDB")
+                    except Exception as e:
+                        logger.warning(f"Could not save result for {result.get('user_name')} to MongoDB: {e}")
+            
+            # Invalidate analytics cache for this assignment to force recomputation
+            try:
+                from services.mongodb_service import get_analytics_collection
+                analytics_collection = await get_analytics_collection()
+                await analytics_collection.update_many(
+                    {"assignment_id": assignment_id},
+                    {"$set": {"is_stale": True}}
+                )
+                logger.info(f"Invalidated analytics cache for assignment {assignment_id}")
+            except Exception as e:
+                logger.warning(f"Could not invalidate analytics cache: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Error saving Canvas results to MongoDB: {e}")
+        
         return {
             "status": "success",
             "message": f"Successfully graded {len(successful_results)} of {len(selected_user_ids)} selected submissions",
             "grading_job_id": grading_job_id,
             "results": grading_results,
-            "output_directory": output_dir
+            "output_directory": output_dir,
+            "saved_to_mongodb": len(saved_result_ids),
+            "mongodb_result_ids": saved_result_ids
         }
         
     except HTTPException:
@@ -1124,6 +1480,248 @@ async def grade_selected_submissions(request: Request):
     except Exception as e:
         logger.error(f"Error in grade selected submissions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error grading selected submissions: {str(e)}")
+
+
+@router.post("/get-assignment-analysis")
+async def get_assignment_analysis(request: Request):
+    """
+    Get assignment analysis data including generated rubric.
+    
+    Expected request body: {
+        "sync_job_id": "...",
+        "course_id": "..." (optional),
+        "assignment_id": "..." (optional)
+    }
+    """
+    try:
+        body = await request.json()
+        sync_job_id = body.get("sync_job_id")
+        course_id = body.get("course_id")
+        assignment_id = body.get("assignment_id")
+        
+        if not sync_job_id:
+            raise HTTPException(status_code=400, detail="Sync job ID is required")
+        
+        logger.info(f"Looking for assignment analysis for sync job: {sync_job_id}")
+        
+        # Find the sync directory based on sync_job_id
+        base_sync_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "synced_submissions")
+        logger.info(f"Base sync directory: {base_sync_dir}")
+        logger.info(f"Base sync directory exists: {os.path.exists(base_sync_dir)}")
+        
+        # Search for the sync job directory by looking in sync_summary.json files
+        analysis_file = None
+        sync_directory = None
+        all_sync_dirs = []
+        
+        if os.path.exists(base_sync_dir):
+            logger.info(f"Scanning sync directory for sync job {sync_job_id}")
+            for root, dirs, files in os.walk(base_sync_dir):
+                all_sync_dirs.append(root)
+                if "sync_summary.json" in files:
+                    try:
+                        sync_summary_file = os.path.join(root, "sync_summary.json")
+                        with open(sync_summary_file, 'r', encoding='utf-8') as f:
+                            sync_data = json.load(f)
+                            found_sync_id = sync_data.get("sync_job_id")
+                            logger.info(f"Found sync summary in {root} with sync_job_id: {found_sync_id}")
+                            
+                            if found_sync_id == sync_job_id:
+                                # Found the correct sync directory
+                                sync_directory = root
+                                analysis_file = os.path.join(root, "assignment_analysis", "assignment_analysis.json")
+                                logger.info(f"Found matching sync directory for job {sync_job_id}: {sync_directory}")
+                                logger.info(f"Expected analysis file: {analysis_file}")
+                                logger.info(f"Analysis file exists: {os.path.exists(analysis_file)}")
+                                break
+                    except Exception as e:
+                        logger.warning(f"Error reading sync summary file {sync_summary_file}: {str(e)}")
+                        continue
+        else:
+            logger.warning(f"Base sync directory does not exist: {base_sync_dir}")
+
+        if not analysis_file or not os.path.exists(analysis_file):
+            # Log available sync jobs for debugging
+            available_jobs = []
+            sync_dirs_found = []
+            
+            if os.path.exists(base_sync_dir):
+                for root, dirs, files in os.walk(base_sync_dir):
+                    sync_dirs_found.append(root)
+                    if "sync_summary.json" in files:
+                        try:
+                            sync_summary_file = os.path.join(root, "sync_summary.json")
+                            with open(sync_summary_file, 'r', encoding='utf-8') as f:
+                                sync_data = json.load(f)
+                                available_jobs.append({
+                                    "sync_job_id": sync_data.get("sync_job_id"),
+                                    "synced_at": sync_data.get("synced_at"),
+                                    "course_id": sync_data.get("course_id"),
+                                    "assignment_id": sync_data.get("assignment_id"),
+                                    "directory": root
+                                })
+                        except Exception as e:
+                            logger.warning(f"Error reading sync summary from {sync_summary_file}: {str(e)}")
+                            continue
+            
+            logger.warning(f"Assignment analysis not found for sync job {sync_job_id}")
+            logger.info(f"Available sync jobs: {available_jobs}")
+            logger.info(f"All directories scanned: {sync_dirs_found}")
+            
+            # Create detailed error message
+            error_details = {
+                "requested_sync_job_id": sync_job_id,
+                "base_sync_dir": base_sync_dir,
+                "base_sync_dir_exists": os.path.exists(base_sync_dir),
+                "available_jobs_count": len(available_jobs),
+                "available_jobs": available_jobs[:5],  # Limit to first 5 for readability
+                "directories_scanned": len(sync_dirs_found),
+                "expected_analysis_file": analysis_file if analysis_file else "Not determined",
+                "analysis_file_exists": os.path.exists(analysis_file) if analysis_file else False
+            }
+            
+            # If we found a sync directory but no analysis file, try to generate it
+            if sync_directory and os.path.exists(sync_directory):
+                logger.info(f"Sync directory found but no analysis file. Attempting to generate analysis for {sync_job_id}")
+                
+                # Try to load sync summary to get assignment details
+                try:
+                    sync_summary_file = os.path.join(sync_directory, "sync_summary.json")
+                    with open(sync_summary_file, 'r', encoding='utf-8') as f:
+                        sync_data = json.load(f)
+                    
+                    assignment_details = sync_data.get("assignment_details", {})
+                    if assignment_details:
+                        logger.info(f"Found assignment details, generating analysis for assignment {assignment_details.get('id')}")
+                        
+                        # Generate analysis on-demand
+                        analysis_result = await analyze_assignment_content(assignment_details)
+                        
+                        # Generate rubric
+                        rubric_result = await generate_assignment_rubric(assignment_details, analysis_result)
+                        
+                        # Generate answer key
+                        answer_key_result = await generate_answer_key_and_tests(assignment_details, analysis_result)
+                        
+                        # Combine all results
+                        complete_analysis = {
+                            "assignment_analysis": analysis_result,
+                            "generated_rubric": rubric_result,
+                            "answer_key": answer_key_result,
+                            "generated_at": datetime.now().isoformat(),
+                            "generated_on_demand": True
+                        }
+                        
+                        # Save the analysis for future use
+                        analysis_dir = os.path.join(sync_directory, "assignment_analysis")
+                        os.makedirs(analysis_dir, exist_ok=True)
+                        analysis_file = os.path.join(analysis_dir, "assignment_analysis.json")
+                        
+                        with open(analysis_file, 'w', encoding='utf-8') as f:
+                            json.dump(complete_analysis, f, indent=2)
+                        
+                        logger.info(f"Successfully generated and saved assignment analysis for sync job: {sync_job_id}")
+                        
+                        return {
+                            "status": "success",
+                            "sync_job_id": sync_job_id,
+                            "sync_directory": sync_directory,
+                            "generated_on_demand": True,
+                            **complete_analysis
+                        }
+                    else:
+                        logger.warning(f"No assignment details found in sync summary for {sync_job_id}")
+                        
+                except Exception as e:
+                    logger.error(f"Error generating analysis on-demand for {sync_job_id}: {str(e)}")
+            
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Assignment analysis not found for sync job {sync_job_id}. Debug info: {error_details}"
+            )
+
+        # Load and return the analysis data
+        with open(analysis_file, 'r', encoding='utf-8') as f:
+            analysis_data = json.load(f)
+
+        logger.info(f"Successfully retrieved assignment analysis for sync job: {sync_job_id}")
+        
+        return {
+            "status": "success",
+            "sync_job_id": sync_job_id,
+            "sync_directory": sync_directory,
+            "generated_on_demand": False,
+            **analysis_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving assignment analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving assignment analysis: {str(e)}")
+
+
+@router.post("/debug-sync-jobs")
+async def debug_sync_jobs(request: Request):
+    """
+    Debug endpoint to list all available sync jobs and their status
+    """
+    try:
+        # Find the sync directory
+        base_sync_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "synced_submissions")
+        
+        debug_info = {
+            "base_sync_dir": base_sync_dir,
+            "base_sync_dir_exists": os.path.exists(base_sync_dir),
+            "available_jobs": [],
+            "all_directories": [],
+            "errors": []
+        }
+        
+        if os.path.exists(base_sync_dir):
+            for root, dirs, files in os.walk(base_sync_dir):
+                debug_info["all_directories"].append({
+                    "path": root,
+                    "files": files,
+                    "subdirs": dirs
+                })
+                
+                if "sync_summary.json" in files:
+                    try:
+                        sync_summary_file = os.path.join(root, "sync_summary.json")
+                        with open(sync_summary_file, 'r', encoding='utf-8') as f:
+                            sync_data = json.load(f)
+                        
+                        # Check for assignment analysis
+                        analysis_file = os.path.join(root, "assignment_analysis", "assignment_analysis.json")
+                        analysis_exists = os.path.exists(analysis_file)
+                        
+                        debug_info["available_jobs"].append({
+                            "sync_job_id": sync_data.get("sync_job_id"),
+                            "synced_at": sync_data.get("synced_at"),
+                            "course_id": sync_data.get("course_id"),
+                            "assignment_id": sync_data.get("assignment_id"),
+                            "directory": root,
+                            "has_assignment_details": "assignment_details" in sync_data,
+                            "analysis_file_exists": analysis_exists,
+                            "analysis_file_path": analysis_file
+                        })
+                    except Exception as e:
+                        debug_info["errors"].append({
+                            "file": sync_summary_file,
+                            "error": str(e)
+                        })
+        
+        return {
+            "status": "success",
+            **debug_info
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 @router.post("/test-file-extraction")
 async def test_file_extraction(request: Request):
@@ -1469,7 +2067,7 @@ async def process_submission_chunk(
 @router.post("/sync-submissions")
 async def sync_submissions(request: Request):
     """
-    Sync submissions from Canvas - download and store submission data without grading.
+    Enhanced sync submissions from Canvas - download and store submission data with comprehensive assignment analysis.
     
     Expected request body: {
         "api_key": "...", 
@@ -1540,9 +2138,11 @@ async def sync_submissions(request: Request):
         # Create subdirectories
         submissions_metadata_dir = os.path.join(sync_output_dir, "submissions_metadata")
         downloads_dir = os.path.join(sync_output_dir, "downloaded_files")
+        assignment_analysis_dir = os.path.join(sync_output_dir, "assignment_analysis")  # New directory
         
         os.makedirs(submissions_metadata_dir, exist_ok=True)
         os.makedirs(downloads_dir, exist_ok=True)
+        os.makedirs(assignment_analysis_dir, exist_ok=True)
         
         canvas_url = "https://sjsu.instructure.com"
         clean_api_key = api_key.replace("Bearer ", "").strip()
@@ -1550,6 +2150,56 @@ async def sync_submissions(request: Request):
         # Create Canvas connector
         canvas = CanvasConnector(canvas_url, clean_api_key)
         
+        # === ENHANCED: Get comprehensive assignment details ===
+        logger.info("Fetching comprehensive assignment details...")
+        assignment = canvas.get_assignment(int(course_id), int(assignment_id))
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+        
+        # Extract comprehensive assignment data
+        assignment_details = {
+            "id": assignment.id,
+            "name": assignment.name,
+            "description": getattr(assignment, 'description', ''),
+            "instructions": getattr(assignment, 'instructions', ''),
+            "due_at": getattr(assignment, 'due_at', None),
+            "points_possible": getattr(assignment, 'points_possible', 100),
+            "submission_types": getattr(assignment, 'submission_types', []),
+            "rubric": getattr(assignment, 'rubric', None),
+            "workflow_state": getattr(assignment, 'workflow_state', 'published'),
+            "created_at": getattr(assignment, 'created_at', None),
+            "updated_at": getattr(assignment, 'updated_at', None)
+        }
+        
+        logger.info(f"Assignment details extracted: {assignment.name}")
+        
+        # === ENHANCED: AI-powered assignment analysis ===
+        logger.info("Analyzing assignment content with AI...")
+        assignment_analysis = await analyze_assignment_content(assignment_details)
+        
+        # === ENHANCED: Generate rubric if not provided ===
+        if not assignment_details.get("rubric") and assignment_analysis.get("questions"):
+            logger.info("Generating assignment-specific rubric...")
+            generated_rubric = await generate_assignment_rubric(assignment_details, assignment_analysis)
+            assignment_analysis["generated_rubric"] = generated_rubric
+        
+        # === ENHANCED: Create answer key and test cases ===
+        logger.info("Generating answer key and test cases...")
+        answer_key_data = await generate_answer_key_and_tests(assignment_details, assignment_analysis)
+        
+        # Save assignment analysis
+        analysis_file = os.path.join(assignment_analysis_dir, "assignment_analysis.json")
+        with open(analysis_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                "assignment_details": assignment_details,
+                "content_analysis": assignment_analysis,
+                "answer_key_data": answer_key_data,
+                "analysis_timestamp": datetime.now().isoformat()
+            }, f, indent=2)
+        
+        logger.info(f"Assignment analysis saved to {analysis_file}")
+        
+        # Continue with existing submission sync logic...
         # Get submissions with attachments
         submissions = canvas.get_submissions(
             course_id=int(course_id), 
@@ -1566,8 +2216,10 @@ async def sync_submissions(request: Request):
         # Initialize file preprocessor for file downloads
         file_preprocessor = FilePreprocessor()
         
-        # Process and download files for each submission
+        # Process submission metadata only (don't download files during sync)
         synced_submissions = []
+        
+        logger.info(f"Processing metadata for {len(submissions)} submissions...")
         
         for submission in submissions:
             try:
@@ -1592,11 +2244,11 @@ async def sync_submissions(request: Request):
                     "score": submission.get("score"),
                     "grade": submission.get("grade"),
                     "attachments": [],
-                    "downloaded_files": [],
-                    "sync_status": "no_files" if not attachments else "pending"
+                    "files_count": len(attachments),
+                    "sync_status": "no_files" if not attachments else "synced"
                 }
                 
-                # Download files if present
+                # Only collect attachment metadata (don't download files yet)
                 if attachments:
                     for attachment in attachments:
                         # Handle Canvas File objects properly
@@ -1605,72 +2257,41 @@ async def sync_submissions(request: Request):
                             file_name = getattr(attachment, 'display_name', None) or getattr(attachment, 'filename', 'file')
                             file_uuid = getattr(attachment, 'uuid', None)
                             file_url = getattr(attachment, 'url', None)
+                            file_size = getattr(attachment, 'size', 0)
                         else:
                             file_id = attachment.get("id")
                             file_name = attachment.get("display_name", attachment.get("filename", "file"))
                             file_uuid = attachment.get("uuid")
                             file_url = attachment.get("url")
+                            file_size = attachment.get("size", 0)
+                        
+                        # Get file extension for type detection
+                        file_extension = os.path.splitext(file_name)[1].lower()
                         
                         attachment_data = {
                             "id": file_id,
                             "name": file_name,
                             "uuid": file_uuid,
                             "url": file_url,
-                            "download_status": "pending"
+                            "size": file_size,
+                            "file_type": file_extension,
+                            "download_status": "pending",  # Will be downloaded during grading
+                            "ocr_capable": file_extension in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif', '.webp', '.pdf', '.docx', '.doc']
                         }
-                        
-                        # Download the file
-                        if file_id:
-                            try:
-                                if file_uuid:
-                                    download_url = f"{canvas_url}/files/{file_id}/download?download_frd=1&verifier={file_uuid}"
-                                else:
-                                    download_url = file_url
-                                
-                                if download_url:
-                                    headers = {"Authorization": f"Bearer {clean_api_key}"}
-                                    file_response = requests.get(download_url, headers=headers)
-                                    
-                                    if file_response.status_code == 200:
-                                        # Save file to downloads directory
-                                        safe_filename = re.sub(r'[^\w\-_\.]', '_', file_name)
-                                        file_path = os.path.join(downloads_dir, f"{user_id}_{safe_filename}")
-                                        
-                                        with open(file_path, 'wb') as f:
-                                            f.write(file_response.content)
-                                        
-                                        attachment_data["local_path"] = file_path
-                                        attachment_data["download_status"] = "success"
-                                        submission_data["downloaded_files"].append(file_path)
-                                    else:
-                                        attachment_data["download_status"] = "failed"
-                                        attachment_data["error"] = f"HTTP {file_response.status_code}"
-                                        
-                            except Exception as e:
-                                attachment_data["download_status"] = "failed"
-                                attachment_data["error"] = str(e)
                         
                         submission_data["attachments"].append(attachment_data)
                     
-                    # Update sync status
-                    successful_downloads = len([f for f in submission_data["attachments"] if f["download_status"] == "success"])
-                    if successful_downloads > 0:
-                        submission_data["sync_status"] = "synced"
-                    else:
-                        submission_data["sync_status"] = "failed"
-                
-                # Save individual submission metadata
-                submission_file = os.path.join(submissions_metadata_dir, f"submission_{user_id}.json")
-                with open(submission_file, 'w', encoding='utf-8') as f:
+                # Save submission metadata to individual file
+                submission_metadata_file = os.path.join(submissions_metadata_dir, f"submission_{user_id}.json")
+                with open(submission_metadata_file, 'w', encoding='utf-8') as f:
                     json.dump(submission_data, f, indent=2)
                 
                 synced_submissions.append(submission_data)
                 
-                logger.info(f"Synced submission for user {user_id} ({submission_data['sync_status']})")
+                logger.info(f"Synced metadata for user {user_id} ({user_name}): {len(attachments)} files")
                 
             except Exception as e:
-                logger.error(f"Error syncing submission for user {submission.get('user_id', 'unknown')}: {str(e)}")
-                # Still add error submission for tracking
+                logger.error(f"Error processing submission for user {submission.get('user_id', 'unknown')}: {str(e)}")
                 synced_submissions.append({
                     "user_id": submission.get("user_id"),
                     "user_name": f"User {submission.get('user_id', 'unknown')}",
@@ -1678,7 +2299,31 @@ async def sync_submissions(request: Request):
                     "error": str(e)
                 })
         
-        # Save sync summary
+        # === Calculate file statistics (OCR will happen later during grading) ===
+        file_stats = {
+            "total_files": 0,
+            "ocr_capable_files": 0,
+            "image_files": 0,
+            "document_files": 0,
+            "other_files": 0
+        }
+        
+        for submission in synced_submissions:
+            for attachment in submission.get("attachments", []):
+                file_stats["total_files"] += 1
+                
+                if attachment.get("ocr_capable"):
+                    file_stats["ocr_capable_files"] += 1
+                
+                file_type = attachment.get("file_type", "").lower()
+                if file_type in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.gif', '.webp']:
+                    file_stats["image_files"] += 1
+                elif file_type in ['.pdf', '.docx', '.doc']:
+                    file_stats["document_files"] += 1
+                else:
+                    file_stats["other_files"] += 1
+
+        # === ENHANCED: Create comprehensive sync summary ===
         sync_summary = {
             "sync_job_id": sync_job_id,
             "course_id": course_id,
@@ -1689,7 +2334,22 @@ async def sync_submissions(request: Request):
             "failed_syncs": len([s for s in synced_submissions if s.get("sync_status") in ["failed", "error"]]),
             "no_files": len([s for s in synced_submissions if s.get("sync_status") == "no_files"]),
             "sync_directory": sync_output_dir,
-            "submissions": synced_submissions
+            "submissions": synced_submissions,
+            
+            # === ENHANCED: Assignment analysis data ===
+            "assignment_details": assignment_details,
+            "assignment_analysis": {
+                "questions_found": len(assignment_analysis.get("questions", [])),
+                "main_topics": assignment_analysis.get("main_topics", []),
+                "question_types": assignment_analysis.get("question_types", []),
+                "difficulty_level": assignment_analysis.get("difficulty_level", "medium"),
+                "has_generated_rubric": "generated_rubric" in assignment_analysis,
+                "has_answer_key": bool(answer_key_data.get("answer_key")),
+                "has_test_cases": bool(answer_key_data.get("test_cases"))
+            },
+            
+            # === NEW: File statistics (OCR processing will happen during grading) ===
+            "file_statistics": file_stats
         }
         
         # Save summary file
@@ -1697,11 +2357,11 @@ async def sync_submissions(request: Request):
         with open(summary_file, 'w', encoding='utf-8') as f:
             json.dump(sync_summary, f, indent=2)
         
-        logger.info(f"Sync completed: {sync_summary['successful_syncs']}/{sync_summary['total_submissions']} submissions synced successfully")
+        logger.info(f"Enhanced sync completed: {sync_summary['successful_syncs']}/{sync_summary['total_submissions']} submissions synced successfully")
         
         # Create descriptive message based on sync type
         sync_type = "Force synced" if (existing_sync and force_sync) else "Synced"
-        message = f"{sync_type} {sync_summary['successful_syncs']} of {sync_summary['total_submissions']} submissions"
+        message = f"{sync_type} {sync_summary['successful_syncs']} of {sync_summary['total_submissions']} submissions with comprehensive assignment analysis"
         
         return {
             "status": "success",
@@ -1716,5 +2376,369 @@ async def sync_submissions(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in sync submissions: {str(e)}")
+        logger.error(f"Error in enhanced sync submissions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error syncing submissions: {str(e)}") 
+
+
+# === NEW HELPER FUNCTIONS ===
+
+async def analyze_assignment_content(assignment_details: dict) -> dict:
+    """Analyze assignment content to extract questions and topics using AI"""
+    try:
+        description = assignment_details.get("description", "")
+        instructions = assignment_details.get("instructions", "")
+        
+        # Combine description and instructions
+        full_content = f"{description}\n\n{instructions}".strip()
+        
+        if not full_content:
+            return {"questions": [], "main_topics": [], "question_types": [], "difficulty_level": "medium"}
+        
+        # Initialize Gemini model
+        import google.generativeai as genai
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        
+        analysis_prompt = f"""
+        Analyze the following assignment content and extract key information:
+        
+        Assignment: {assignment_details.get('name', 'Untitled')}
+        Content: {full_content}
+        
+        Please provide a JSON response with:
+        1. "questions": List of specific questions/tasks found in the assignment
+        2. "main_topics": List of main topics/subjects covered
+        3. "question_types": List of question types (essay, multiple choice, calculation, etc.)
+        4. "difficulty_level": Overall difficulty (easy, medium, hard)
+        5. "expected_submission_format": What format of submission is expected
+        6. "key_concepts": Important concepts students should demonstrate
+        
+        Output only valid JSON.
+        """
+        
+        response = model.generate_content(analysis_prompt)
+        
+        # Parse JSON response
+        import json
+        import re
+        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if json_match:
+            analysis_result = json.loads(json_match.group(0))
+            return analysis_result
+        else:
+            logger.warning("Could not parse AI analysis response as JSON")
+            return {"questions": [], "main_topics": [], "question_types": [], "difficulty_level": "medium"}
+    
+    except Exception as e:
+        logger.error(f"Error analyzing assignment content: {str(e)}")
+        return {"questions": [], "main_topics": [], "question_types": [], "difficulty_level": "medium"}
+
+
+async def generate_assignment_rubric(assignment_details: dict, assignment_analysis: dict) -> dict:
+    """Generate a rubric specific to the assignment using existing rubric generation"""
+    try:
+        from backend.rubric_generation import get_rubric_from_text
+        
+        # Create context for rubric generation
+        rubric_context = f"""
+        Assignment: {assignment_details.get('name', 'Untitled')}
+        Points Possible: {assignment_details.get('points_possible', 100)}
+        Topics: {', '.join(assignment_analysis.get('main_topics', []))}
+        Question Types: {', '.join(assignment_analysis.get('question_types', []))}
+        Difficulty: {assignment_analysis.get('difficulty_level', 'medium')}
+        """
+        
+        # Generate rubric using existing function
+        rubric = get_rubric_from_text(
+            question=assignment_details.get('description', ''),
+            rubric_text=rubric_context
+        )
+        
+        # Adjust total points to match assignment
+        target_points = assignment_details.get('points_possible', 100)
+        if rubric.get('total_points') != target_points:
+            # Scale the rubric to match assignment points
+            scale_factor = target_points / rubric.get('total_points', 100)
+            
+            if 'sections' in rubric:
+                for section in rubric['sections']:
+                    section['max_points'] = int(section['max_points'] * scale_factor)
+                    for criterion in section.get('criteria', []):
+                        criterion['points'] = int(criterion['points'] * scale_factor)
+                        for scale_item in criterion.get('grading_scale', []):
+                            scale_item['points'] = int(scale_item['points'] * scale_factor)
+            
+            rubric['total_points'] = target_points
+        
+        return rubric
+    
+    except Exception as e:
+        logger.error(f"Error generating assignment rubric: {str(e)}")
+        # Return default rubric
+        return {
+            "total_points": assignment_details.get('points_possible', 100),
+            "sections": [
+                {
+                    "name": "Content Understanding",
+                    "max_points": int(assignment_details.get('points_possible', 100) * 0.4),
+                    "criteria": [
+                        {
+                            "name": "Understanding",
+                            "points": int(assignment_details.get('points_possible', 100) * 0.4),
+                            "description": "Demonstrates understanding of key concepts"
+                        }
+                    ]
+                }
+            ]
+        }
+
+
+async def generate_answer_key_and_tests(assignment_details: dict, assignment_analysis: dict) -> dict:
+    """Generate answer key and test cases for the assignment"""
+    try:
+        # Initialize Gemini model for answer key generation
+        import google.generativeai as genai
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        
+        # Create comprehensive prompt for answer key generation
+        description = assignment_details.get("description", "")
+        instructions = assignment_details.get("instructions", "")
+        assignment_name = assignment_details.get('name', 'Untitled Assignment')
+        
+        full_content = f"{description}\n\n{instructions}".strip()
+        
+        if not full_content:
+            return {"answer_key": None, "test_cases": [], "grading_guidelines": []}
+        
+        answer_key_prompt = f"""
+        You are an expert educator creating a comprehensive answer key for the following assignment:
+
+        Assignment Title: {assignment_name}
+        Points Possible: {assignment_details.get('points_possible', 100)}
+        
+        Assignment Content:
+        {full_content}
+        
+        Based on the assignment analysis:
+        - Main Topics: {', '.join(assignment_analysis.get('main_topics', []))}
+        - Question Types: {', '.join(assignment_analysis.get('question_types', []))}
+        - Difficulty Level: {assignment_analysis.get('difficulty_level', 'medium')}
+        - Identified Questions: {assignment_analysis.get('questions', [])}
+        
+        Please create:
+        1. A detailed answer key with model responses for each question/task
+        2. Key concepts students should demonstrate
+        3. Common mistakes to watch for
+        4. Grading guidelines for partial credit
+        
+        Format as clear, structured text that a grader can easily reference.
+        """
+        
+        # Generate answer key
+        response = model.generate_content(answer_key_prompt)
+        answer_key = response.text.strip()
+        
+        # Generate test cases and grading guidelines
+        test_cases = []
+        grading_guidelines = []
+        
+        # Create test cases based on main topics
+        for topic in assignment_analysis.get('main_topics', [])[:5]:  # Limit to 5 topics
+            test_cases.append({
+                "topic": topic,
+                "key_points": f"Student should demonstrate understanding of {topic}",
+                "evaluation_criteria": f"Look for correct application of {topic} concepts"
+            })
+        
+        # Create grading guidelines
+        grading_guidelines = [
+            "Check for understanding of core concepts",
+            "Evaluate problem-solving approach",
+            "Assess quality of explanations",
+            "Look for appropriate use of terminology",
+            "Consider completeness of response"
+        ]
+        
+        return {
+            "answer_key": answer_key,
+            "test_cases": test_cases,
+            "grading_guidelines": grading_guidelines
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating answer key and tests: {str(e)}")
+        return {
+            "answer_key": [],
+            "test_cases": [],
+            "grading_guidelines": ["Evaluate based on assignment requirements"]
+        }
+
+
+async def grade_submission_with_strict_rubric(
+    submission_text: str,
+    submission_files: List[Dict],
+    rubric: Dict,
+    student_name: str = "Student",
+    strictness: float = 0.5
+) -> Dict:
+    """
+    Grade a submission strictly based on rubric criteria only.
+    Returns detailed breakdown by each rubric criterion.
+    """
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        
+        # Build rubric criteria description
+        criteria_descriptions = []
+        total_possible_points = 0
+        
+        for criterion in rubric.get("criteria", []):
+            name = criterion.get("name", "Criterion")
+            max_points = criterion.get("max_points", 0)
+            description = criterion.get("description", "")
+            total_possible_points += max_points
+            
+            criteria_descriptions.append(f"""
+Criterion: {name}
+Max Points: {max_points}
+Description: {description}
+""")
+        
+        criteria_text = "\n".join(criteria_descriptions)
+        
+        # Create strict rubric-based grading prompt
+        strictness_level = "strict" if strictness > 0.7 else "moderate" if strictness > 0.3 else "lenient"
+        
+        grading_prompt = f"""
+You are an expert academic grader. Grade this submission STRICTLY based ONLY on the provided rubric criteria. Do not use any external knowledge or assumptions beyond what is explicitly stated in the rubric.
+
+RUBRIC CRITERIA:
+{criteria_text}
+
+TOTAL POSSIBLE POINTS: {total_possible_points}
+
+STUDENT SUBMISSION:
+{submission_text}
+
+GRADING INSTRUCTIONS:
+1. Evaluate ONLY based on the rubric criteria provided above
+2. For each criterion, assign points from 0 to the maximum points for that criterion
+3. Use {strictness_level} grading standards
+4. Provide specific feedback for each criterion explaining the score
+5. Do not award points for content not explicitly covered by the rubric criteria
+
+Please respond with a JSON object in this exact format:
+{{
+    "rubric_breakdown": [
+        {{
+            "criterion_name": "Criterion Name",
+            "points_awarded": 0,
+            "max_points": 0,
+            "percentage": 0.0,
+            "feedback": "Specific feedback for this criterion",
+            "evidence_found": "Quote or describe specific evidence from submission"
+        }}
+    ],
+    "total_score": 0,
+    "max_possible": {total_possible_points},
+    "overall_percentage": 0.0,
+    "overall_feedback": "Overall summary of the grading",
+    "rubric_adherence": "How well the submission addresses the rubric criteria"
+}}
+
+IMPORTANT: Only award points for content that directly addresses the rubric criteria. Be specific about what evidence you found in the submission for each criterion.
+"""
+
+        # Generate grading response
+        response = model.generate_content(grading_prompt)
+        
+        # Parse JSON response
+        import json
+        import re
+        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if json_match:
+            grading_result = json.loads(json_match.group(0))
+            
+            # Validate and ensure all criteria are included
+            rubric_breakdown = grading_result.get("rubric_breakdown", [])
+            
+            # Ensure we have entries for all rubric criteria
+            criteria_names = [c.get("name", "") for c in rubric.get("criteria", [])]
+            breakdown_names = [b.get("criterion_name", "") for b in rubric_breakdown]
+            
+            for criterion in rubric.get("criteria", []):
+                criterion_name = criterion.get("name", "")
+                if criterion_name not in breakdown_names:
+                    # Add missing criterion with 0 points
+                    rubric_breakdown.append({
+                        "criterion_name": criterion_name,
+                        "points_awarded": 0,
+                        "max_points": criterion.get("max_points", 0),
+                        "percentage": 0.0,
+                        "feedback": "No evidence found for this criterion in the submission",
+                        "evidence_found": "None identified"
+                    })
+            
+            # Recalculate totals to ensure accuracy
+            total_awarded = sum(item.get("points_awarded", 0) for item in rubric_breakdown)
+            total_possible = sum(item.get("max_points", 0) for item in rubric_breakdown)
+            overall_percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0
+            
+            grading_result.update({
+                "rubric_breakdown": rubric_breakdown,
+                "total_score": total_awarded,
+                "max_possible": total_possible,
+                "overall_percentage": round(overall_percentage, 1)
+            })
+            
+            return grading_result
+        else:
+            logger.warning("Could not parse AI grading response as JSON")
+            return create_default_rubric_result(rubric, "Error parsing AI response")
+    
+    except Exception as e:
+        logger.error(f"Error in strict rubric grading: {str(e)}")
+        return create_default_rubric_result(rubric, f"Grading error: {str(e)}")
+
+
+def _calculate_grade_letter(percentage: float) -> str:
+    """Calculate letter grade from percentage."""
+    if percentage >= 90:
+        return "A"
+    elif percentage >= 80:
+        return "B"
+    elif percentage >= 70:
+        return "C"
+    elif percentage >= 60:
+        return "D"
+    else:
+        return "F"
+
+def create_default_rubric_result(rubric: Dict, error_message: str) -> Dict:
+    """Create a default result when grading fails"""
+    rubric_breakdown = []
+    total_points = 0
+    
+    for criterion in rubric.get("criteria", []):
+        max_points = criterion.get("max_points", 0)
+        total_points += max_points
+        rubric_breakdown.append({
+            "criterion_name": criterion.get("name", "Criterion"),
+            "points_awarded": 0,
+            "max_points": max_points,
+            "percentage": 0.0,
+            "feedback": "Unable to grade due to error",
+            "evidence_found": "Error occurred during grading"
+        })
+    
+    return {
+        "rubric_breakdown": rubric_breakdown,
+        "total_score": 0,
+        "max_possible": total_points,
+        "overall_percentage": 0.0,
+        "overall_feedback": f"Grading failed: {error_message}",
+        "rubric_adherence": "Unable to evaluate"
+    } 

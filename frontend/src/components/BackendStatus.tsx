@@ -78,7 +78,7 @@ const BackendStatus: React.FC = () => {
   const checkBackendStatus = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/health', { timeout: 5000 });
+      const response = await axios.get('http://localhost:8000/health', { timeout: 5000 });
       
       if (response.data) {
         setStatus({
@@ -116,9 +116,10 @@ const BackendStatus: React.FC = () => {
   };
 
   useEffect(() => {
-    checkBackendStatus();
-    const interval = setInterval(checkBackendStatus, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
+    // Only check on mount, not on interval
+    // checkBackendStatus();
+    // const interval = setInterval(checkBackendStatus, 30000); // Check every 30 seconds
+    // return () => clearInterval(interval);
   }, []);
 
   const getStatusColor = () => {

@@ -131,16 +131,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      // FastAPI Users JWT login expects form data, not JSON
-      const formData = new FormData();
-      formData.append('username', email); // FastAPI Users uses 'username' field for email
-      formData.append('password', password);
-
-      // Using centralized API config - change in /src/config/api.js for all endpoints
-      // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/jwt/login`, {
-      const response = await fetch(`${API_BASE_URL}/auth/jwt/login`, {
+      // New MongoDB authentication uses JSON, not form data
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
-        body: formData, // Form data, not JSON
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email,
+          password: password,
+        }),
       });
 
       if (response.ok) {
@@ -148,8 +148,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         localStorage.setItem('access_token', result.access_token);
         
         // Update last login
-        // Using centralized API config - change in /src/config/api.js for all endpoints
-        // await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me/update-login`, {
         await fetch(`${API_ENDPOINTS.AUTH.ME}/update-login`, {
           method: 'POST',
           headers: {

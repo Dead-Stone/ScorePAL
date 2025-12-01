@@ -13,8 +13,8 @@ const nextConfig = {
   },
   async rewrites() {
     // Using centralized API config - change in /src/config/api.js for all endpoints
-    // const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-    const apiUrl = 'http://localhost:8000';
+    // const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010';
+    const apiUrl = 'http://localhost:8010';
     
     return [
       {

@@ -54,6 +54,7 @@ export default function LandingPage() {
                 width={40}
                 height={40}
                 className="rounded-lg"
+                style={{ height: "auto" }}
               />
               <span className="text-2xl font-bold text-gray-900">ScorePAL</span>
             </div>

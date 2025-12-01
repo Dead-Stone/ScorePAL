@@ -4,12 +4,16 @@ import re
 import logging
 import google.generativeai as genai
 from google.generativeai import types
+from google.api_core.exceptions import NotFound
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None) -> dict:
+DEFAULT_RUBRIC_MODEL = os.getenv("GEMINI_RUBRIC_MODEL", "gemini-1.5-flash-001")
+
+
+def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None, model_name: str = None) -> dict:
     """
     Generate a detailed grading rubric in JSON format using Gemini 2.0 Flash.
     
@@ -43,7 +47,16 @@ def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None) -
         
         # Configure Gemini API and instantiate the model
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        selected_model = model_name or DEFAULT_RUBRIC_MODEL
+        logger.info(f"Using Gemini model '{selected_model}' for rubric generation")
+        try:
+            model = genai.GenerativeModel(selected_model)
+        except NotFound as exc:
+            raise ValueError(
+                f"Gemini model '{selected_model}' is unavailable. "
+                "Set GEMINI_RUBRIC_MODEL to a supported model "
+                "(e.g., gemini-1.5-flash-001 or gemini-1.5-flash-latest)."
+            ) from exc
         
         prompt = (
             """

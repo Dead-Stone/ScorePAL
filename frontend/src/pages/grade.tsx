@@ -32,6 +32,7 @@ import {
   InputLabel,
   FormHelperText,
   Divider,
+  Chip,
 } from '@mui/material';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { GradePageDocumentation } from '../components/PageDocumentation';
@@ -47,11 +48,13 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import CreateIcon from '@mui/icons-material/Create';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import SchoolIcon from '@mui/icons-material/School';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_BASE_URL } from '@/config/api';
+import ModelSelectionDialog from '../components/ModelSelectionDialog';
 
 // Configure axios with base URL and default headers
 axios.defaults.baseURL = API_BASE_URL;
@@ -171,6 +174,11 @@ export default function Home() {
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [loadingRubrics, setLoadingRubrics] = useState(false);
   
+  // State for AI model selection
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [modelSelectionOpen, setModelSelectionOpen] = useState(false);
+  const [estimatedTokens, setEstimatedTokens] = useState(0);
+  
   // Fetch rubrics on component mount
   useEffect(() => {
     const fetchRubrics = async () => {
@@ -198,6 +206,43 @@ export default function Home() {
   // Handle single form field changes
   const handleSingleFormChange = (field: string, value: any) => {
     setSingleForm(prev => ({ ...prev, [field]: value }));
+    
+    // Estimate tokens when content changes
+    if (field === 'submission' || field === 'answerKey' || field === 'questionPaper') {
+      estimateTokensForGrading();
+    }
+  };
+  
+  // Estimate tokens for grading
+  const estimateTokensForGrading = () => {
+    let totalText = '';
+    
+    // Add text content from files (simplified estimation)
+    if (singleForm.submission) {
+      totalText += `Submission content (estimated): ${singleForm.submission.size / 4} characters\n`;
+    }
+    if (singleForm.answerKey) {
+      totalText += `Answer key content (estimated): ${singleForm.answerKey.size / 4} characters\n`;
+    }
+    if (singleForm.questionPaper) {
+      totalText += `Question content (estimated): ${singleForm.questionPaper.size / 4} characters\n`;
+    }
+    
+    // Rough token estimation: ~4 characters per token
+    const estimated = Math.ceil(totalText.length / 4);
+    setEstimatedTokens(Math.max(estimated, 500)); // Minimum estimate for grading prompt
+  };
+  
+  // Handle model selection
+  const handleModelSelect = (modelSelection) => {
+    setSelectedModel(modelSelection);
+    setModelSelectionOpen(false);
+  };
+  
+  // Open model selection dialog
+  const openModelSelection = () => {
+    estimateTokensForGrading();
+    setModelSelectionOpen(true);
   };
   
   // Dropzone for question paper in single mode
@@ -300,6 +345,11 @@ export default function Home() {
       
       if (singleForm.rubricId) {
         formData.append('rubric_id', singleForm.rubricId);
+      }
+      
+      // Include AI model selection if available
+      if (selectedModel) {
+        formData.append('ai_model_selection', JSON.stringify(selectedModel));
       }
       
       // Send request
@@ -489,6 +539,46 @@ export default function Home() {
             <Grid item xs={12}>
               <Divider sx={{ my: 1 }} />
               <Typography variant="subtitle1" gutterBottom fontWeight="medium">
+                AI Model Selection
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<PsychologyIcon />}
+                  onClick={openModelSelection}
+                  sx={{ minWidth: 200 }}
+                >
+                  {selectedModel ? 'Change AI Model' : 'Select AI Model'}
+                </Button>
+                
+                {selectedModel && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip
+                      label={`${selectedModel.provider} - ${selectedModel.model_name}`}
+                      color="primary"
+                      variant="outlined"
+                    />
+                    {estimatedTokens > 0 && (
+                      <Chip
+                        label={`~${estimatedTokens.toLocaleString()} tokens`}
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                  </Box>
+                )}
+              </Box>
+              
+              {!selectedModel && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  No AI model selected. The system will use your default configuration.
+                </Alert>
+              )}
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Divider sx={{ my: 1 }} />
+              <Typography variant="subtitle1" gutterBottom fontWeight="medium">
                 Upload Files
               </Typography>
             </Grid>
@@ -566,6 +656,15 @@ export default function Home() {
           {notification.message}
         </Alert>
       </Snackbar>
+      
+      {/* Model Selection Dialog */}
+      <ModelSelectionDialog
+        open={modelSelectionOpen}
+        onClose={() => setModelSelectionOpen(false)}
+        onSelect={handleModelSelect}
+        currentSelection={selectedModel}
+        estimatedTokens={estimatedTokens}
+      />
     </Container>
     </ProtectedRoute>
   );

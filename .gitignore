@@ -5,3 +5,5 @@
 /run.py
 /start_new.py
 /test_neo4j.py
+
+backend/scripts/

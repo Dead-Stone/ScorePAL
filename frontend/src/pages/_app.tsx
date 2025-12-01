@@ -228,22 +228,53 @@ function UserProfileSection() {
   );
 }
 
-const navigationItems = [
-  { text: 'Grade', icon: <Box component="img" src="/grade-logo.png" alt="Grade Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/grade' },
-  { text: 'Canvas', icon: <Box component="img" src="/canvas-logo.jpg" alt="Canvas Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/canvas' },
-  { text: 'Rubrics', icon: <Box component="img" src="/rubric-logo.png" alt="Rubric Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/rubric' },
-  { text: 'Results', icon: <GradingIcon />, path: '/results' },
-  { text: 'Moodle', icon: <Box component="img" src="/moodle-logo.png" alt="Moodle Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/moodle-integration' },
+type NavigationItem =
+  | {
+      text: string;
+      path: string;
+      iconType: 'image';
+      iconSrc: string;
+      iconAlt: string;
+    }
+  | {
+      text: string;
+      path: string;
+      iconType: 'component';
+      IconComponent: typeof GradingIcon;
+    };
+
+// Navigation items with role restrictions
+const allNavigationItems: (NavigationItem & { allowedRoles?: string[] })[] = [
+  { text: 'Grade', path: '/grade', iconType: 'image', iconSrc: '/grade-logo.png', iconAlt: 'Grade Logo', allowedRoles: ['teacher', 'admin', 'grader'] },
+  { text: 'Canvas', path: '/canvas', iconType: 'image', iconSrc: '/canvas-logo.jpg', iconAlt: 'Canvas Logo', allowedRoles: ['teacher', 'admin', 'grader'] },
+  { text: 'Rubrics', path: '/rubric', iconType: 'image', iconSrc: '/rubric-logo.png', iconAlt: 'Rubric Logo', allowedRoles: ['teacher', 'admin'] },
+  { text: 'Results', path: '/results', iconType: 'component', IconComponent: GradingIcon }, // All roles can see results
+  { text: 'Analytics', path: '/analytics', iconType: 'component', IconComponent: GradingIcon }, // All roles can see analytics
+  { text: 'Moodle', path: '/moodle-integration', iconType: 'image', iconSrc: '/moodle-logo.png', iconAlt: 'Moodle Logo', allowedRoles: ['teacher', 'admin'] },
 ];
+
+// Helper function to filter navigation items by role
+const getNavigationItems = (userRole?: string): NavigationItem[] => {
+  if (!userRole) return allNavigationItems.filter(item => !item.allowedRoles);
+  
+  return allNavigationItems.filter(item => {
+    if (!item.allowedRoles) return true; // No restrictions
+    return item.allowedRoles.includes(userRole);
+  }) as NavigationItem[];
+};
 
 function AppContent({ Component, pageProps }: AppProps) {
   const router = useRouter();
+  const { user } = useAuth();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
   };
+
+  // Get filtered navigation items based on user role
+  const navigationItems = getNavigationItems(user?.role);
 
   // Pages that should not use the layout (like auth pages and landing)
   const noLayoutPaths = ['/landing', '/auth/login', '/auth/register', '/auth/forgot-password'];
@@ -318,12 +349,11 @@ function AppContent({ Component, pageProps }: AppProps) {
       >
         {navigationItems.map((item) => (
           <ListItem key={item.text} disablePadding sx={{ minHeight: 32 }}>
-            <Tooltip title={(item.text === 'Results' || item.text === 'Moodle') ? 'Coming Soon' : item.text} placement="right" arrow disableInteractive={false}>
+            <Tooltip title={item.text} placement="right" arrow disableInteractive={false}>
               <Box sx={{ flexGrow: 1, display: 'flex' }}>
             <ListItemButton 
               component={Link} 
               href={item.path}
-                  disabled={(item.text === 'Results' || item.text === 'Moodle')}
               selected={router.pathname === item.path || router.pathname.startsWith(`${item.path}/`)}
               sx={{
                     borderRadius: 2,
@@ -342,7 +372,16 @@ function AppContent({ Component, pageProps }: AppProps) {
               }}
             >
                   <ListItemIcon sx={{ minWidth: 40, color: (item.text === 'Results' || item.text === 'Moodle') ? 'text.disabled' : 'text.secondary' }}>
-                {item.icon}
+                {item.iconType === 'image' ? (
+                  <Box
+                    component="img"
+                    src={item.iconSrc}
+                    alt={item.iconAlt}
+                    sx={{ height: 24, width: 24, objectFit: 'contain' }}
+                  />
+                ) : (
+                  <item.IconComponent />
+                )}
               </ListItemIcon>
                   <ListItemText primary={item.text} sx={{ '& .MuiListItemText-primary': { fontSize: 12, fontWeight: 'bold' } }} />
             </ListItemButton>

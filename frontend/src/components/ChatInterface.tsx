@@ -81,6 +81,16 @@ interface ChatInterfaceProps {
   questionText?: string;
   submissionText?: string;
   gradingFeedback?: string;
+  // Enhanced grading data
+  rubric?: any;
+  criteriaScores?: any[];
+  mistakes?: any;
+  score?: number;
+  maxScore?: number;
+  percentage?: number;
+  gradeLetter?: string;
+  answerKey?: string;
+  assignmentName?: string;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -90,6 +100,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   questionText,
   submissionText,
   gradingFeedback,
+  rubric,
+  criteriaScores,
+  mistakes,
+  score,
+  maxScore,
+  percentage,
+  gradeLetter,
+  answerKey,
+  assignmentName,
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -105,7 +124,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     const welcomeMessage = {
       id: '1',
-      text: `Hello! I'm your AI assistant for this assignment. You can ask me questions about your submission, grading, or how to improve your work.`,
+      text: `Hello! I'm your AI assistant for this assignment. I have access to your complete grading data including rubric criteria, scores, and detailed feedback. You can ask me specific questions about your grade, rubric performance, areas for improvement, or any other aspects of your submission.`,
       sender: 'ai' as const,
       timestamp: new Date(),
     };
@@ -134,7 +153,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         studentName,
         questionText: questionText || "Not available",
         submissionText: submissionText || "Not available", 
-        gradingFeedback: gradingFeedback || "Not available"
+        gradingFeedback: gradingFeedback || "Not available",
+        rubric: rubric || null,
+        criteriaScores: criteriaScores || [],
+        mistakes: mistakes || {},
+        score: score || null,
+        maxScore: maxScore || null,
+        percentage: percentage || null,
+        gradeLetter: gradeLetter || null,
+        answerKey: answerKey || "Not available",
+        assignmentName: assignmentName || "Not available"
       };
       
       // Make API call to get AI response

@@ -1,0 +1,106 @@
+{
+  "dependency_status": {
+    "PyMuPDF (PDF)": false,
+    "python-docx (DOCX)": false,
+    "PIL (Images)": true,
+    "pytesseract (OCR)": false,
+    "nbformat (Jupyter)": true,
+    "paddleocr (OCR)": false,
+    "easyocr (OCR)": false,
+    "unstructured (Document)": false,
+    "google.generativeai (AI)": false,
+    "reportlab (PDF Creation)": false,
+    "docx2txt (DOCX)": false,
+    "pdfplumber (PDF)": false,
+    "pypdf (PDF)": false,
+    "pypdfium2 (PDF)": false
+  },
+  "file_support_status": {
+    "PDF (.pdf)": {
+      "support_level": "\u274c Not Supported",
+      "core_deps_available": false,
+      "ocr_available": false,
+      "description": "Document processing with OCR fallback",
+      "missing_deps": [
+        "PyMuPDF (PDF)",
+        "pypdf (PDF)",
+        "pypdfium2 (PDF)",
+        "pdfplumber (PDF)"
+      ]
+    },
+    "DOCX (.docx)": {
+      "support_level": "\u274c Not Supported",
+      "core_deps_available": false,
+      "ocr_available": false,
+      "description": "Microsoft Word documents",
+      "missing_deps": [
+        "python-docx (DOCX)",
+        "docx2txt (DOCX)"
+      ]
+    },
+    "DOC (.doc)": {
+      "support_level": "\u274c Not Supported",
+      "core_deps_available": false,
+      "ocr_available": false,
+      "description": "Legacy Word documents (limited support)",
+      "missing_deps": [
+        "docx2txt (DOCX)"
+      ]
+    },
+    "TXT (.txt)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Plain text files (native support)",
+      "missing_deps": []
+    },
+    "Markdown (.md)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Markdown files (native support)",
+      "missing_deps": []
+    },
+    "CSV (.csv)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Comma-separated values (native support)",
+      "missing_deps": []
+    },
+    "Python (.py)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Python source code files",
+      "missing_deps": []
+    },
+    "Jupyter (.ipynb)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Jupyter notebook files",
+      "missing_deps": []
+    },
+    "Images (.jpg/.png/.bmp/.tiff)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Image files with OCR processing",
+      "missing_deps": []
+    },
+    "ZIP (.zip)": {
+      "support_level": "\u2705 Basic Support",
+      "core_deps_available": true,
+      "ocr_available": false,
+      "description": "Archive files for batch processing",
+      "missing_deps": []
+    }
+  },
+  "summary": {
+    "available_deps": 2,
+    "total_deps": 14,
+    "supported_types": 7,
+    "total_types": 10
+  }
+}

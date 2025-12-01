@@ -16,7 +16,8 @@ import {
   Chip, Divider, Checkbox, TablePagination, Grid, Accordion,
   AccordionSummary, AccordionDetails, Stepper, Step, StepLabel,
   Dialog, DialogTitle, DialogContent, DialogActions, Slider,
-  List, ListItem, ListItemText, ListItemIcon, FormHelperText
+  List, ListItem, ListItemText, ListItemIcon, FormHelperText,
+  Tab, Tabs
 } from '@mui/material';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 import { CanvasPageDocumentation } from '../components/PageDocumentation';
@@ -24,6 +25,8 @@ import { useAuth } from '../contexts/AuthContext';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import Visibility from '@mui/icons-material/Visibility';
 import VisibilityOff from '@mui/icons-material/VisibilityOff';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import EditIcon from '@mui/icons-material/Edit';
 import SyncIcon from '@mui/icons-material/Sync';
 import GradeIcon from '@mui/icons-material/Grade';
 import AssignmentIcon from '@mui/icons-material/Assignment';
@@ -31,6 +34,11 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
 import WarningIcon from '@mui/icons-material/Warning';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import SaveIcon from '@mui/icons-material/Save';
+import CancelIcon from '@mui/icons-material/Cancel';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import { normalizeCanvasUrl } from '../utils/canvas';
@@ -51,7 +59,7 @@ const CanvasPage = () => {
   const [selectedAssignmentName, setSelectedAssignmentName] = useState('');
   
   // Workflow states
-  const [currentStep, setCurrentStep] = useState(0); // 0: connect, 1: select-course, 2: sync, 3: select, 4: grade, 5: results
+  const [currentStep, setCurrentStep] = useState(0); // 0: connect, 1: select-course, 2: sync, 3: review-rubric, 4: select, 5: grade, 6: results
   const [activeView, setActiveView] = useState('connect');
   const [showApiKey, setShowApiKey] = useState(false);
   
@@ -66,8 +74,6 @@ const CanvasPage = () => {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   
   // Grading states
-  const [rubrics, setRubrics] = useState([]);
-  const [selectedRubric, setSelectedRubric] = useState('');
   const [strictness, setStrictness] = useState(0.5);
   const [gradingInProgress, setGradingInProgress] = useState(false);
   const [gradingJobId, setGradingJobId] = useState('');
@@ -77,19 +83,94 @@ const CanvasPage = () => {
   const [resultsDialogOpen, setResultsDialogOpen] = useState(false);
   const [selectedResult, setSelectedResult] = useState(null);
 
-  // Fetch rubrics on mount
-  useEffect(() => {
-    fetchRubrics();
-  }, []);
+  // Add rubric preview states
+  const [rubricPreviewOpen, setRubricPreviewOpen] = useState(false);
+  const [previewRubricData, setPreviewRubricData] = useState(null);
+  const [loadingRubric, setLoadingRubric] = useState(false);
 
-  const fetchRubrics = async () => {
+  // Add rubric review states
+  const [reviewRubricData, setReviewRubricData] = useState(null);
+  const [reviewAnswerKey, setReviewAnswerKey] = useState(null);
+  const [rubricApproved, setRubricApproved] = useState(false);
+  const [answerKeyApproved, setAnswerKeyApproved] = useState(false);
+
+  // Add rubric editing states
+  const [editRubricDialogOpen, setEditRubricDialogOpen] = useState(false);
+  const [editingRubricData, setEditingRubricData] = useState(null);
+  const [savingRubric, setSavingRubric] = useState(false);
+  const [editRubricTab, setEditRubricTab] = useState(0);
+
+  // No longer need to fetch rubrics - they're auto-generated
+
+  // Handle saving results to MongoDB
+  const handleSaveResults = async () => {
+    if (!gradingJobId) {
+      alert('No grading job found. Please grade submissions first.');
+      return;
+    }
+    
+    setLoading(true);
     try {
-      const response = await axios.get('/rubrics');
-      if (response.data && response.data.rubrics) {
-        setRubrics(response.data.rubrics);
+      const response = await axios.post(`/api/canvas/jobs/${gradingJobId}/save-results`);
+      
+      if (response.data.status === 'success') {
+        alert(`Successfully saved ${response.data.saved_count} results to MongoDB. Analytics will be updated.`);
+      } else {
+        alert(`Error saving results: ${response.data.message}`);
       }
     } catch (err) {
-      console.error('Error fetching rubrics:', err);
+      console.error('Error saving results:', err);
+      alert(`Error saving results: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle posting grades to Canvas
+  const handlePostGrades = async () => {
+    if (!gradingJobId) {
+      alert('No grading job found. Please grade submissions first.');
+      return;
+    }
+    
+    if (!apiKey) {
+      alert('Canvas API key is required to post grades.');
+      return;
+    }
+    
+    const confirmed = window.confirm(
+      'This will post grades to Canvas. Do you want to also save results to MongoDB for analytics?'
+    );
+    
+    setLoading(true);
+    try {
+      const response = await axios.post(
+        `/api/canvas/post-grades/${gradingJobId}`,
+        {
+          canvas_url: 'https://sjsu.instructure.com',
+          api_key: processApiKey(apiKey)
+        },
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
+      
+      if (response.data.status === 'success') {
+        alert('Grades are being posted to Canvas. This may take a few moments.');
+        if (confirmed) {
+          // Also save to MongoDB
+          await handleSaveResults();
+        }
+      } else {
+        alert(`Error posting grades: ${response.data.message}`);
+      }
+    } catch (err) {
+      console.error('Error posting grades:', err);
+      alert(`Error posting grades: ${err.response?.data?.message || err.message}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -261,8 +342,13 @@ const CanvasPage = () => {
         setSyncJobId(response.data.sync_job_id);
         setSyncSummary(response.data.summary);
         setSyncedSubmissions(response.data.summary.submissions || []);
+        
+        // Load rubric and answer key for review
+        await loadRubricAndAnswerKey(response.data.sync_job_id);
+        
+        // Move to rubric review screen
         setCurrentStep(3);
-        setActiveView('select');
+        setActiveView('review-rubric');
         
         // Show different message based on whether it was existing data or fresh sync
         if (response.data.is_existing_data) {
@@ -306,7 +392,6 @@ const CanvasPage = () => {
       const response = await axios.post('/api/canvas/grade-selected-submissions', {
         sync_job_id: syncJobId,
         selected_user_ids: selectedUserIds,
-        rubric_id: selectedRubric || null,
         strictness: strictness
       }, {
         timeout: 600000, // 10 minutes timeout for grading
@@ -315,7 +400,12 @@ const CanvasPage = () => {
       if (response.data.status === 'success') {
         setGradingJobId(response.data.grading_job_id);
         setGradingResults(response.data.results || []);
-        setCurrentStep(5);
+        
+        // Results are automatically saved to MongoDB during grading
+        if (response.data.saved_to_mongodb) {
+          console.log(`Saved ${response.data.saved_to_mongodb} results to MongoDB`);
+        }
+        setCurrentStep(6);
         setActiveView('results');
       } else {
         setError(response.data.message || 'Failed to grade submissions');
@@ -353,6 +443,403 @@ const CanvasPage = () => {
       } else {
       setSelectedSubmissions(new Set(validSubmissions.map(s => s.user_id)));
     }
+  };
+
+  // Add function to fetch and display rubric preview
+  const handlePreviewRubric = async () => {
+    if (!syncSummary) return;
+    
+    try {
+      setLoadingRubric(true);
+      
+      // Try to load the AI-generated rubric from the assignment analysis
+      const response = await fetch('/api/canvas/get-assignment-analysis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sync_job_id: syncJobId,
+          course_id: selectedCourseId,
+          assignment_id: selectedAssignmentId
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const rubricData = data.content_analysis?.generated_rubric;
+        
+        if (rubricData) {
+          setPreviewRubricData(rubricData);
+          setRubricPreviewOpen(true);
+        } else {
+          // Show default rubric if AI-generated one is not available
+          const defaultRubric = {
+            name: "Default Grading Rubric",
+            description: "Comprehensive default rubric covering technical accuracy, completeness, and analysis quality.",
+            total_points: syncSummary.assignment_details?.points_possible || 100,
+            sections: [
+              {
+                name: "Content Understanding",
+                max_points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.4),
+                criteria: [
+                  {
+                    name: "Understanding",
+                    points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.4),
+                    description: "Demonstrates understanding of key concepts and materials",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.4), description: "Outstanding understanding with deep insights" },
+                      { level: "Good", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.3), description: "Strong understanding with minor gaps" },
+                      { level: "Satisfactory", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.2), description: "Basic understanding with some confusion" },
+                      { level: "Poor", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.1), description: "Limited understanding with significant gaps" }
+                    ]
+                  }
+                ]
+              },
+              {
+                name: "Analysis & Application",
+                max_points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.35),
+                criteria: [
+                  {
+                    name: "Critical Thinking",
+                    points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.35),
+                    description: "Applies concepts effectively and demonstrates analytical skills",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.35), description: "Exceptional analysis with creative applications" },
+                      { level: "Good", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.26), description: "Good analysis with solid applications" },
+                      { level: "Satisfactory", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.18), description: "Basic analysis with simple applications" },
+                      { level: "Poor", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.09), description: "Weak analysis with minimal application" }
+                    ]
+                  }
+                ]
+              },
+              {
+                name: "Presentation & Quality",
+                max_points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.25),
+                criteria: [
+                  {
+                    name: "Organization & Clarity",
+                    points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.25),
+                    description: "Clear structure, organization, and presentation quality",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.25), description: "Exceptionally well-organized and clear" },
+                      { level: "Good", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.19), description: "Well-organized with minor issues" },
+                      { level: "Satisfactory", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.13), description: "Adequately organized with some confusion" },
+                      { level: "Poor", points: Math.round((syncSummary.assignment_details?.points_possible || 100) * 0.06), description: "Poorly organized and unclear" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          };
+          setPreviewRubricData(defaultRubric);
+          setRubricPreviewOpen(true);
+        }
+      } else {
+        alert('Unable to load rubric preview. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error loading rubric preview:', err);
+      alert('Error loading rubric preview. Please try again.');
+    } finally {
+      setLoadingRubric(false);
+    }
+  };
+
+  // Load rubric and answer key for review
+  const loadRubricAndAnswerKey = async (syncJobId) => {
+    try {
+      const response = await fetch('/api/canvas/get-assignment-analysis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sync_job_id: syncJobId,
+          course_id: selectedCourseId,
+          assignment_id: selectedAssignmentId
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Set rubric data for review
+        const rubricData = data.content_analysis?.generated_rubric;
+        if (rubricData) {
+          setReviewRubricData(rubricData);
+        } else {
+          // Create default rubric if none exists
+          const defaultRubric = {
+            name: `Rubric for ${data.assignment_details?.name || 'Assignment'}`,
+            description: "AI-generated rubric based on assignment content and requirements.",
+            total_points: data.assignment_details?.points_possible || 100,
+            sections: [
+              {
+                name: "Content Understanding",
+                max_points: Math.round((data.assignment_details?.points_possible || 100) * 0.4),
+                criteria: [
+                  {
+                    name: "Concept Mastery",
+                    points: Math.round((data.assignment_details?.points_possible || 100) * 0.4),
+                    description: "Demonstrates understanding of key concepts and materials",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((data.assignment_details?.points_possible || 100) * 0.4), description: "Outstanding understanding with deep insights" },
+                      { level: "Good", points: Math.round((data.assignment_details?.points_possible || 100) * 0.3), description: "Strong understanding with minor gaps" },
+                      { level: "Satisfactory", points: Math.round((data.assignment_details?.points_possible || 100) * 0.2), description: "Basic understanding with some confusion" },
+                      { level: "Poor", points: Math.round((data.assignment_details?.points_possible || 100) * 0.1), description: "Limited understanding with significant gaps" }
+                    ]
+                  }
+                ]
+              },
+              {
+                name: "Application & Analysis",
+                max_points: Math.round((data.assignment_details?.points_possible || 100) * 0.35),
+                criteria: [
+                  {
+                    name: "Problem Solving",
+                    points: Math.round((data.assignment_details?.points_possible || 100) * 0.35),
+                    description: "Applies concepts effectively and demonstrates analytical skills",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((data.assignment_details?.points_possible || 100) * 0.35), description: "Exceptional analysis with creative applications" },
+                      { level: "Good", points: Math.round((data.assignment_details?.points_possible || 100) * 0.26), description: "Good analysis with solid applications" },
+                      { level: "Satisfactory", points: Math.round((data.assignment_details?.points_possible || 100) * 0.18), description: "Basic analysis with simple applications" },
+                      { level: "Poor", points: Math.round((data.assignment_details?.points_possible || 100) * 0.09), description: "Weak analysis with minimal application" }
+                    ]
+                  }
+                ]
+              },
+              {
+                name: "Communication & Quality",
+                max_points: Math.round((data.assignment_details?.points_possible || 100) * 0.25),
+                criteria: [
+                  {
+                    name: "Clarity & Organization",
+                    points: Math.round((data.assignment_details?.points_possible || 100) * 0.25),
+                    description: "Clear structure, organization, and presentation quality",
+                    grading_scale: [
+                      { level: "Excellent", points: Math.round((data.assignment_details?.points_possible || 100) * 0.25), description: "Exceptionally well-organized and clear" },
+                      { level: "Good", points: Math.round((data.assignment_details?.points_possible || 100) * 0.19), description: "Well-organized with minor issues" },
+                      { level: "Satisfactory", points: Math.round((data.assignment_details?.points_possible || 100) * 0.13), description: "Adequately organized with some confusion" },
+                      { level: "Poor", points: Math.round((data.assignment_details?.points_possible || 100) * 0.06), description: "Poorly organized and unclear" }
+                    ]
+                  }
+                ]
+              }
+            ]
+          };
+          setReviewRubricData(defaultRubric);
+        }
+        
+        // Set answer key data for review
+        const answerKeyData = data.answer_key_data?.answer_key;
+        if (answerKeyData) {
+          setReviewAnswerKey(answerKeyData);
+        }
+        
+        console.log('Loaded rubric and answer key for review');
+      } else {
+        console.error('Failed to load assignment analysis');
+      }
+    } catch (err) {
+      console.error('Error loading rubric and answer key:', err);
+    }
+  };
+
+  // Open edit rubric dialog
+  const openEditRubricDialog = (rubricData) => {
+    // Add null check to prevent runtime error
+    if (!rubricData) {
+      console.error('openEditRubricDialog called with null rubricData');
+      return;
+    }
+    
+    setEditingRubricData({
+      name: rubricData.name || '',
+      description: rubricData.description || '',
+      sections: rubricData.sections || [],
+      total_points: rubricData.total_points || 0,
+      strictness: rubricData.strictness || 0.5
+    });
+    setEditRubricDialogOpen(true);
+    setEditRubricTab(0);
+  };
+
+  // Close edit rubric dialog
+  const closeEditRubricDialog = () => {
+    setEditRubricDialogOpen(false);
+    setEditingRubricData(null);
+    setEditRubricTab(0);
+  };
+
+  // Add criterion to a section
+  const addCriterionToSection = (sectionIndex) => {
+    const newCriterion = {
+      name: '',
+      description: '',
+      points: 10,
+      grading_scale: [
+        { level: 'Excellent', points: 10, description: 'Exceeds expectations' },
+        { level: 'Good', points: 8, description: 'Meets expectations' },
+        { level: 'Satisfactory', points: 6, description: 'Below expectations' },
+        { level: 'Poor', points: 3, description: 'Does not meet expectations' }
+      ]
+    };
+
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, index) =>
+        index === sectionIndex
+          ? { ...section, criteria: [...section.criteria, newCriterion] }
+          : section
+      )
+    }));
+  };
+
+  // Remove criterion from a section
+  const removeCriterionFromSection = (sectionIndex, criterionIndex) => {
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, index) =>
+        index === sectionIndex
+          ? { ...section, criteria: section.criteria.filter((_, i) => i !== criterionIndex) }
+          : section
+      )
+    }));
+  };
+
+  // Update criterion in a section
+  const updateCriterion = (sectionIndex, criterionIndex, field, value) => {
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, sIndex) =>
+        sIndex === sectionIndex
+          ? {
+              ...section,
+              criteria: section.criteria.map((criterion, cIndex) =>
+                cIndex === criterionIndex
+                  ? { ...criterion, [field]: value }
+                  : criterion
+              )
+            }
+          : section
+      )
+    }));
+  };
+
+  // Add grading level to a criterion
+  const addGradingLevel = (sectionIndex, criterionIndex) => {
+    const newLevel = {
+      level: 'New Level',
+      points: 5,
+      description: 'Description for this level'
+    };
+
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, sIndex) =>
+        sIndex === sectionIndex
+          ? {
+              ...section,
+              criteria: section.criteria.map((criterion, cIndex) =>
+                cIndex === criterionIndex
+                  ? {
+                      ...criterion,
+                      grading_scale: [...(criterion.grading_scale || []), newLevel]
+                    }
+                  : criterion
+              )
+            }
+          : section
+      )
+    }));
+  };
+
+  // Remove grading level from a criterion
+  const removeGradingLevel = (sectionIndex, criterionIndex, levelIndex) => {
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, sIndex) =>
+        sIndex === sectionIndex
+          ? {
+              ...section,
+              criteria: section.criteria.map((criterion, cIndex) =>
+                cIndex === criterionIndex
+                  ? {
+                      ...criterion,
+                      grading_scale: criterion.grading_scale.filter((_, lIndex) => lIndex !== levelIndex)
+                    }
+                  : criterion
+              )
+            }
+          : section
+      )
+    }));
+  };
+
+  // Update grading level
+  const updateGradingLevel = (sectionIndex, criterionIndex, levelIndex, field, value) => {
+    setEditingRubricData(prev => ({
+      ...prev,
+      sections: prev.sections.map((section, sIndex) =>
+        sIndex === sectionIndex
+          ? {
+              ...section,
+              criteria: section.criteria.map((criterion, cIndex) =>
+                cIndex === criterionIndex
+                  ? {
+                      ...criterion,
+                      grading_scale: criterion.grading_scale.map((level, lIndex) =>
+                        lIndex === levelIndex
+                          ? { ...level, [field]: value }
+                          : level
+                      )
+                    }
+                  : criterion
+              )
+            }
+          : section
+      )
+    }));
+  };
+
+  // Calculate total points for editing rubric
+  const calculateTotalPoints = () => {
+    if (!editingRubricData || !editingRubricData.sections) return 0;
+    return editingRubricData.sections.reduce((total, section) => {
+      return total + (section.criteria || []).reduce((sectionTotal, criterion) => {
+        return sectionTotal + (criterion.points || 0);
+      }, 0);
+    }, 0);
+  };
+
+  // Save edited rubric (this will be a temporary save for Canvas use only)
+  const saveEditedRubric = () => {
+    const updatedRubric = {
+      ...editingRubricData,
+      total_points: calculateTotalPoints()
+    };
+    
+    // Update the preview rubric data with the edited version
+    setPreviewRubricData(updatedRubric);
+    setReviewRubricData(updatedRubric);
+    
+    // Close the edit dialog
+    closeEditRubricDialog();
+    
+    // Show success message
+    alert('Rubric updated successfully! This is a temporary edit for this Canvas session only.');
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   // Render course and assignment selection screen
@@ -580,6 +1067,15 @@ const CanvasPage = () => {
             <Box sx={{ mb: 3 }}>
               <Alert severity="success" sx={{ mb: 2 }}>
                 Successfully synced {syncSummary.successful_syncs} of {syncSummary.total_submissions} submissions
+                {syncSummary.assignment_analysis && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="body2">
+                      ✨ Enhanced with AI analysis: {syncSummary.assignment_analysis.questions_found} questions identified,
+                      {syncSummary.assignment_analysis.has_generated_rubric ? ' custom rubric generated,' : ''}
+                      {syncSummary.assignment_analysis.has_answer_key ? ' answer key created' : ''}
+                    </Typography>
+                  </Box>
+                )}
               </Alert>
               
               <Grid container spacing={2} sx={{ mb: 2 }}>
@@ -608,6 +1104,130 @@ const CanvasPage = () => {
                   </Paper>
                 </Grid>
               </Grid>
+
+              {/* Enhanced Assignment Analysis Display */}
+              {syncSummary.assignment_analysis && (
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                      🤖 AI Assignment Analysis
+                    </Typography>
+                    
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" color="primary">Questions Identified:</Typography>
+                          <Typography variant="body2">{syncSummary.assignment_analysis.questions_found} questions found</Typography>
+                        </Box>
+                        
+                        {syncSummary.assignment_analysis.main_topics && syncSummary.assignment_analysis.main_topics.length > 0 && (
+                          <Box sx={{ mb: 2 }}>
+                            <Typography variant="subtitle2" color="primary">Main Topics:</Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                              {syncSummary.assignment_analysis.main_topics.map((topic, index) => (
+                                <Chip key={index} label={topic} size="small" variant="outlined" />
+                              ))}
+                            </Box>
+                          </Box>
+                        )}
+                        
+                        {syncSummary.assignment_analysis.question_types && syncSummary.assignment_analysis.question_types.length > 0 && (
+                          <Box sx={{ mb: 2 }}>
+                            <Typography variant="subtitle2" color="primary">Question Types:</Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                              {syncSummary.assignment_analysis.question_types.map((type, index) => (
+                                <Chip key={index} label={type} size="small" color="secondary" variant="outlined" />
+                              ))}
+                            </Box>
+                          </Box>
+                        )}
+                      </Grid>
+                      
+                      <Grid item xs={12} md={6}>
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" color="primary">Difficulty Level:</Typography>
+                          <Chip 
+                            label={syncSummary.assignment_analysis.difficulty_level || 'Medium'} 
+                            color={
+                              syncSummary.assignment_analysis.difficulty_level === 'easy' ? 'success' :
+                              syncSummary.assignment_analysis.difficulty_level === 'hard' ? 'error' : 'warning'
+                            }
+                            size="small"
+                          />
+                        </Box>
+                        
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="subtitle2" color="primary">AI Enhancements:</Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
+                            {syncSummary.assignment_analysis.has_generated_rubric && (
+                              <Chip icon={<CheckCircleIcon />} label="Custom Rubric Generated" size="small" color="success" />
+                            )}
+                            {syncSummary.assignment_analysis.has_answer_key && (
+                              <Chip icon={<CheckCircleIcon />} label="Answer Key Created" size="small" color="success" />
+                            )}
+                            {syncSummary.assignment_analysis.has_test_cases && (
+                              <Chip icon={<CheckCircleIcon />} label="Test Cases Generated" size="small" color="success" />
+                            )}
+                            {syncSummary.ocr_processing && syncSummary.ocr_processing.files_with_extracted_text > 0 && (
+                              <Chip icon={<CheckCircleIcon />} label={`OCR: ${syncSummary.ocr_processing.files_with_extracted_text} files processed`} size="small" color="info" />
+                            )}
+                          </Box>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {/* OCR Processing Statistics */}
+              {syncSummary.ocr_processing && syncSummary.ocr_processing.total_files > 0 && (
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                      📷 OCR Processing Results
+                    </Typography>
+                    
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'primary.main', color: 'primary.contrastText' }}>
+                          <Typography variant="h4">{syncSummary.ocr_processing.total_files}</Typography>
+                          <Typography variant="body2">Total Files</Typography>
+                        </Paper>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'success.main', color: 'success.contrastText' }}>
+                          <Typography variant="h4">{syncSummary.ocr_processing.files_with_extracted_text}</Typography>
+                          <Typography variant="body2">Text Extracted</Typography>
+                        </Paper>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'info.main', color: 'info.contrastText' }}>
+                          <Typography variant="h4">{syncSummary.ocr_processing.image_files_processed}</Typography>
+                          <Typography variant="body2">Images</Typography>
+                        </Paper>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'secondary.main', color: 'secondary.contrastText' }}>
+                          <Typography variant="h4">{syncSummary.ocr_processing.document_files_processed}</Typography>
+                          <Typography variant="body2">Documents</Typography>
+                        </Paper>
+                      </Grid>
+                      {syncSummary.ocr_processing.total_extracted_characters > 0 && (
+                        <Grid item xs={12}>
+                          <Alert severity="info" sx={{ mt: 1 }}>
+                            <Typography variant="body2">
+                              <strong>Total text extracted:</strong> {syncSummary.ocr_processing.total_extracted_characters.toLocaleString()} characters
+                              {syncSummary.ocr_processing.files_with_ai_analysis > 0 && 
+                                ` • ${syncSummary.ocr_processing.files_with_ai_analysis} files enhanced with AI image analysis`
+                              }
+                            </Typography>
+                          </Alert>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </CardContent>
+                </Card>
+              )}
             </Box>
           )}
           
@@ -746,16 +1366,244 @@ const CanvasPage = () => {
   };
 
   // Render grading configuration screen
+  // Render rubric review screen
+  const renderRubricReviewScreen = () => (
+    <Card>
+      <CardContent>
+        <Typography variant="h5" gutterBottom>
+          📋 Review AI-Generated Rubric & Answer Key
+        </Typography>
+        
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2">
+            <strong>Review and approve the AI-generated rubric and answer key before proceeding with grading.</strong> 
+            These were created based on the assignment description and instructions from Canvas.
+          </Typography>
+        </Alert>
+
+        {/* Assignment Overview */}
+        {syncSummary?.assignment_details && (
+          <Card sx={{ mb: 3, bgcolor: 'primary.50' }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom sx={{ color: 'primary.main' }}>
+                📝 Assignment Analysis
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="body2"><strong>Assignment:</strong> {syncSummary.assignment_details.name}</Typography>
+                  <Typography variant="body2"><strong>Total Points:</strong> {syncSummary.assignment_details.points_possible}</Typography>
+                  <Typography variant="body2"><strong>Due Date:</strong> {formatDate(syncSummary.assignment_details.due_at)}</Typography>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="body2"><strong>Topics Identified:</strong> {syncSummary.assignment_analysis?.main_topics?.join(', ') || 'General'}</Typography>
+                  <Typography variant="body2"><strong>Question Types:</strong> {syncSummary.assignment_analysis?.question_types?.join(', ') || 'Mixed'}</Typography>
+                  <Typography variant="body2"><strong>Difficulty Level:</strong> {syncSummary.assignment_analysis?.difficulty_level || 'Medium'}</Typography>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+
+        <Grid container spacing={3}>
+          {/* Rubric Review */}
+          <Grid item xs={12} lg={7}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent>
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                  <Typography variant="h6" sx={{ color: 'success.main' }}>
+                    🎯 Generated Rubric
+                  </Typography>
+                  {reviewRubricData && (
+                    <Chip label={`${reviewRubricData.total_points} points`} color="primary" />
+                  )}
+                </Box>
+
+                {reviewRubricData ? (
+                  <Box>
+                    <Typography variant="body1" paragraph>
+                      <strong>Description:</strong> {reviewRubricData.description}
+                    </Typography>
+                    
+                    <Typography variant="subtitle1" gutterBottom>
+                      Grading Criteria ({reviewRubricData.sections?.length || 0} sections):
+                    </Typography>
+                    
+                    {reviewRubricData.sections?.map((section, index) => (
+                      <Accordion key={index} sx={{ mb: 1 }}>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Box display="flex" justifyContent="space-between" width="100%" mr={2}>
+                            <Typography variant="subtitle2" fontWeight="bold">
+                              {section.name}
+                            </Typography>
+                            <Chip label={`${section.max_points} pts`} size="small" />
+                          </Box>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          {section.criteria?.map((criterion, critIndex) => (
+                            <Box key={critIndex} sx={{ mb: 2 }}>
+                              <Typography variant="body2" fontWeight="bold" gutterBottom>
+                                {criterion.name} ({criterion.points} points)
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary" paragraph>
+                                {criterion.description}
+                              </Typography>
+                              
+                              {criterion.grading_scale && (
+                                <Grid container spacing={1}>
+                                  {criterion.grading_scale.map((level, levelIndex) => (
+                                    <Grid item xs={6} sm={3} key={levelIndex}>
+                                      <Paper 
+                                        sx={{ 
+                                          p: 1, 
+                                          bgcolor: level.level === 'Excellent' ? 'success.light' : 
+                                                  level.level === 'Good' ? 'info.light' :
+                                                  level.level === 'Satisfactory' ? 'warning.light' : 'error.light',
+                                          color: 'text.primary'
+                                        }}
+                                      >
+                                        <Typography variant="caption" fontWeight="bold" display="block">
+                                          {level.level} ({level.points} pts)
+                                        </Typography>
+                                        <Typography variant="caption">
+                                          {level.description}
+                                        </Typography>
+                                      </Paper>
+                                    </Grid>
+                                  ))}
+                                </Grid>
+                              )}
+                            </Box>
+                          ))}
+                        </AccordionDetails>
+                      </Accordion>
+                    ))}
+                    
+                    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <Checkbox 
+                        checked={rubricApproved}
+                        onChange={(e) => setRubricApproved(e.target.checked)}
+                        color="success"
+                      />
+                      <Typography variant="body2">
+                        I approve this rubric for grading
+                      </Typography>
+                    </Box>
+                  </Box>
+                ) : (
+                  <Alert severity="warning">
+                    Rubric data is being loaded...
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Answer Key Review */}
+          <Grid item xs={12} lg={5}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom sx={{ color: 'info.main' }}>
+                  📚 Generated Answer Key
+                </Typography>
+
+                {reviewAnswerKey ? (
+                  <Box>
+                    <Paper sx={{ p: 2, bgcolor: 'grey.50', maxHeight: 400, overflow: 'auto' }}>
+                      <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
+                        {reviewAnswerKey}
+                      </Typography>
+                    </Paper>
+                    
+                    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <Checkbox 
+                        checked={answerKeyApproved}
+                        onChange={(e) => setAnswerKeyApproved(e.target.checked)}
+                        color="success"
+                      />
+                      <Typography variant="body2">
+                        I approve this answer key for grading reference
+                      </Typography>
+                    </Box>
+                  </Box>
+                ) : (
+                  <Alert severity="info">
+                    No answer key was generated for this assignment. The rubric will be used as the primary grading guide.
+                    <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <Checkbox 
+                        checked={answerKeyApproved}
+                        onChange={(e) => setAnswerKeyApproved(e.target.checked)}
+                        color="success"
+                      />
+                      <Typography variant="body2">
+                        Proceed without answer key
+                      </Typography>
+                    </Box>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+
+        {/* Action Buttons */}
+        <Box sx={{ mt: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Button 
+            variant="outlined" 
+            onClick={() => {
+              setCurrentStep(2);
+              setActiveView('sync');
+            }}
+          >
+            ← Back to Sync
+          </Button>
+          
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="outlined"
+              startIcon={<EditIcon />}
+              onClick={() => reviewRubricData && openEditRubricDialog(reviewRubricData)}
+              disabled={!reviewRubricData}
+            >
+              Edit Rubric Manually
+            </Button>
+            
+            <Button
+              variant="contained"
+              size="large"
+              onClick={() => {
+                if (rubricApproved && (answerKeyApproved || !reviewAnswerKey)) {
+                  setCurrentStep(4);
+                  setActiveView('select');
+                } else {
+                  alert('Please approve both the rubric and answer key (or confirm proceeding without answer key) before continuing.');
+                }
+              }}
+              disabled={!rubricApproved || (!answerKeyApproved && reviewAnswerKey)}
+              sx={{
+                bgcolor: (rubricApproved && (answerKeyApproved || !reviewAnswerKey)) ? 'success.main' : 'grey.400',
+                '&:hover': {
+                  bgcolor: (rubricApproved && (answerKeyApproved || !reviewAnswerKey)) ? 'success.dark' : 'grey.500'
+                }
+              }}
+            >
+              ✅ Approve & Continue to Selection
+            </Button>
+          </Box>
+        </Box>
+      </CardContent>
+    </Card>
+  );
+
   const renderGradingScreen = () => (
     <Card>
       <CardContent>
         <Typography variant="h5" gutterBottom>
-          Grade Selected Submissions
+          🚀 Ready to Grade Submissions
         </Typography>
         
         <Box sx={{ mb: 3 }}>
-          <Alert severity="info">
-            You have selected {selectedSubmissions.size} submissions for grading.
+          <Alert severity="success">
+            ✅ Selected {selectedSubmissions.size} submissions ready for AI grading with assignment-specific analysis.
           </Alert>
         </Box>
         
@@ -798,36 +1646,102 @@ const CanvasPage = () => {
           </Grid>
         </Paper>
         
+        {/* Assignment Analysis Summary */}
+        {syncSummary && syncSummary.assignment_analysis && (
+          <Card sx={{ mb: 3, bgcolor: 'primary.50' }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
+                🎯 Assignment-Specific Grading Setup
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    <strong>Questions Identified:</strong> {syncSummary.assignment_analysis.questions_found}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    <strong>Difficulty Level:</strong> {syncSummary.assignment_analysis.difficulty_level || 'Medium'}
+                  </Typography>
+                  {syncSummary.assignment_analysis.main_topics && syncSummary.assignment_analysis.main_topics.length > 0 && (
+                    <Box sx={{ mb: 1 }}>
+                      <Typography variant="body2" sx={{ mb: 0.5 }}><strong>Topics:</strong></Typography>
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {syncSummary.assignment_analysis.main_topics.slice(0, 3).map((topic, index) => (
+                          <Chip key={index} label={topic} size="small" variant="outlined" />
+                        ))}
+                        {syncSummary.assignment_analysis.main_topics.length > 3 && (
+                          <Chip label={`+${syncSummary.assignment_analysis.main_topics.length - 3} more`} size="small" variant="outlined" />
+                        )}
+                      </Box>
+                    </Box>
+                  )}
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {syncSummary.assignment_analysis.has_generated_rubric && (
+                      <Chip icon={<CheckCircleIcon />} label="✨ Custom Rubric Auto-Generated" color="success" />
+                    )}
+                    {syncSummary.assignment_analysis.has_answer_key && (
+                      <Chip icon={<CheckCircleIcon />} label="📝 Answer Key Created" color="success" />
+                    )}
+                    {syncSummary.assignment_analysis.has_test_cases && (
+                      <Chip icon={<CheckCircleIcon />} label="🧪 Test Cases Generated" color="success" />
+                    )}
+                    {syncSummary.ocr_processing && syncSummary.ocr_processing.files_with_extracted_text > 0 && (
+                      <Chip icon={<CheckCircleIcon />} label={`🔍 OCR: ${syncSummary.ocr_processing.files_with_extracted_text} files processed`} color="info" />
+                    )}
+                  </Box>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        )}
+        
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
-            <FormControl fullWidth>
-              <InputLabel>Rubric</InputLabel>
-              <Select
-                value={selectedRubric}
-                label="Rubric"
-                onChange={(e) => setSelectedRubric(e.target.value)}
-              >
-                <MenuItem value="">
-                  <em>Default Rubric (Technical Accuracy + Analysis)</em>
-                </MenuItem>
-                {rubrics.map((rubric) => (
-                  <MenuItem key={rubric.id} value={rubric.id}>
-                    {rubric.name} ({rubric.total_points} points)
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>
-                Select a custom rubric or use the default
+            <Card sx={{ bgcolor: 'success.50' }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom sx={{ color: 'success.main', display: 'flex', alignItems: 'center' }}>
+                  📋 Grading Rubric
+                </Typography>
+                {syncSummary?.assignment_analysis?.has_generated_rubric ? (
+                  <>
+                    <Alert severity="success" sx={{ mb: 2 }}>
+                      🤖 AI has generated a custom rubric tailored to this assignment's specific requirements and content.
+                    </Alert>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      The rubric includes criteria for: {syncSummary.assignment_analysis.main_topics?.slice(0, 2).join(', ')}
+                      {syncSummary.assignment_analysis.main_topics?.length > 2 && ` and ${syncSummary.assignment_analysis.main_topics.length - 2} more topics`}
+                    </Typography>
+                  </>
+                ) : (
+                  <>
+                    <Alert severity="info" sx={{ mb: 2 }}>
+                      📏 Using comprehensive default rubric covering technical accuracy, completeness, and analysis quality.
+                    </Alert>
+                  </>
+                )}
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handlePreviewRubric}
+                    disabled={loadingRubric}
+                    startIcon={loadingRubric ? <CircularProgress size={16} /> : null}
+                  >
+                    👁️ Preview Rubric
+                  </Button>
                 <Button
+                    variant="outlined"
+                    size="small"
                   component={Link}
                   href="/rubric"
-                  size="small"
-                  sx={{ ml: 1 }}
+                    target="_blank"
                 >
-                  Create New
+                    ✏️ Edit/Create Rubric
                 </Button>
-              </FormHelperText>
-            </FormControl>
+                </Box>
+              </CardContent>
+            </Card>
           </Grid>
           
           <Grid item xs={12} md={6}>
@@ -853,7 +1767,7 @@ const CanvasPage = () => {
           <Button 
             variant="outlined" 
             onClick={() => {
-              setCurrentStep(3);
+                setCurrentStep(4);
               setActiveView('select');
             }}
           >
@@ -1017,11 +1931,21 @@ const CanvasPage = () => {
           variant="contained" 
                 color="primary"
                 onClick={() => {
-                  alert('Post grades to Canvas functionality can be implemented here');
+                  handlePostGrades();
                 }}
               >
                 Post Grades to Canvas
         </Button>
+        <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<SaveIcon />}
+              onClick={async () => {
+                handleSaveResults();
+              }}
+            >
+              Save Results
+            </Button>
             </Box>
           </Box>
       </CardContent>
@@ -1029,8 +1953,8 @@ const CanvasPage = () => {
   );
   };
 
-  // Step labels
-  const steps = ['Connect', 'Select Course', 'Sync', 'Select', 'Grade', 'Results'];
+  // Step labels for enhanced workflow
+  const steps = ['🔑 Connect', '📚 Course', '🔄 Sync', '📋 Review Rubric', '👥 Select', '🚀 Grade', '📊 Results'];
 
   return (
     <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
@@ -1040,8 +1964,14 @@ const CanvasPage = () => {
           <CanvasPageDocumentation />
           
       <Typography variant="h4" gutterBottom>
-          Canvas Grading System
+          🎯 Canvas AI Grading System
       </Typography>
+      
+      <Alert severity="info" sx={{ mb: 3 }}>
+        <Typography variant="body2">
+          <strong>Enhanced AI Workflow:</strong> Connect Canvas API → Select Course & Assignment → Auto-sync with OCR → Review AI-generated rubric & answer key → Grade submissions with approved rubric
+        </Typography>
+      </Alert>
       
         {/* Progress Stepper */}
         <Paper sx={{ p: 3, mb: 3 }}>
@@ -1065,57 +1995,653 @@ const CanvasPage = () => {
         {activeView === 'connect' && renderConnectScreen()}
         {activeView === 'select-course' && renderCourseSelectionScreen()}
         {activeView === 'sync' && renderSyncScreen()}
+        {activeView === 'review-rubric' && renderRubricReviewScreen()}
         {activeView === 'select' && renderSelectionScreen()}
         {activeView === 'grade' && renderGradingScreen()}
         {activeView === 'results' && renderResultsScreen()}
         
-        {/* Results Detail Dialog */}
+        {/* Enhanced Results Detail Dialog with Rubric Breakdown and Submission Content */}
         <Dialog
           open={resultsDialogOpen}
           onClose={() => setResultsDialogOpen(false)}
-          maxWidth="md"
+          maxWidth="lg"
           fullWidth
+          PaperProps={{ sx: { height: '90vh' } }}
         >
           <DialogTitle>
-            Grading Details - {selectedResult?.user_name}
+            <Box display="flex" alignItems="center" gap={2}>
+              <GradeIcon />
+              Detailed Grading Results - {selectedResult?.user_name}
+              <Chip 
+                label={selectedResult?.status} 
+                color={selectedResult?.status === 'graded' ? 'success' : 'error'} 
+                size="small" 
+              />
+            </Box>
           </DialogTitle>
-          <DialogContent sx={{ overflowY: 'auto' }}>
+          <DialogContent dividers sx={{ overflowY: 'auto' }}>
             {selectedResult && (
               <Box>
-                <Typography variant="h6" gutterBottom>
-                  Grade: {selectedResult.grade}% ({selectedResult.grade}/100)
-                </Typography>
-                
-                <Typography variant="subtitle1" gutterBottom>
-                  Status: {selectedResult.status}
-                </Typography>
-                
-                <Typography variant="subtitle1" gutterBottom>
-                  Files Processed: {selectedResult.files_processed || 0}
-                </Typography>
-                
-                {selectedResult.rubric_used && (
-                  <Typography variant="subtitle1" gutterBottom>
-                    Rubric Used: {selectedResult.rubric_used}
-                  </Typography>
+                {/* Overall Grade Summary */}
+                <Paper sx={{ p: 3, mb: 3, bgcolor: 'primary.light', color: 'primary.contrastText' }}>
+                  <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} sm={3}>
+                      <Typography variant="h4" fontWeight="bold">
+                        {selectedResult.percentage_display || `${selectedResult.percentage}%`}
+                      </Typography>
+                      <Typography variant="body2">Final Grade</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <Typography variant="h6">
+                        {selectedResult.score_display || `${selectedResult.raw_score}/${selectedResult.total_points}`}
+                      </Typography>
+                      <Typography variant="body2">Points Earned</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <Typography variant="body1">
+                        {selectedResult.files_processed || 0} files
+                      </Typography>
+                      <Typography variant="body2">Files Processed</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={3}>
+                      <Typography variant="body1">
+                        {selectedResult.rubric_used || 'Default'}
+                      </Typography>
+                      <Typography variant="body2">Rubric Used</Typography>
+                    </Grid>
+                  </Grid>
+                </Paper>
+
+                {/* Rubric Breakdown - Only show if available */}
+                {selectedResult.rubric_breakdown && selectedResult.rubric_breakdown.length > 0 && (
+                  <>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                      📋 Rubric-Based Score Breakdown
+                    </Typography>
+                    <TableContainer component={Paper} sx={{ mb: 3 }}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell><strong>Criterion</strong></TableCell>
+                            <TableCell align="center"><strong>Points Earned</strong></TableCell>
+                            <TableCell align="center"><strong>Max Points</strong></TableCell>
+                            <TableCell align="center"><strong>Percentage</strong></TableCell>
+                            <TableCell><strong>Feedback</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {selectedResult.rubric_breakdown.map((criterion, index) => (
+                            <TableRow key={index}>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight="bold">
+                                  {criterion.criterion_name}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Typography 
+                                  variant="body1" 
+                                  color={criterion.points_awarded > 0 ? 'success.main' : 'error.main'}
+                                  fontWeight="bold"
+                                >
+                                  {criterion.points_awarded}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Typography variant="body1">
+                                  {criterion.max_points}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Typography 
+                                  variant="body1"
+                                  color={criterion.percentage >= 80 ? 'success.main' : 
+                                         criterion.percentage >= 60 ? 'warning.main' : 'error.main'}
+                                >
+                                  {criterion.percentage?.toFixed(1)}%
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {criterion.feedback}
+                                </Typography>
+                                {criterion.evidence_found && criterion.evidence_found !== 'None identified' && (
+                                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                    <strong>Evidence:</strong> {criterion.evidence_found}
+                                  </Typography>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </>
                 )}
-                
-                <Divider sx={{ my: 2 }} />
-                
-                <Typography variant="h6" gutterBottom>
-                  Feedback:
+
+                {/* Overall Feedback */}
+                <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                  💬 Overall Feedback
                 </Typography>
-                <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
+                <Paper sx={{ p: 2, bgcolor: 'grey.50', mb: 3 }}>
                   <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
                     {selectedResult.feedback || 'No feedback available'}
                   </Typography>
                 </Paper>
+
+                {/* Submission Content Review */}
+                {selectedResult.submission_content && (
+                  <>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                      📄 Submission Content Review
+                    </Typography>
+                    <Paper sx={{ p: 2, bgcolor: 'info.light', mb: 3, maxHeight: '300px', overflow: 'auto' }}>
+                      <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
+                        {selectedResult.submission_content}
+                      </Typography>
+                    </Paper>
+                  </>
+                )}
+
+                {/* Individual Files */}
+                {selectedResult.submission_files && selectedResult.submission_files.length > 0 && (
+                  <>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+                      📁 Individual Files ({selectedResult.submission_files.length})
+                    </Typography>
+                    {selectedResult.submission_files.map((file, index) => (
+                      <Accordion key={index} sx={{ mb: 1 }}>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Typography variant="subtitle2">
+                            📎 {file.name}
+                          </Typography>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
+                            <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
+                              {file.preview}
+                            </Typography>
+                          </Paper>
+                        </AccordionDetails>
+                      </Accordion>
+                    ))}
+                  </>
+                )}
+
+                {/* Error or Status Information */}
+                {selectedResult.status !== 'graded' && (
+                  <Alert severity="warning" sx={{ mt: 2 }}>
+                    <Typography variant="body2">
+                      <strong>Status:</strong> {selectedResult.status}
+                      {selectedResult.status === 'no_files' && ' - No files were submitted by this student.'}
+                      {selectedResult.status === 'no_readable_content' && ' - Files were submitted but no readable content could be extracted.'}
+                      {selectedResult.status === 'error' && ' - An error occurred during grading.'}
+                    </Typography>
+                  </Alert>
+                )}
               </Box>
             )}
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setResultsDialogOpen(false)}>
               Close
+            </Button>
+            <Button 
+              variant="outlined"
+              startIcon={<FileDownloadIcon />}
+              onClick={() => {
+                if (selectedResult) {
+                  const resultJson = JSON.stringify(selectedResult, null, 2);
+                  const blob = new Blob([resultJson], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `detailed_result_${selectedResult.user_name}_${selectedResult.user_id}.json`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
+              }}
+            >
+              Export Details
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Rubric Preview Modal */}
+        <Dialog
+          open={rubricPreviewOpen}
+          onClose={() => setRubricPreviewOpen(false)}
+          maxWidth="lg"
+          fullWidth
+          PaperProps={{ sx: { height: '90vh' } }}
+        >
+          <DialogTitle>
+            <Box display="flex" alignItems="center" gap={2}>
+              <VisibilityIcon />
+              {previewRubricData?.name || 'Grading Rubric Preview'}
+              {previewRubricData?.total_points && (
+                <Chip label={`${previewRubricData.total_points} points`} color="primary" />
+              )}
+              {syncSummary?.assignment_analysis?.has_generated_rubric && (
+                <Chip label="✨ AI Generated" color="success" size="small" />
+              )}
+            </Box>
+          </DialogTitle>
+          <DialogContent dividers sx={{ overflowY: 'auto' }}>
+            {previewRubricData && (
+              <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom>Description</Typography>
+                  <Typography paragraph>{previewRubricData.description}</Typography>
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Typography variant="h6" gutterBottom>
+                    Grading Criteria ({previewRubricData.sections?.length || 0} sections)
+                  </Typography>
+                  
+                  {previewRubricData.sections?.map((section, sectionIndex) => (
+                    <Accordion key={sectionIndex} defaultExpanded>
+                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                        <Box display="flex" alignItems="center" gap={2} width="100%">
+                          <Typography variant="subtitle1" fontWeight="bold">
+                            {section.name}
+                          </Typography>
+                          <Chip label={`${section.max_points} pts`} size="small" />
+                        </Box>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        {section.criteria?.map((criterion, criterionIndex) => (
+                          <Box key={criterionIndex} sx={{ mb: 3 }}>
+                            <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
+                              {criterion.name} ({criterion.points} points)
+                            </Typography>
+                            <Typography paragraph color="text.secondary">
+                              {criterion.description}
+                            </Typography>
+                            
+                            {criterion.grading_scale && criterion.grading_scale.length > 0 && (
+                              <>
+                                <Typography variant="body2" fontWeight="bold" gutterBottom>
+                                  Performance Levels:
+                                </Typography>
+                                <Grid container spacing={1}>
+                                  {criterion.grading_scale.map((level, levelIndex) => (
+                                    <Grid item xs={12} sm={6} md={3} key={levelIndex}>
+                                      <Paper 
+                                        sx={{ 
+                                          p: 2, 
+                                          bgcolor: level.level === 'Excellent' ? 'success.light' : 
+                                                  level.level === 'Good' ? 'info.light' :
+                                                  level.level === 'Satisfactory' ? 'warning.light' : 'error.light',
+                                          color: level.level === 'Excellent' ? 'success.contrastText' : 
+                                                 level.level === 'Good' ? 'info.contrastText' :
+                                                 level.level === 'Satisfactory' ? 'warning.contrastText' : 'error.contrastText'
+                                        }}
+                                      >
+                                        <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                                          <Typography variant="body2" fontWeight="bold">
+                                            {level.level}
+                                          </Typography>
+                                          <Typography variant="body2" fontWeight="bold">
+                                            {level.points} pts
+                                          </Typography>
+                                        </Box>
+                                        <Typography variant="caption">
+                                          {level.description}
+                                        </Typography>
+                                      </Paper>
+                                    </Grid>
+                                  ))}
+                                </Grid>
+                              </>
+                            )}
+                          </Box>
+                        ))}
+                      </AccordionDetails>
+                    </Accordion>
+                  ))}
+                </Grid>
+                
+                <Grid item xs={12}>
+                  <Paper sx={{ p: 2, bgcolor: 'info.light', color: 'info.contrastText' }}>
+                    <Typography variant="body2">
+                      <strong>Assignment:</strong> {syncSummary?.assignment_details?.name || 'N/A'} | 
+                      <strong> Total Points:</strong> {previewRubricData.total_points} |
+                      <strong> Topics Covered:</strong> {syncSummary?.assignment_analysis?.main_topics?.join(', ') || 'General'}
+                      {syncSummary?.assignment_analysis?.has_generated_rubric && (
+                        <><br/><strong>✨ This rubric was automatically generated by AI based on the assignment content and requirements.</strong></>
+                      )}
+                    </Typography>
+                  </Paper>
+                </Grid>
+              </Grid>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setRubricPreviewOpen(false)}>Close</Button>
+            <Button
+              variant="outlined"
+              startIcon={<EditIcon />}
+              onClick={() => {
+                setRubricPreviewOpen(false);
+                previewRubricData && openEditRubricDialog(previewRubricData);
+              }}
+              disabled={!previewRubricData}
+            >
+              Edit Rubric
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => {
+                setRubricPreviewOpen(false);
+                // Proceed to grading with this rubric
+                handleGradeSubmissions();
+              }}
+              disabled={selectedSubmissions.size === 0}
+            >
+              Use This Rubric for Grading
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Edit Rubric Dialog */}
+        <Dialog
+          open={editRubricDialogOpen}
+          onClose={closeEditRubricDialog}
+          maxWidth="lg"
+          fullWidth
+          PaperProps={{ sx: { height: '90vh' } }}
+        >
+          <DialogTitle>
+            <Box display="flex" alignItems="center" gap={2}>
+              <EditIcon />
+              Edit Rubric - {editingRubricData?.name || 'Canvas Assignment Rubric'}
+              <Chip label={`${calculateTotalPoints() || 0} points`} color="primary" />
+            </Box>
+          </DialogTitle>
+          <DialogContent dividers sx={{ overflowY: 'auto' }}>
+            {editingRubricData && (
+              <Box>
+                <Tabs value={editRubricTab} onChange={(e, newValue) => setEditRubricTab(newValue)}>
+                  <Tab label="Basic Info" />
+                  <Tab label="Criteria" />
+                  <Tab label="Preview" />
+                </Tabs>
+
+                {/* Tab 1: Basic Info */}
+                {editRubricTab === 0 && (
+                  <Box sx={{ p: 3 }}>
+                    <Grid container spacing={3}>
+                      <Grid item xs={12}>
+                        <TextField
+                          label="Rubric Name"
+                          fullWidth
+                          value={editingRubricData.name}
+                          onChange={(e) => setEditingRubricData(prev => ({ ...prev, name: e.target.value }))}
+                          margin="normal"
+                        />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <TextField
+                          label="Description"
+                          fullWidth
+                          multiline
+                          rows={4}
+                          value={editingRubricData.description}
+                          onChange={(e) => setEditingRubricData(prev => ({ ...prev, description: e.target.value }))}
+                          margin="normal"
+                        />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Typography gutterBottom>Grading Strictness</Typography>
+                        <Slider
+                          value={editingRubricData.strictness || 0.5}
+                          onChange={(e, value) => setEditingRubricData(prev => ({ ...prev, strictness: value }))}
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          marks={[
+                            { value: 0, label: 'Lenient' },
+                            { value: 0.5, label: 'Balanced' },
+                            { value: 1, label: 'Strict' }
+                          ]}
+                        />
+                      </Grid>
+                    </Grid>
+                  </Box>
+                )}
+
+                {/* Tab 2: Criteria */}
+                {editRubricTab === 1 && (
+                  <Box sx={{ p: 3 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+                      <Typography variant="h6">
+                        Rubric Sections ({editingRubricData.sections?.length || 0})
+                      </Typography>
+                    </Box>
+
+                    {editingRubricData.sections?.map((section, sectionIndex) => (
+                      <Accordion key={sectionIndex} sx={{ mb: 2 }} defaultExpanded>
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                          <Box display="flex" alignItems="center" gap={2} width="100%">
+                            <Typography variant="subtitle1" fontWeight="bold">
+                              {section.name || `Section ${sectionIndex + 1}`}
+                            </Typography>
+                            <Chip label={`${section.max_points || 0} pts`} size="small" />
+                          </Box>
+                        </AccordionSummary>
+                        <AccordionDetails>
+                          <Grid container spacing={2}>
+                            <Grid item xs={12} md={6}>
+                              <TextField
+                                label="Section Name"
+                                fullWidth
+                                value={section.name}
+                                onChange={(e) => {
+                                  const newSections = [...editingRubricData.sections];
+                                  newSections[sectionIndex].name = e.target.value;
+                                  setEditingRubricData(prev => ({ ...prev, sections: newSections }));
+                                }}
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                              <TextField
+                                label="Max Points"
+                                type="number"
+                                fullWidth
+                                value={section.max_points || 0}
+                                onChange={(e) => {
+                                  const newSections = [...editingRubricData.sections];
+                                  newSections[sectionIndex].max_points = parseInt(e.target.value) || 0;
+                                  setEditingRubricData(prev => ({ ...prev, sections: newSections }));
+                                }}
+                              />
+                            </Grid>
+
+                            <Grid item xs={12}>
+                              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                                <Typography variant="subtitle2">
+                                  Criteria ({section.criteria?.length || 0})
+                                </Typography>
+                                <Button
+                                  size="small"
+                                  startIcon={<AddCircleOutlineIcon />}
+                                  onClick={() => addCriterionToSection(sectionIndex)}
+                                >
+                                  Add Criterion
+                                </Button>
+                              </Box>
+
+                              {section.criteria?.map((criterion, criterionIndex) => (
+                                <Accordion key={criterionIndex} sx={{ mb: 1 }}>
+                                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                    <Box display="flex" alignItems="center" gap={2} width="100%">
+                                      <Typography variant="body2" fontWeight="bold">
+                                        {criterion.name || `Criterion ${criterionIndex + 1}`}
+                                      </Typography>
+                                      <Chip label={`${criterion.points || 0} pts`} size="small" />
+                                      <Box flexGrow={1} />
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          removeCriterionFromSection(sectionIndex, criterionIndex);
+                                        }}
+                                      >
+                                        <RemoveCircleOutlineIcon />
+                                      </IconButton>
+                                    </Box>
+                                  </AccordionSummary>
+                                  <AccordionDetails>
+                                    <Grid container spacing={2}>
+                                      <Grid item xs={12} md={6}>
+                                        <TextField
+                                          label="Criterion Name"
+                                          fullWidth
+                                          size="small"
+                                          value={criterion.name}
+                                          onChange={(e) => updateCriterion(sectionIndex, criterionIndex, 'name', e.target.value)}
+                                        />
+                                      </Grid>
+                                      <Grid item xs={12} md={6}>
+                                        <TextField
+                                          label="Points"
+                                          type="number"
+                                          fullWidth
+                                          size="small"
+                                          value={criterion.points}
+                                          onChange={(e) => updateCriterion(sectionIndex, criterionIndex, 'points', parseInt(e.target.value) || 0)}
+                                        />
+                                      </Grid>
+                                      <Grid item xs={12}>
+                                        <TextField
+                                          label="Description"
+                                          fullWidth
+                                          multiline
+                                          rows={2}
+                                          size="small"
+                                          value={criterion.description}
+                                          onChange={(e) => updateCriterion(sectionIndex, criterionIndex, 'description', e.target.value)}
+                                        />
+                                      </Grid>
+
+                                      <Grid item xs={12}>
+                                        <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                                          <Typography variant="body2">Grading Levels</Typography>
+                                          <Button
+                                            size="small"
+                                            onClick={() => addGradingLevel(sectionIndex, criterionIndex)}
+                                          >
+                                            Add Level
+                                          </Button>
+                                        </Box>
+
+                                        {criterion.grading_scale?.map((level, levelIndex) => (
+                                          <Grid container spacing={1} key={levelIndex} sx={{ mb: 1 }}>
+                                            <Grid item xs={3}>
+                                              <TextField
+                                                label="Level"
+                                                size="small"
+                                                fullWidth
+                                                value={level.level}
+                                                onChange={(e) => updateGradingLevel(sectionIndex, criterionIndex, levelIndex, 'level', e.target.value)}
+                                              />
+                                            </Grid>
+                                            <Grid item xs={2}>
+                                              <TextField
+                                                label="Points"
+                                                type="number"
+                                                size="small"
+                                                fullWidth
+                                                value={level.points}
+                                                onChange={(e) => updateGradingLevel(sectionIndex, criterionIndex, levelIndex, 'points', parseInt(e.target.value) || 0)}
+                                              />
+                                            </Grid>
+                                            <Grid item xs={6}>
+                                              <TextField
+                                                label="Description"
+                                                size="small"
+                                                fullWidth
+                                                value={level.description}
+                                                onChange={(e) => updateGradingLevel(sectionIndex, criterionIndex, levelIndex, 'description', e.target.value)}
+                                              />
+                                            </Grid>
+                                            <Grid item xs={1}>
+                                              <IconButton
+                                                size="small"
+                                                color="error"
+                                                onClick={() => removeGradingLevel(sectionIndex, criterionIndex, levelIndex)}
+                                              >
+                                                <DeleteIcon />
+                                              </IconButton>
+                                            </Grid>
+                                          </Grid>
+                                        ))}
+                                      </Grid>
+                                    </Grid>
+                                  </AccordionDetails>
+                                </Accordion>
+                              ))}
+                            </Grid>
+                          </Grid>
+                        </AccordionDetails>
+                      </Accordion>
+                    ))}
+
+                    {(!editingRubricData.sections || editingRubricData.sections.length === 0) && (
+                      <Paper sx={{ p: 4, textAlign: 'center' }}>
+                        <Typography variant="h6" gutterBottom>No sections available</Typography>
+                        <Typography color="text.secondary" paragraph>
+                          This rubric doesn't have editable sections yet.
+                        </Typography>
+                      </Paper>
+                    )}
+                  </Box>
+                )}
+
+                {/* Tab 3: Preview */}
+                {editRubricTab === 2 && (
+                  <Box sx={{ p: 3 }}>
+                    <Grid container spacing={3}>
+                      <Grid item xs={12} md={6}>
+                        <Paper sx={{ p: 3 }}>
+                          <Typography variant="h6" gutterBottom>Rubric Summary</Typography>
+                          <Typography><strong>Name:</strong> {editingRubricData.name}</Typography>
+                          <Typography><strong>Total Points:</strong> {calculateTotalPoints()}</Typography>
+                          <Typography><strong>Sections Count:</strong> {editingRubricData.sections?.length || 0}</Typography>
+                          <Typography><strong>Strictness:</strong> {Math.round((editingRubricData.strictness || 0.5) * 100)}%</Typography>
+                        </Paper>
+                      </Grid>
+                      
+                      <Grid item xs={12} md={6}>
+                        <Paper sx={{ p: 3 }}>
+                          <Typography variant="h6" gutterBottom>Point Distribution</Typography>
+                          {editingRubricData.sections?.map((section, index) => (
+                            <Box key={index} display="flex" justifyContent="space-between" mb={1}>
+                              <Typography variant="body2">{section.name}</Typography>
+                              <Typography variant="body2" fontWeight="bold">{section.max_points || 0} pts</Typography>
+                            </Box>
+                          ))}
+                        </Paper>
+                      </Grid>
+                    </Grid>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeEditRubricDialog} startIcon={<CancelIcon />}>
+              Cancel
+            </Button>
+            <Button 
+              variant="contained" 
+              onClick={saveEditedRubric}
+              startIcon={<SaveIcon />}
+              disabled={savingRubric}
+            >
+              {savingRubric ? 'Saving...' : 'Save Changes'}
             </Button>
           </DialogActions>
         </Dialog>

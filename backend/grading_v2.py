@@ -224,11 +224,14 @@ class GradingService:
                 
                 response_data["criteria_scores"] = criteria_scores
             
+            # Get the actual total points from the rubric
+            actual_total_points = rubric_obj.total_points if hasattr(rubric_obj, 'total_points') else 100
+            
             # Format the result
             result = GradingResult(
                 student_name=student_name,
                 score=float(response_data.get("score", 0)),
-                max_score=float(response_data.get("total", 100)),
+                max_score=float(response_data.get("total", actual_total_points)),
                 feedback=response_data.get("grading_feedback", ""),
                 criteria_scores=response_data.get("criteria_scores", []),
                 mistakes=[{"description": v} for k, v in response_data.get("mistakes", {}).items()]

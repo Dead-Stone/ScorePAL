@@ -34,17 +34,16 @@ class ChatMessage(BaseModel):
     content: str
 
 class ChatContext(BaseModel):
-    assignmentId: Optional[str] = None
-    submissionId: Optional[str] = None
     studentName: Optional[str] = None
+    assignmentName: Optional[str] = None
     questionText: Optional[str] = None
-    submissionText: Optional[str] = None
-    gradingFeedback: Optional[str] = None
+    rubric: Optional[Dict[str, Any]] = None
+    gradeData: Optional[Dict[str, Any]] = None
 
 class ChatRequest(BaseModel):
     message: str
     context: ChatContext
-    messageHistory: List[ChatMessage] = []
+    messageHistory: Optional[List[ChatMessage]] = None
 
 class ChatResponse(BaseModel):
     reply: str
@@ -102,130 +101,73 @@ async def chat(request: ChatRequest = Body(...)):
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
 
 async def generate_gemini_response(message: str, context: ChatContext, message_history: List[ChatMessage]) -> str:
-    """
-    Generate a response using the Gemini API.
-    
-    Args:
-        message: The user's message
-        context: Context information about the assignment and submission
-        message_history: Previous messages in the conversation
-        
-    Returns:
-        str: The AI's response
-    """
+    """Generate response using Gemini AI"""
     try:
-        # Configure the model
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        # Build context prompt
+        context_prompt = build_context_prompt(context, message_history)
         
-        # Format message history for Gemini
-        chat_history = []
-        for msg in message_history:
-            # Skip the first AI message (welcome message)
-            if msg.role == "assistant" and len(chat_history) == 0:
-                continue
-            chat_history.append({"role": msg.role, "parts": [msg.content]})
-        
-        # Create a chat session
-        chat = model.start_chat(history=chat_history)
-        
-        # Prepare system prompt with context information
-        system_prompt = f"""You are an AI teaching assistant grading a student's assignment.
+        # Create full prompt
+        full_prompt = f"""
+{context_prompt}
 
-CONTEXT INFORMATION:
-Student: {context.studentName if context.studentName else 'Unknown'}
-Assignment ID: {context.assignmentId if context.assignmentId else 'Unknown'}
-Submission ID: {context.submissionId if context.submissionId else 'Unknown'}
+Student Message: {message}
 
-Assignment Question:
-{context.questionText if context.questionText else 'Not available'}
-
-Student's Submission:
-{context.submissionText if context.submissionText else 'Not available'}
-
-Grading Feedback:
-{context.gradingFeedback if context.gradingFeedback else 'Not available'}
-
-INSTRUCTIONS:
-1. Provide helpful, educational guidance to the student about their work.
-2. If they ask about their grade, explain the feedback and how they could improve.
-3. Be encouraging but honest about areas for improvement.
-4. Keep responses concise, focused, and tailored to the specific assignment.
-5. Do not share specific grade percentages, only qualitative feedback.
-6. Your job is to help them understand the feedback and improve their understanding.
-7. Remember you graded the student's submission, so you know the feedback and the grade.
-Now, please respond to the student's message below.
+Please provide a helpful, educational response that addresses the student's question or concern. 
+Be encouraging and constructive in your feedback.
 """
         
-        # Add system prompt if this is a new conversation
-        if len(chat_history) == 0:
-            chat.send_message(system_prompt)
+        # Generate response using Gemini
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await model.generate_content_async(full_prompt)
         
-        # Send the user's message and get response
-        response = chat.send_message(message)
+        return response.text
         
-        # Extract the text response
-        response_text = response.text
-        
-        return response_text
     except Exception as e:
-        logger.error(f"Error generating Gemini response: {e}")
+        logger.error(f"Gemini response generation failed: {e}")
         raise
 
 def generate_rule_based_response(message: str, context: ChatContext) -> str:
-    """
-    Generate a rule-based response when the AI service is unavailable.
-    
-    Args:
-        message: The user's message
-        context: Context information about the assignment and submission
-        
-    Returns:
-        str: A rule-based response
-    """
+    """Generate rule-based response when AI is not available"""
     message_lower = message.lower()
     
-    # Extract student name for personalization
-    student_name = context.studentName if context.studentName else "there"
+    # Simple rule-based responses
+    if any(word in message_lower for word in ['help', 'confused', 'don\'t understand']):
+        return "I understand you're feeling confused. Let me help clarify this concept. Could you tell me more specifically what part you're struggling with?"
     
-    # Check for common message patterns
-    if any(word in message_lower for word in ["hello", "hi", "hey", "greetings"]):
-        return f"Hello {student_name}! How can I help you with your assignment today?"
+    elif any(word in message_lower for word in ['grade', 'score', 'points']):
+        return "I can see you're asking about grades. The grading is based on the rubric criteria we discussed. Would you like me to explain how your submission was evaluated?"
     
-    elif any(word in message_lower for word in ["thank", "thanks", "appreciate"]):
-        return f"You're welcome, {student_name}! Feel free to ask if you have any other questions."
+    elif any(word in message_lower for word in ['feedback', 'improve', 'better']):
+        return "Great question! To improve your work, focus on the specific feedback points mentioned in your grading. Practice those areas and you'll see improvement."
     
-    elif any(word in message_lower for word in ["bye", "goodbye"]):
-        return f"Goodbye, {student_name}! Good luck with your assignment."
-    
-    elif any(word in message_lower for word in ["grade", "score", "marks", "evaluation"]):
-        return (
-            f"Based on the rubric, your submission has several strengths and areas for improvement. "
-            f"The feedback indicates that you demonstrated good understanding of core concepts, "
-            f"but could improve in providing more detailed analysis and supporting evidence. "
-            f"Would you like specific suggestions on how to improve your work?"
-        )
-    
-    elif any(word in message_lower for word in ["improve", "better", "enhance", "strengthen"]):
-        return (
-            f"To improve your submission, I recommend: \n"
-            f"1) Adding more specific examples to support your arguments\n"
-            f"2) Connecting concepts more explicitly to the assignment question\n"
-            f"3) Strengthening your analysis by considering alternative perspectives\n"
-            f"4) Proofreading for clarity and grammatical accuracy\n"
-            f"Would you like more specific guidance on any of these areas?"
-        )
-    
-    elif any(word in message_lower for word in ["help", "assist", "guidance"]):
-        return (
-            f"I'm here to help you, {student_name}! I can explain the assignment feedback, "
-            f"suggest improvements, or answer questions about the concepts covered. "
-            f"What specific aspect would you like help with?"
-        )
+    elif any(word in message_lower for word in ['thanks', 'thank you', 'appreciate']):
+        return "You're very welcome! I'm here to help you succeed. Don't hesitate to ask if you have more questions."
     
     else:
-        return (
-            f"That's a good question. Based on your submission, I'd suggest focusing on "
-            f"strengthening your main arguments with more evidence and ensuring your "
-            f"conclusion directly addresses the initial question. Would you like me to "
-            f"elaborate on any specific part of the feedback?"
-        ) 
+        return "Thank you for your message. I'm here to help with any questions about your assignment, grading, or course material. What would you like to know more about?"
+
+def build_context_prompt(context: ChatContext, message_history: List[ChatMessage]) -> str:
+    """Build context prompt for AI responses"""
+    prompt_parts = []
+    
+    if context.studentName:
+        prompt_parts.append(f"Student: {context.studentName}")
+    
+    if context.assignmentName:
+        prompt_parts.append(f"Assignment: {context.assignmentName}")
+    
+    if context.questionText:
+        prompt_parts.append(f"Question: {context.questionText}")
+    
+    if context.rubric:
+        prompt_parts.append(f"Rubric: {json.dumps(context.rubric, indent=2)}")
+    
+    if context.gradeData:
+        prompt_parts.append(f"Grade Data: {json.dumps(context.gradeData, indent=2)}")
+    
+    if message_history:
+        prompt_parts.append("Previous conversation:")
+        for msg in message_history[-5:]:  # Last 5 messages for context
+            prompt_parts.append(f"{msg.role}: {msg.content}")
+    
+    return "\n".join(prompt_parts) if prompt_parts else "No specific context provided." 

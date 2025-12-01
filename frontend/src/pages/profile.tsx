@@ -18,6 +18,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '../components/ui/form';
 import { Badge } from '../components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '../components/ui/avatar';
+import { Tab, Tabs, Box } from '@mui/material';
+import AIProfileSettings from '../components/AIProfileSettings';
 import { 
   User, 
   Mail, 
@@ -31,7 +33,8 @@ import {
   Save,
   Loader2,
   Crown,
-  BookOpen
+  BookOpen,
+  Brain
 } from 'lucide-react';
 
 const profileSchema = z.object({
@@ -48,6 +51,7 @@ export default function ProfilePage() {
   const { user, userStats, updateProfile, logout } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [activeTab, setActiveTab] = useState('profile');
 
   const form = useForm<ProfileForm>({
     resolver: zodResolver(profileSchema),
@@ -222,13 +226,36 @@ export default function ProfilePage() {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Settings className="w-5 h-5 mr-2" />
-                  Profile Information
+                  Profile Settings
                 </CardTitle>
                 <CardDescription>
-                  Update your personal information and preferences
+                  Manage your personal information, AI configurations, and preferences
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <Tabs value={activeTab} onChange={(event, newValue) => setActiveTab(newValue)}>
+                  <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                    <Tab 
+                      value="profile" 
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <User className="w-4 h-4" />
+                          Profile
+                        </Box>
+                      } 
+                    />
+                    <Tab 
+                      value="ai-settings" 
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Brain className="w-4 h-4" />
+                          AI Models
+                        </Box>
+                      } 
+                    />
+                  </Box>
+                  
+                  {activeTab === "profile" && (
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                     {/* Name Fields */}
@@ -382,6 +409,12 @@ export default function ProfilePage() {
                     </div>
                   </form>
                 </Form>
+                  )}
+                  
+                  {activeTab === "ai-settings" && (
+                    <AIProfileSettings />
+                  )}
+                </Tabs>
               </CardContent>
             </Card>
           </div>

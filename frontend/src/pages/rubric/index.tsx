@@ -93,6 +93,45 @@ interface Rubric {
   updated_at: string;
 }
 
+const hasRubricShape = (data: unknown): data is Rubric => {
+  if (!data || typeof data !== 'object') return false;
+  const candidate = data as Record<string, any>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.name === 'string' &&
+    Array.isArray(candidate.criteria)
+  );
+};
+
+const extractRubric = (payload: unknown): Rubric | null => {
+  if (!payload) return null;
+  if (hasRubricShape(payload)) return payload;
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'rubric' in payload &&
+    hasRubricShape((payload as any).rubric)
+  ) {
+    return (payload as any).rubric as Rubric;
+  }
+  return null;
+};
+
+const extractRubricList = (payload: unknown): Rubric[] => {
+  if (Array.isArray(payload)) {
+    return payload.filter(hasRubricShape);
+  }
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'rubrics' in payload &&
+    Array.isArray((payload as any).rubrics)
+  ) {
+    return (payload as any).rubrics.filter(hasRubricShape);
+  }
+  return [];
+};
+
 // Styled components
 const StyledCard = styled(Card)(({ theme }) => ({
   height: '100%',
@@ -189,8 +228,10 @@ const RubricPage = () => {
     try {
       setLoading(true);
       const response = await axios.get('/rubrics');
-      if (response.data && response.data.rubrics) {
-        setRubrics(response.data.rubrics);
+      const data = extractRubricList(response.data);
+      setRubrics(data);
+      if (!data.length) {
+        showNotification('No rubrics found yet. Create or generate one to get started.', 'info');
       }
     } catch (err) {
       console.error('Error fetching rubrics:', err);
@@ -214,11 +255,14 @@ const RubricPage = () => {
       setGenerating(true);
       const response = await axios.post('/generate-rubric', generationParams);
       
-      if (response.data && response.data.status === 'success') {
-        setRubrics(prev => [...prev, response.data.rubric]);
+      const newRubric = extractRubric(response.data);
+      if (newRubric) {
+        setRubrics(prev => [...prev, newRubric]);
         setGenerateDialogOpen(false);
         setGenerationParams({ name: '', context: '', question: '' });
         showNotification('Rubric generated successfully!', 'success');
+      } else {
+        showNotification('Rubric generated but response format was unexpected.', 'warning');
       }
     } catch (err) {
       console.error('Error generating rubric:', err);
@@ -238,11 +282,14 @@ const RubricPage = () => {
       setSaving(true);
       const response = await axios.post('/rubrics', editFormData);
       
-      if (response.data && response.data.status === 'success') {
-        setRubrics(prev => [...prev, response.data.rubric]);
+      const createdRubric = extractRubric(response.data);
+      if (createdRubric) {
+        setRubrics(prev => [...prev, createdRubric]);
         setCreateDialogOpen(false);
         resetEditForm();
         showNotification('Rubric created successfully!', 'success');
+      } else {
+        showNotification('Rubric created but response format was unexpected.', 'warning');
       }
     } catch (err) {
       console.error('Error creating rubric:', err);
@@ -267,14 +314,17 @@ const RubricPage = () => {
       
       const response = await axios.put(`/rubrics/${selectedRubric.id}`, updateData);
       
-      if (response.data && response.data.status === 'success') {
+      const updatedRubric = extractRubric(response.data);
+      if (updatedRubric) {
         setRubrics(prev => prev.map(r => 
-          r.id === selectedRubric.id ? response.data.rubric : r
+          r.id === selectedRubric.id ? updatedRubric : r
         ));
         setEditDialogOpen(false);
         setSelectedRubric(null);
         resetEditForm();
         showNotification('Rubric updated successfully!', 'success');
+      } else {
+        showNotification('Rubric updated but response format was unexpected.', 'warning');
       }
     } catch (err) {
       console.error('Error updating rubric:', err);
@@ -291,9 +341,11 @@ const RubricPage = () => {
     
     try {
       const response = await axios.delete(`/rubrics/${id}`);
-      if (response.data && response.data.status === 'success') {
+      if (response.status === 200) {
         setRubrics(prev => prev.filter(rubric => rubric.id !== id));
         showNotification('Rubric deleted successfully', 'success');
+      } else {
+        showNotification(response.data?.message || 'Failed to delete rubric', 'error');
       }
     } catch (err) {
       console.error('Error deleting rubric:', err);

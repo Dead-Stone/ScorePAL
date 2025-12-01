@@ -17,8 +17,8 @@ celery==5.3.6
 redis==5.0.1
 
 # Data Processing - Lightweight versions for serverless
-numpy==1.24.3
-pandas==2.0.3
+numpy>=1.26.0
+pandas>=2.0.0
 pydantic==2.3.0
 pydantic-settings==2.0.3
 

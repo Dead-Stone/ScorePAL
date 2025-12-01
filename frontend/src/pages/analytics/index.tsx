@@ -78,6 +78,15 @@ const ChartWrapper: React.FC<ChartWrapperProps> = ({ children }) => {
 axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 
+// Add auth token to requests
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Types
 interface Assignment {
   id: string;
@@ -126,22 +135,72 @@ export default function AnalyticsDashboard() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [timeRange, setTimeRange] = useState('all');
   
-  // Generate mock data for the analytics
-  // In a real app, this would come from an API
+  // Fetch analytics data from MongoDB API
   useEffect(() => {
     const fetchAnalytics = async () => {
       try {
         setLoading(true);
         
-        // Fetch data from the Knowledge Graph API
-        let analyticsData;
+        // Try to fetch from new analytics API
+        let analyticsData = null;
         try {
-          const response = await axios.get('/knowledge-graph/analytics');
-          analyticsData = response.data;
-          console.log('Fetched Knowledge Graph analytics:', analyticsData);
+          // For now, we'll aggregate data from results
+          // In the future, we can add a general analytics endpoint
+          const resultsResponse = await axios.get('/api/results', { params: { limit: 1000 } });
+          if (resultsResponse.data && resultsResponse.data.results) {
+            const results = resultsResponse.data.results;
+            
+            // Calculate aggregate statistics
+            const uniqueAssignments = new Set(results.map((r: any) => r.assignment_id));
+            const totalSubmissions = results.length;
+            const averageScore = results.length > 0
+              ? results.reduce((sum: number, r: any) => sum + r.percentage, 0) / results.length
+              : 0;
+            
+            // Calculate pass rate
+            const passingCount = results.filter((r: any) => r.percentage >= 60).length;
+            const passRate = totalSubmissions > 0 ? passingCount / totalSubmissions : 0;
+            
+            // Grade distribution
+            const gradeDist: Record<string, number> = {};
+            results.forEach((r: any) => {
+              const grade = r.grade_letter || 'F';
+              gradeDist[grade] = (gradeDist[grade] || 0) + 1;
+            });
+            
+            // Score distribution (by ranges)
+            const scoreRanges = [
+              { range: '0-10%', min: 0, max: 10 },
+              { range: '11-20%', min: 11, max: 20 },
+              { range: '21-30%', min: 21, max: 30 },
+              { range: '31-40%', min: 31, max: 40 },
+              { range: '41-50%', min: 41, max: 50 },
+              { range: '51-60%', min: 51, max: 60 },
+              { range: '61-70%', min: 61, max: 70 },
+              { range: '71-80%', min: 71, max: 80 },
+              { range: '81-90%', min: 81, max: 90 },
+              { range: '91-100%', min: 91, max: 100 },
+            ];
+            
+            const scoreDistribution = scoreRanges.map(range => ({
+              range: range.range,
+              count: results.filter((r: any) => 
+                r.percentage >= range.min && r.percentage <= range.max
+              ).length
+            }));
+            
+            analyticsData = {
+              summary: {
+                total_assignments: uniqueAssignments.size,
+                total_submissions: totalSubmissions,
+                average_score: averageScore,
+                pass_rate: passRate,
+              },
+              score_distribution: scoreDistribution,
+            };
+          }
         } catch (apiError) {
-          console.warn('Failed to fetch from Knowledge Graph API, using mock data:', apiError);
-          // Fall back to mock data if API fails
+          console.warn('Failed to fetch from analytics API:', apiError);
           analyticsData = null;
         }
         
@@ -152,26 +211,10 @@ export default function AnalyticsDashboard() {
             total_submissions: analyticsData.summary.total_submissions,
             average_score: analyticsData.summary.average_score,
             pass_rate: analyticsData.summary.pass_rate,
-            assignments_over_time: analyticsData.recent_assignments.map((a: any, index: number) => {
-              // Extract month-year from created_at
-              const date = new Date(a.created_at);
-              return {
-                date: `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`,
-                count: 1 // Each assignment counts as 1
-              };
-            }),
-            score_distribution: analyticsData.score_distribution,
-            top_performing_assignments: analyticsData.top_concepts.map((c: any) => ({
-              name: c.name,
-              score: c.average_score
-            })),
-            common_mistakes: [
-              { name: 'Missing critical information', frequency: 42 },
-              { name: 'Incomplete solution', frequency: 38 },
-              { name: 'Code implementation errors', frequency: 31 },
-              { name: 'Misunderstanding the problem', frequency: 29 },
-              { name: 'Poor explanation', frequency: 25 },
-            ]
+            assignments_over_time: [], // Can be enhanced later
+            score_distribution: analyticsData.score_distribution || [],
+            top_performing_assignments: [], // Can be enhanced later
+            common_mistakes: [] // Can be enhanced later
           };
           
           setSummaryData(summaryData);

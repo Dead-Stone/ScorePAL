@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiEndpoints } from '../utils/api';
+import { API_BASE_URL } from '../config/api';
 
 const BackendStatus = () => {
   const [status, setStatus] = useState('checking...');
@@ -47,7 +48,7 @@ const BackendStatus = () => {
   };
 
   const getApiUrl = () => {
-    return 'http://localhost:8000';
+    return API_BASE_URL;
   };
 
   return (

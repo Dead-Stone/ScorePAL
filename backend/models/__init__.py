@@ -1,7 +1,25 @@
-"""
-ScorePAL models package for data classes and database models.
-"""
+# ScorePAL Models Package
 
-from models.rubric import Rubric, GradingCriteria
+from .assignment import Assignment, AssignmentCreate, AssignmentUpdate, AssignmentStatus
+from .submission import Submission, SubmissionCreate, SubmissionUpdate, SubmissionStatus
+from .grading_result import GradingResult, GradingResultCreate, GradingResultUpdate, CriterionScore
+from .analytics_cache import AnalyticsCache, ClassStats, RubricPerformance, StudentRanking
 
-__all__ = ["Rubric", "GradingCriteria"] 
+__all__ = [
+    "Assignment",
+    "AssignmentCreate",
+    "AssignmentUpdate",
+    "AssignmentStatus",
+    "Submission",
+    "SubmissionCreate",
+    "SubmissionUpdate",
+    "SubmissionStatus",
+    "GradingResult",
+    "GradingResultCreate",
+    "GradingResultUpdate",
+    "CriterionScore",
+    "AnalyticsCache",
+    "ClassStats",
+    "RubricPerformance",
+    "StudentRanking",
+] 

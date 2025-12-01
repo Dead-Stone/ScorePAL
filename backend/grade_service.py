@@ -157,7 +157,7 @@ def grade_submission(
                             response_data = json.loads(json_content)
                             result = {
                                 'score': float(response_data.get('score', 0)),
-                                'total': float(response_data.get('total', rubric.get("max_score", 100))),
+                                'total': float(response_data.get('total', rubric.get("total_points", 100))),
                                 'mistakes': response_data.get('mistakes', {}),
                                 'grading_feedback': response_data.get('grading_feedback', "No feedback provided."),
                                 'model_used': 'gemini'
@@ -173,7 +173,7 @@ def grade_submission(
                                 
                                 result = {
                                     'score': float(response_data.get('score', 0)),
-                                    'total': float(response_data.get('total', rubric.get("max_score", 100))),
+                                    'total': float(response_data.get('total', rubric.get("total_points", 100))),
                                     'mistakes': response_data.get('mistakes', {}),
                                     'grading_feedback': response_data.get('grading_feedback', "No feedback provided."),
                                     'model_used': 'gemini'
@@ -287,7 +287,7 @@ def grade_with_mistral(
 
         return {
             "score": float(parsed.get("score", 0)),
-            "total": float(parsed.get("total", rubric.get("max_score", 100))),
+            "total": float(parsed.get("total", rubric.get("total_points", 100))),
             "mistakes": parsed.get("mistakes", {}),
             "grading_feedback": parsed.get("grading_feedback", "No feedback provided."),
         }
@@ -345,7 +345,7 @@ def grade_with_bloom(
 
         return {
             "score": float(parsed.get("score", 0)),
-            "total": float(parsed.get("total", rubric.get("max_score", 100))),
+            "total": float(parsed.get("total", rubric.get("total_points", 100))),
             "mistakes": parsed.get("mistakes", {}),
             "grading_feedback": parsed.get("grading_feedback", "No feedback provided."),
         }
@@ -403,7 +403,7 @@ def grade_with_flan_t5(
 
         return {
             "score": float(parsed.get("score", 0)),
-            "total": float(parsed.get("total", rubric.get("max_score", 100))),
+            "total": float(parsed.get("total", rubric.get("total_points", 100))),
             "mistakes": parsed.get("mistakes", {}),
             "grading_feedback": parsed.get("grading_feedback", "No feedback provided."),
         }
@@ -478,7 +478,7 @@ def grade_with_openai(
 
         return {
             "score": float(parsed.get("score", 0)),
-            "total": float(parsed.get("total", rubric.get("max_score", 100))),
+            "total": float(parsed.get("total", rubric.get("total_points", 100))),
             "mistakes": parsed.get("mistakes", {}),
             "grading_feedback": parsed.get("grading_feedback", "No feedback provided."),
         }
@@ -498,7 +498,7 @@ def _create_simple_grading_result(submission_text: str, rubric: Dict[str, Any]) 
     try:
         # Calculate a score based on simple metrics
         word_count = len(submission_text.split())
-        max_score = rubric.get("max_score", 100)
+        max_score = rubric.get("total_points", 100)
         
         # Word count thresholds for scoring
         if word_count < 50:

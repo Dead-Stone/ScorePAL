@@ -127,9 +127,23 @@ def setup_environment():
             sys.exit(1)
 
 def install_dependencies():
-    """Install Python dependencies."""
-    print("Installing Python dependencies...")
-    subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], cwd=BACKEND_DIR)
+    """Check if Python dependencies are installed."""
+    print("Checking Python dependencies...")
+    # Don't install automatically - just check if they're available
+    try:
+        import fastapi
+        import uvicorn
+        import numpy
+        import pandas
+        print("✓ Core Python dependencies are available")
+    except ImportError as e:
+        print(f"⚠️  Missing dependency: {e}")
+        print("Please install dependencies manually using:")
+        print("pip install -r requirements.txt")
+        print("or")
+        print("pip install -r backend/requirements.txt")
+        return False
+    return True
 
 def install_frontend_dependencies():
     """Install frontend dependencies."""
@@ -170,9 +184,33 @@ def start_backend():
     # Add the project root to PYTHONPATH for the subprocess
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT_DIR)
+    # Prefer port 8010 to avoid conflicts on 8000
+    env.setdefault("API_HOST", "0.0.0.0")
+    env["API_PORT"] = env.get("API_PORT", "8010")
+    # Launch via uvicorn so FastAPI auto-reload and package imports work
+    host = env.get("API_HOST", "0.0.0.0")
+    port = env["API_PORT"]
+    reload_flag = "true" if env.get("API_RELOAD", "true").lower() == "true" else "false"
+    
+    uvicorn_app = "backend.app:app"
+    
+    cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        uvicorn_app,
+        "--host",
+        host,
+        "--port",
+        port,
+    ]
+    
+    if reload_flag == "true":
+        cmd.append("--reload")
+    
     return subprocess.Popen(
-        [sys.executable, 'api.py'], 
-        cwd=BACKEND_DIR,
+        cmd,
+        cwd=ROOT_DIR,
         env=env
     )
 
@@ -229,8 +267,11 @@ def main():
     # Setup environment
     setup_environment()
     
-    # Install dependencies
-    install_dependencies()
+    # Check dependencies
+    if not install_dependencies():
+        print("Please install the missing dependencies and try again.")
+        sys.exit(1)
+    
     install_frontend_dependencies()
     
     # Start both servers

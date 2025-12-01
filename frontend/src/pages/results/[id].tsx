@@ -30,7 +30,6 @@ import {
   IconButton,
   TextField,
   InputAdornment,
-  ListItemButton,
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import AssignmentIcon from '@mui/icons-material/Assignment';
@@ -47,23 +46,27 @@ import BarChartIcon from '@mui/icons-material/BarChart';
 import SummarizeIcon from '@mui/icons-material/Summarize';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
 import ChatIcon from '@mui/icons-material/Chat';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import DescriptionIcon from '@mui/icons-material/Description';
-import ImageIcon from '@mui/icons-material/Image';
-import TextSnippetIcon from '@mui/icons-material/TextSnippet';
 import ArticleIcon from '@mui/icons-material/Article';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+
 import Link from 'next/link';
 import axios from 'axios';
 import ChatInterface from '../../components/ChatInterface';
+import FileBrowser from '../../components/FileBrowser';
 import SaveIcon from '@mui/icons-material/Save';
 import { API_BASE_URL } from '@/config/api';
 
 // Configure axios
 axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
+
+// Add auth token to requests
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 // Define types for the data
 interface CriterionScore {
@@ -215,10 +218,7 @@ export default function ResultsPage() {
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [files, setFiles] = useState<FilesList | null>(null);
-  const [loadingFiles, setLoadingFiles] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
-  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+
   
   useEffect(() => {
     if (!id) return;
@@ -226,18 +226,47 @@ export default function ResultsPage() {
     const fetchResults = async () => {
       try {
         setIsLoading(true);
-        const response = await axios.get(`/grading-results/${id}`);
-        setResults(response.data);
-        
-        // Select the first student by default if available
-        if (response.data && response.data.student_results) {
-          const studentNames = Object.keys(response.data.student_results);
-          if (studentNames.length > 0) {
-            setSelectedStudent(studentNames[0]);
+        // Try new MongoDB API first, fall back to old endpoint
+        let response;
+        try {
+          response = await axios.get(`/api/results/${id}`);
+          // Transform MongoDB result to expected format
+          const result = response.data;
+          const transformedData = {
+            assignment_id: result.assignment_id,
+            assignment_name: result.assignment_id,
+            student_name: result.student_name,
+            graded_at: result.graded_at,
+            score: result.score,
+            total: result.total_points,
+            percentage: result.percentage,
+            grade_letter: result.grade_letter,
+            grading_feedback: result.overall_feedback || result.detailed_feedback,
+            criteria_scores: result.criteria_scores || [],
+            mistakes: result.mistakes || {},
+            submission_text: result.submission_text,
+            question_text: result.question_text,
+            answer_key: result.answer_key_text,
+            timestamp: result.graded_at,
+          };
+          setResults(transformedData);
+          if (result.student_name) {
+            setSelectedStudent(result.student_name);
           }
-        } else if (response.data && response.data.student_name) {
-          // If it's a single submission, select that student
-          setSelectedStudent(response.data.student_name);
+        } catch (newApiError) {
+          // Fall back to old endpoint
+          response = await axios.get(`/grading-results/${id}`);
+          setResults(response.data);
+          
+          // Select the first student by default if available
+          if (response.data && response.data.student_results) {
+            const studentNames = Object.keys(response.data.student_results);
+            if (studentNames.length > 0) {
+              setSelectedStudent(studentNames[0]);
+            }
+          } else if (response.data && response.data.student_name) {
+            setSelectedStudent(response.data.student_name);
+          }
         }
       } catch (err) {
         console.error('Error fetching results:', err);
@@ -250,24 +279,7 @@ export default function ResultsPage() {
     fetchResults();
   }, [id]);
   
-  // Add useEffect for fetching files
-  useEffect(() => {
-    if (!id) return;
-    
-    const fetchFiles = async () => {
-      try {
-        setLoadingFiles(true);
-        const response = await axios.get(`/grading-results/${id}/files`);
-        setFiles(response.data);
-      } catch (err) {
-        console.error('Error fetching files:', err);
-      } finally {
-        setLoadingFiles(false);
-      }
-    };
-    
-    fetchFiles();
-  }, [id]);
+
   
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -297,41 +309,7 @@ export default function ResultsPage() {
     }
   };
   
-  // File related functions
-  const handleFileSelect = (file: FileInfo) => {
-    setSelectedFile(file);
-    if (file.content_type === 'application/pdf' || file.content_type.includes('pdf')) {
-      setPdfViewerOpen(true);
-    } else {
-      // For non-PDF files, open in a new tab or download
-      window.open(`${axios.defaults.baseURL}${file.path}`, '_blank');
-    }
-  };
-  
-  const handleCloseViewer = () => {
-    setPdfViewerOpen(false);
-    setSelectedFile(null);
-  };
-  
-  const getFileIcon = (contentType: string) => {
-    if (contentType.includes('pdf')) {
-      return <PictureAsPdfIcon color="error" />;
-    } else if (contentType.includes('word') || contentType.includes('document')) {
-      return <DescriptionIcon color="primary" />;
-    } else if (contentType.includes('image')) {
-      return <ImageIcon color="success" />;
-    } else if (contentType.includes('text')) {
-      return <TextSnippetIcon color="info" />;
-    } else {
-      return <InsertDriveFileIcon />;
-    }
-  };
-  
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
+
   
   // Helper functions
   const getScoreColor = (percentage: number) => {
@@ -539,7 +517,7 @@ export default function ResultsPage() {
             <Card sx={{ height: '100%' }}>
         <CardContent>
                 <Typography variant="h6" gutterBottom fontWeight="medium">
-                  Assignment Statistics
+                  Rubric-Based Assignment Statistics
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
                 <List dense>
@@ -762,7 +740,7 @@ export default function ResultsPage() {
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ textAlign: 'center', pt: 4 }}>
                   <GradeAvatar 
-              sx={{ 
+                    sx={{ 
                       mx: 'auto',
                       bgcolor: getGradeColor(
                         (selectedStudent && results.student_results && results.student_results[selectedStudent]?.grade_letter) || 
@@ -805,90 +783,218 @@ export default function ResultsPage() {
               </Card>
             </Grid>
             
-            {/* Criteria Scores */}
+            {/* Rubric Analysis - Enhanced */}
             <Grid item xs={12} md={8}>
               <Card>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
-                    Grading Criteria
+                    Rubric-Based Assessment
                   </Typography>
                   
+                  {/* Rubric Summary */}
+                  <Box mb={3}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Performance by Criterion
+                    </Typography>
+                    <Box display="flex" gap={1} flexWrap="wrap">
+                      {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                        results.criteria_scores || []).map((criterion: CriterionScore, index: number) => {
+                        const percentage = (criterion.points / criterion.max_points) * 100;
+                        return (
+                          <Chip
+                            key={index}
+                            label={`${criterion.name}: ${criterion.points}/${criterion.max_points}`}
+                            color={percentage >= 80 ? 'success' : percentage >= 60 ? 'warning' : 'error'}
+                            variant="outlined"
+                            size="small"
+                          />
+                        );
+                      })}
+                    </Box>
+                  </Box>
+                  
+                  {/* Detailed Rubric Table */}
                   <TableContainer>
                     <Table>
                       <TableHead>
                         <TableRow>
-                          <TableCell>Criterion</TableCell>
-                          <TableCell align="center">Score</TableCell>
-                          <TableCell>Feedback</TableCell>
+                          <TableCell><strong>Rubric Criterion</strong></TableCell>
+                          <TableCell align="center"><strong>Score</strong></TableCell>
+                          <TableCell align="center"><strong>Performance</strong></TableCell>
+                          <TableCell><strong>Detailed Feedback</strong></TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
-                          results.criteria_scores || []).map((criterion: CriterionScore, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell component="th" scope="row">
-                              <Typography fontWeight="medium">{criterion.name}</Typography>
-                            </TableCell>
-                            <TableCell align="center">
-                              <Box>
-                                <Typography variant="body2" fontWeight="medium">
-                                  {criterion.points}/{criterion.max_points}
+                          results.criteria_scores || []).map((criterion: CriterionScore, index: number) => {
+                          const percentage = (criterion.points / criterion.max_points) * 100;
+                          return (
+                            <TableRow key={index}>
+                              <TableCell component="th" scope="row">
+                                <Typography fontWeight="medium">{criterion.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Max: {criterion.max_points} points
                                 </Typography>
-                                <ScoreBar value={(criterion.points / criterion.max_points) * 100} />
-                              </Box>
-                            </TableCell>
-              <TableCell>
-                              <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-line' }}>
-                                {criterion.feedback}
-                              </Typography>
-              </TableCell>
-            </TableRow>
-                        ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-      
-                  {/* Deductions */}
-                  {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes && 
-                    Object.keys(results.student_results[selectedStudent].mistakes).length > 0) || 
-                   (results.mistakes && Object.keys(results.mistakes).length > 0)) ? (
-                    <Box mt={4}>
-                      <Typography variant="h6" gutterBottom>
-                        Deductions
-                      </Typography>
-                      
-                      <TableContainer component={Paper} variant="outlined">
-                        <Table>
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Section</TableCell>
-                              <TableCell>Points Lost</TableCell>
-                              <TableCell>Reason</TableCell>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Box>
+                                  <Typography variant="body2" fontWeight="medium">
+                                    {criterion.points}/{criterion.max_points}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {percentage.toFixed(1)}%
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Box>
+                                  <ScoreBar value={percentage} />
+                                  <Typography variant="caption" color="text.secondary">
+                                    {percentage >= 80 ? 'Excellent' : 
+                                     percentage >= 60 ? 'Good' : 
+                                     percentage >= 40 ? 'Fair' : 'Needs Improvement'}
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-line' }}>
+                                  {criterion.feedback || 'No specific feedback provided for this criterion.'}
+                                </Typography>
+                              </TableCell>
                             </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {Object.entries(
-                              (selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes) || 
-                              results.mistakes || {}
-                            )
-                            .filter(([_, mistake]) => mistake && mistake.deductions !== undefined && mistake.deductions > 0)
-                            .map(([section, mistake], index) => (
-                              <TableRow key={index}>
-                                <TableCell>{section}</TableCell>
-                                <TableCell>
-                                  <Typography color="error">-{mistake.deductions}</Typography>
-                                </TableCell>
-                                <TableCell>{mistake.reasons}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                  
+                  {/* Rubric Performance Summary */}
+                  <Box mt={3} p={2} bgcolor="grey.50" borderRadius={1}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Rubric Performance Summary
+                    </Typography>
+                    <Box display="flex" gap={2} flexWrap="wrap">
+                      {(() => {
+                        const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                             results.criteria_scores || [];
+                        const totalPoints = criteriaScores.reduce((sum, c) => sum + c.points, 0);
+                        const totalMaxPoints = criteriaScores.reduce((sum, c) => sum + c.max_points, 0);
+                        const overallPercentage = totalMaxPoints > 0 ? (totalPoints / totalMaxPoints) * 100 : 0;
+                        
+                        const excellentCriteria = criteriaScores.filter(c => (c.points / c.max_points) * 100 >= 80).length;
+                        const goodCriteria = criteriaScores.filter(c => {
+                          const pct = (c.points / c.max_points) * 100;
+                          return pct >= 60 && pct < 80;
+                        }).length;
+                        const needsImprovementCriteria = criteriaScores.filter(c => (c.points / c.max_points) * 100 < 60).length;
+                        
+                        return (
+                          <>
+                            <Chip 
+                              label={`Overall: ${overallPercentage.toFixed(1)}%`}
+                              color={overallPercentage >= 80 ? 'success' : overallPercentage >= 60 ? 'warning' : 'error'}
+                              variant="filled"
+                            />
+                            <Chip 
+                              label={`Excellent: ${excellentCriteria}`}
+                              color="success"
+                              size="small"
+                            />
+                            <Chip 
+                              label={`Good: ${goodCriteria}`}
+                              color="warning"
+                              size="small"
+                            />
+                            <Chip 
+                              label={`Needs Improvement: ${needsImprovementCriteria}`}
+                              color="error"
+                              size="small"
+                            />
+                          </>
+                        );
+                      })()}
                     </Box>
-                  ) : null}
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
+            
+            {/* Rubric Analysis - Areas for Improvement */}
+            {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes && 
+              Object.keys(results.student_results[selectedStudent].mistakes).length > 0) || 
+             (results.mistakes && Object.keys(results.mistakes).length > 0)) && (
+              <Grid item xs={12}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Areas for Improvement
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Specific areas where the student can improve based on rubric criteria
+                    </Typography>
+                    
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell><strong>Rubric Area</strong></TableCell>
+                            <TableCell><strong>Issue Identified</strong></TableCell>
+                            <TableCell><strong>Impact on Score</strong></TableCell>
+                            <TableCell><strong>Recommendation</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(
+                            (selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes) || 
+                            results.mistakes || {}
+                          )
+                          .filter(([_, mistake]) => mistake && (mistake.deductions !== undefined || mistake.description))
+                          .map(([section, mistake], index) => (
+                            <TableRow key={index}>
+                              <TableCell>
+                                <Typography fontWeight="medium">{section}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {mistake.description || mistake.reasons || 'Specific issue not detailed'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                {mistake.deductions !== undefined && mistake.deductions > 0 ? (
+                                  <Typography color="error" fontWeight="medium">
+                                    -{mistake.deductions} points
+                                  </Typography>
+                                ) : (
+                                  <Typography color="warning" variant="body2">
+                                    Minor impact
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {(() => {
+                                    const issue = mistake.description || mistake.reasons || '';
+                                    if (issue.toLowerCase().includes('missing')) {
+                                      return 'Include this element in future submissions';
+                                    } else if (issue.toLowerCase().includes('unclear') || issue.toLowerCase().includes('vague')) {
+                                      return 'Provide more specific and detailed explanations';
+                                    } else if (issue.toLowerCase().includes('incorrect')) {
+                                      return 'Review the correct approach or concept';
+                                    } else {
+                                      return 'Focus on improving clarity and completeness';
+                                    }
+                                  })()}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+            )}
             
             {/* For single submissions, show question and answer texts */}
             {!results.student_results && results.student_name && (
@@ -970,6 +1076,27 @@ export default function ResultsPage() {
                       gradingFeedback={(selectedStudent && results.student_results && 
                         results.student_results[selectedStudent]?.grading_feedback) || 
                         results.grading_feedback}
+                      rubric={results.rubric}
+                      criteriaScores={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.criteria_scores) || 
+                        results.criteria_scores}
+                      mistakes={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.mistakes) || 
+                        results.mistakes}
+                      score={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.score) || 
+                        results.score}
+                      maxScore={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.total) || 
+                        results.total}
+                      percentage={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.percentage) || 
+                        results.percentage}
+                      gradeLetter={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.grade_letter) || 
+                        results.grade_letter}
+                      answerKey={results.answer_key}
+                      assignmentName={results.assignment_name}
                     />
                   </Box>
                 </CardContent>
@@ -1008,262 +1135,11 @@ export default function ResultsPage() {
       
       {/* Files Tab */}
       <TabPanel value={tabValue} index={3}>
-        {loadingFiles ? (
-          <Box display="flex" justifyContent="center" my={4}>
-            <CircularProgress />
-          </Box>
-        ) : !files ? (
-          <Alert severity="info">No files found for this submission.</Alert>
-        ) : (
-          <Grid container spacing={3}>
-            {/* Files List */}
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Submission Files
-                  </Typography>
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {/* Question Papers */}
-                  {files.question_papers && files.question_papers.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom>
-                        Question Papers
-                      </Typography>
-                      <List>
-                        {files.question_papers.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Student Submissions */}
-                  {files.submissions && files.submissions.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Student Submissions
-                      </Typography>
-                      <List>
-                        {files.submissions.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Answer Keys */}
-                  {files.answer_keys && files.answer_keys.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Answer Keys
-                      </Typography>
-                      <List>
-                        {files.answer_keys.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Original Files */}
-                  {files.original_files && files.original_files.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Other Files
-                      </Typography>
-                      <List>
-                        {files.original_files.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-        </>
-      )}
-      
-                  {/* No files found */}
-                  {(!files.question_papers || files.question_papers.length === 0) &&
-                   (!files.submissions || files.submissions.length === 0) &&
-                   (!files.answer_keys || files.answer_keys.length === 0) &&
-                   (!files.original_files || files.original_files.length === 0) && (
-                    <Box textAlign="center" py={4}>
-                      <Typography variant="body1" color="text.secondary">
-                        No files found for this submission.
-                      </Typography>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-            
-            {/* PDF/File Viewer */}
-            <Grid item xs={12} md={6}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Typography variant="h6" gutterBottom>
-                    File Preview
-                  </Typography>
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {selectedFile ? (
-                    <>
-                      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                        <Typography variant="subtitle1">
-                          {selectedFile.filename}
-                        </Typography>
-                        <Button 
-                          variant="outlined" 
-                          startIcon={<OpenInNewIcon />}
-                          href={`${axios.defaults.baseURL}${selectedFile.path}`}
-                          target="_blank"
-                        >
-                          Open in New Tab
-                        </Button>
-                      </Box>
-                      
-                      {selectedFile.content_type.includes('pdf') ? (
-                        <Box sx={{ flexGrow: 1, minHeight: 500 }}>
-                          <iframe 
-                            src={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            style={{ width: '100%', height: '100%', minHeight: 500, border: 'none' }}
-                            title={selectedFile.filename}
-                          />
-                        </Box>
-                      ) : selectedFile.content_type.includes('image') ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1 }}>
-                          <img 
-                            src={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            alt={selectedFile.filename}
-                            style={{ maxWidth: '100%', maxHeight: 500, objectFit: 'contain' }}
-                          />
-                        </Box>
-                      ) : (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexGrow: 1 }}>
-                          {getFileIcon(selectedFile.content_type)}
-                          <Typography variant="body1" sx={{ mt: 2 }}>
-                            This file type cannot be previewed directly.
-                          </Typography>
-                          <Button
-                            variant="contained"
-                            startIcon={<DownloadIcon />}
-                            href={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            download
-                            sx={{ mt: 2 }}
-                          >
-                            Download File
-                          </Button>
-                        </Box>
-                      )}
-                    </>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexGrow: 1 }}>
-                      <ArticleIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-                      <Typography variant="body1" color="text.secondary">
-                        Select a file to preview
-        </Typography>
-      </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
-        )}
+        <FileBrowser 
+          assignmentId={id as string}
+          title="Assignment Files"
+          showCategories={true}
+        />
       </TabPanel>
     </Container>
   );
