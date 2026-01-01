@@ -685,7 +685,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.questionPaper 
-                    ? `Selected: ${singleForm.questionPaper.name}` 
+                    ? `Selected: ${singleForm.questionPaper?.name}` 
                     : 'Drag and drop or click to select question paper (PDF/DOCX)'}
                 </Typography>
               </DropzoneContainer>
@@ -699,7 +699,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.submission 
-                    ? `Selected: ${singleForm.submission.name}` 
+                    ? `Selected: ${singleForm.submission?.name}` 
                     : 'Drag and drop or click to select student submission (PDF only)'}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
@@ -716,7 +716,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.answerKey 
-                    ? `Selected: ${singleForm.answerKey.name}` 
+                    ? `Selected: ${singleForm.answerKey?.name}` 
                     : 'Drag and drop or click to select answer key (PDF/DOCX/TXT) - Optional'}
                 </Typography>
               </DropzoneContainer>
