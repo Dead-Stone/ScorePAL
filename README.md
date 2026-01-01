@@ -1,3 +1,7 @@
+<div align="center">
+
+<img src="frontend/public/scorePAL-logo.png" alt="ScorePAL Logo" width="400"/>
+
 # ScorePAL - AI-Powered Academic Analytics & Grading Platform
 
 [![GitHub](https://img.shields.io/badge/GitHub-Dead--Stone-black?style=flat-square&logo=github)](https://github.com/Dead-Stone/ScorePAL)
@@ -6,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-Next.js-blue?style=flat-square&logo=typescript)](https://nextjs.org)
 [![Open Source](https://img.shields.io/badge/Status-Open%20Source-success?style=flat-square)](https://github.com/Dead-Stone/ScorePAL)
 
-### ✨ Transform grading with AI - Save hours, maintain quality, get insights
+### ✨ Transform grading & analytics with AI - Save hours, maintain quality, get insights
 
 ---
 
