@@ -1,6 +1,7 @@
 /**
  * ScorePAL - AI-Powered Academic Grading Assistant
  * Single & Batch Grading Interface
+ * Statically generated at build time - data fetched client-side
  * 
  * @author Mohana Moganti (@Dead-Stone)
  * @license MIT
@@ -8,6 +9,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { GetStaticProps } from 'next';
 import {
   Box,
   Container,
@@ -32,7 +34,16 @@ import {
   InputLabel,
   FormHelperText,
   Divider,
+  Chip,
 } from '@mui/material';
+import { ProtectedRoute } from '../components/ProtectedRoute';
+import { GradePageDocumentation } from '../components/PageDocumentation';
+import { useAuth } from '../contexts/AuthContext';
+import { CanvasIntegrationTab } from '../components/grading/CanvasIntegrationTab';
+import { SingleGradingSteps } from '../components/grading/SingleGradingSteps';
+import { CanvasGradingSteps } from '../components/grading/CanvasGradingSteps';
+import { PageLayout } from '../components/layout/PageLayout';
+import { PageHeader } from '../components/common/PageHeader';
 import { styled } from '@mui/material/styles';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import AssignmentIcon from '@mui/icons-material/Assignment';
@@ -44,13 +55,16 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import CreateIcon from '@mui/icons-material/Create';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import SchoolIcon from '@mui/icons-material/School';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { API_BASE_URL } from '@/config/api';
+import ModelSelectionDialog from '../components/ModelSelectionDialog';
 
 // Configure axios with base URL and default headers
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.post['Content-Type'] = 'application/json';
 
@@ -79,6 +93,15 @@ interface GradingScale {
   level: string;
   points: number;
   description: string;
+}
+
+interface ModelSelection {
+  model_config_id: string;
+  provider: string;
+  model_name: string;
+  custom_temperature?: number | null;
+  custom_max_tokens?: number | null;
+  use_streaming?: boolean;
 }
 
 // Styled components
@@ -138,8 +161,20 @@ function TabPanel(props: TabPanelProps) {
 }
 
 // Main component
+// Static generation - compile at build time only
+export const getStaticProps: GetStaticProps = async () => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
+
 export default function Home() {
   const router = useRouter();
+  const { checkGradingPermission, incrementGradingCount } = useAuth();
+  
+  // Tab state
+  const [currentTab, setCurrentTab] = useState(0);
   
   // State for single submission form
   const [singleForm, setSingleForm] = useState({
@@ -149,6 +184,7 @@ export default function Home() {
     submission: null as File | null,
     answerKey: null as File | null,
     rubricId: '',
+    generatedRubric: null as any,
   });
   
   // Loading and notification state
@@ -165,6 +201,11 @@ export default function Home() {
   // State for rubrics
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [loadingRubrics, setLoadingRubrics] = useState(false);
+  
+  // State for AI model selection
+  const [selectedModel, setSelectedModel] = useState<ModelSelection | null>(null);
+  const [modelSelectionOpen, setModelSelectionOpen] = useState(false);
+  const [estimatedTokens, setEstimatedTokens] = useState(0);
   
   // Fetch rubrics on component mount
   useEffect(() => {
@@ -193,6 +234,43 @@ export default function Home() {
   // Handle single form field changes
   const handleSingleFormChange = (field: string, value: any) => {
     setSingleForm(prev => ({ ...prev, [field]: value }));
+    
+    // Estimate tokens when content changes
+    if (field === 'submission' || field === 'answerKey' || field === 'questionPaper') {
+      estimateTokensForGrading();
+    }
+  };
+  
+  // Estimate tokens for grading
+  const estimateTokensForGrading = () => {
+    let totalText = '';
+    
+    // Add text content from files (simplified estimation)
+    if (singleForm.submission) {
+      totalText += `Submission content (estimated): ${singleForm.submission.size / 4} characters\n`;
+    }
+    if (singleForm.answerKey) {
+      totalText += `Answer key content (estimated): ${singleForm.answerKey.size / 4} characters\n`;
+    }
+    if (singleForm.questionPaper) {
+      totalText += `Question content (estimated): ${singleForm.questionPaper.size / 4} characters\n`;
+    }
+    
+    // Rough token estimation: ~4 characters per token
+    const estimated = Math.ceil(totalText.length / 4);
+    setEstimatedTokens(Math.max(estimated, 500)); // Minimum estimate for grading prompt
+  };
+  
+  // Handle model selection
+  const handleModelSelect = (modelSelection: ModelSelection) => {
+    setSelectedModel(modelSelection);
+    setModelSelectionOpen(false);
+  };
+  
+  // Open model selection dialog
+  const openModelSelection = () => {
+    estimateTokensForGrading();
+    setModelSelectionOpen(true);
   };
   
   // Dropzone for question paper in single mode
@@ -294,7 +372,17 @@ export default function Home() {
       }
       
       if (singleForm.rubricId) {
-        formData.append('rubric_id', singleForm.rubricId);
+        if (singleForm.rubricId === 'generated' && singleForm.generatedRubric) {
+          // If using generated rubric, send it as JSON
+          formData.append('rubric_json', JSON.stringify(singleForm.generatedRubric));
+        } else {
+          formData.append('rubric_id', singleForm.rubricId);
+        }
+      }
+      
+      // Include AI model selection if available
+      if (selectedModel) {
+        formData.append('ai_model_selection', JSON.stringify(selectedModel));
       }
       
       // Send request
@@ -307,7 +395,7 @@ export default function Home() {
       // Handle response
       if (response.data && response.data.upload_id) {
         // Navigate to results page
-        router.push(`/results/${response.data.upload_id}`);
+        router.replace(`/results/${response.data.upload_id}`);
       } else {
         throw new Error('Invalid response from server');
       }
@@ -329,58 +417,122 @@ export default function Home() {
   };
   
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      {/* Header Section */}
-      <GradientPaper elevation={3}>
-        <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          ScorePAL: AI-Powered Grading
-        </Typography>
-        <Typography variant="h6" gutterBottom>
-          Grade assignments quickly, consistently, and objectively with AI assistance
-        </Typography>
-        <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-          <Button 
-            variant="contained" 
-            color="secondary" 
-            size="large"
-            sx={{ 
-              color: 'white', 
-              borderRadius: 8, 
-              px: 3,
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              '&:hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.3)',
-              }
-            }}
-            startIcon={<PersonIcon />}
-          >
-            Single Submission
-          </Button>
-          <Button 
-            variant="outlined" 
-            size="large"
-            onClick={() => router.push('/canvas')}
-            sx={{ 
-              color: 'white', 
-              borderColor: 'rgba(255, 255, 255, 0.5)',
-              borderRadius: 8, 
-              px: 3,
-              '&:hover': {
-                borderColor: 'white',
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-              }
-            }}
-            startIcon={<SchoolIcon />}
-          >
-            Canvas Integration
-          </Button>
-        </Box>
-      </GradientPaper>
+    <ProtectedRoute>
+      <PageLayout maxWidth="lg">
+        {/* Documentation */}
+        <GradePageDocumentation />
+        
+        <PageHeader
+          title="AI-Powered Grading"
+          subtitle="Grade assignments quickly, consistently, and objectively with AI assistance"
+        />
       
-      {/* Main Form - removing tabs */}
-      <Paper elevation={2} sx={{ borderRadius: 3, overflow: 'hidden', mb: 4 }}>
-        {/* Single Submission Form */}
-        <Box sx={{ p: 3 }}>
+      {/* Tabs for Grading Options */}
+      <Paper 
+        elevation={0} 
+        sx={{ 
+          borderRadius: 2, 
+          overflow: 'hidden', 
+          mb: 4,
+          border: '1px solid',
+          borderColor: 'divider'
+        }}
+      >
+        <Tabs 
+          value={currentTab} 
+          onChange={(e, newValue) => setCurrentTab(newValue)}
+          sx={{ 
+            bgcolor: 'white',
+            '& .MuiTab-root': {
+              textTransform: 'none',
+              fontSize: '0.95rem',
+              fontWeight: 500,
+              minHeight: 56,
+              '&.Mui-selected': {
+                color: '#1D80C3',
+              }
+            },
+            '& .MuiTabs-indicator': {
+              height: 3,
+              bgcolor: '#1D80C3',
+            }
+          }}
+        >
+          <Tab 
+            icon={<PersonIcon />} 
+            iconPosition="start"
+            label="Single Submission" 
+            id="tab-0"
+            aria-controls="tabpanel-0"
+          />
+          <Tab 
+            icon={
+              <Box
+                component="img"
+                src="/canvas-logo.jpg"
+                alt="Canvas"
+                sx={{
+                  width: 20,
+                  height: 20,
+                  objectFit: 'contain',
+                }}
+              />
+            }
+            iconPosition="start"
+            label="Canvas Integration" 
+            id="tab-1"
+            aria-controls="tabpanel-1"
+          />
+          <Tab 
+            icon={
+              <Box
+                component="img"
+                src="/moodle-logo.png"
+                alt="Moodle"
+                sx={{
+                  width: 20,
+                  height: 20,
+                  objectFit: 'contain',
+                  opacity: 0.5,
+                }}
+              />
+            }
+            iconPosition="start"
+            label="Moodle Integration" 
+            id="tab-2"
+            aria-controls="tabpanel-2"
+            disabled
+          />
+        </Tabs>
+        
+        {/* Single Submission Tab */}
+        <TabPanel value={currentTab} index={0}>
+          <SingleGradingSteps
+            onComplete={async (data) => {
+              // Update form state with step data
+              setSingleForm({
+                studentName: data.studentName,
+                assignmentName: data.assignmentName,
+                questionPaper: data.questionPaper,
+                submission: data.submission,
+                answerKey: data.answerKey,
+                rubricId: data.rubricId,
+                generatedRubric: data.generatedRubric,
+              });
+              setStrictness(data.strictness);
+              if (data.selectedModel) {
+                setSelectedModel(data.selectedModel);
+              }
+              // Trigger the actual grading
+              await handleSingleSubmit();
+            }}
+            isLoading={isLoading}
+            rubrics={rubrics}
+            loadingRubrics={loadingRubrics}
+          />
+          
+          {/* Keep old form as fallback or remove if not needed */}
+          {false && <Box>
           <Typography variant="h6" gutterBottom>
             Grade Individual Submission
           </Typography>
@@ -480,6 +632,46 @@ export default function Home() {
             <Grid item xs={12}>
               <Divider sx={{ my: 1 }} />
               <Typography variant="subtitle1" gutterBottom fontWeight="medium">
+                AI Model Selection
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<PsychologyIcon />}
+                  onClick={openModelSelection}
+                  sx={{ minWidth: 200 }}
+                >
+                  {selectedModel ? 'Change AI Model' : 'Select AI Model'}
+                </Button>
+                
+                {selectedModel && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip
+                      label={`${selectedModel?.provider} - ${selectedModel?.model_name}`}
+                      color="primary"
+                      variant="outlined"
+                    />
+                    {estimatedTokens > 0 && (
+                      <Chip
+                        label={`~${estimatedTokens.toLocaleString()} tokens`}
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                  </Box>
+                )}
+              </Box>
+              
+              {!selectedModel && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  No AI model selected. The system will use your default configuration.
+                </Alert>
+              )}
+            </Grid>
+            
+            <Grid item xs={12}>
+              <Divider sx={{ my: 1 }} />
+              <Typography variant="subtitle1" gutterBottom fontWeight="medium">
                 Upload Files
               </Typography>
             </Grid>
@@ -493,7 +685,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.questionPaper 
-                    ? `Selected: ${singleForm.questionPaper.name}` 
+                    ? `Selected: ${singleForm.questionPaper?.name}` 
                     : 'Drag and drop or click to select question paper (PDF/DOCX)'}
                 </Typography>
               </DropzoneContainer>
@@ -507,7 +699,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.submission 
-                    ? `Selected: ${singleForm.submission.name}` 
+                    ? `Selected: ${singleForm.submission?.name}` 
                     : 'Drag and drop or click to select student submission (PDF only)'}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
@@ -524,7 +716,7 @@ export default function Home() {
                 <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
                 <Typography variant="body2">
                   {singleForm.answerKey 
-                    ? `Selected: ${singleForm.answerKey.name}` 
+                    ? `Selected: ${singleForm.answerKey?.name}` 
                     : 'Drag and drop or click to select answer key (PDF/DOCX/TXT) - Optional'}
                 </Typography>
               </DropzoneContainer>
@@ -543,7 +735,32 @@ export default function Home() {
               {isLoading ? 'Processing...' : 'Grade Submission'}
             </Button>
           </Box>
+          </Box>}
+        </TabPanel>
+        
+        {/* Canvas Integration Tab */}
+        <TabPanel value={currentTab} index={1}>
+          <CanvasIntegrationTab />
+        </TabPanel>
+
+        {/* Moodle Integration Tab */}
+        <TabPanel value={currentTab} index={2}>
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Moodle LMS Integration
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              Moodle integration is coming soon. This feature will allow you to grade assignments directly from your Moodle courses.
+            </Typography>
+            <Box sx={{ mt: 3, textAlign: 'center' }}>
+              <Chip
+                label="Coming Soon"
+                color="default"
+                sx={{ opacity: 0.6 }}
+              />
+            </Box>
           </Box>
+        </TabPanel>
       </Paper>
       
       {/* Notification snackbar */}
@@ -557,6 +774,16 @@ export default function Home() {
           {notification.message}
         </Alert>
       </Snackbar>
-    </Container>
+      
+      {/* Model Selection Dialog */}
+      <ModelSelectionDialog
+        open={modelSelectionOpen}
+        onClose={() => setModelSelectionOpen(false)}
+        onSelect={handleModelSelect}
+        currentSelection={selectedModel as any}
+        estimatedTokens={estimatedTokens}
+      />
+      </PageLayout>
+    </ProtectedRoute>
   );
-} 
+}

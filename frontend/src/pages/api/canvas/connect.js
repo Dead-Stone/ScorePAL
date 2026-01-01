@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { normalizeCanvasUrl } from '../../../utils/canvas';
+import { API_BASE_URL } from '../../../config/api';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend - use the /api/canvas/initialize endpoint
     const response = await axios.post(
-      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/initialize`,
+      `${API_BASE_URL}/api/canvas/initialize`,
       formData,
       {
         headers: {

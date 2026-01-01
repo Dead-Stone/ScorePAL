@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { useRouter } from 'next/router';
+import { GetStaticProps, GetStaticPaths } from 'next';
 import {
   Box,
   Container,
@@ -30,39 +31,35 @@ import {
   IconButton,
   TextField,
   InputAdornment,
-  ListItemButton,
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import ErrorIcon from '@mui/icons-material/Error';
-import WarningIcon from '@mui/icons-material/Warning';
-import DownloadIcon from '@mui/icons-material/Download';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import SearchIcon from '@mui/icons-material/Search';
-import PersonIcon from '@mui/icons-material/Person';
-import GradeIcon from '@mui/icons-material/Grade';
-import FeedbackIcon from '@mui/icons-material/Feedback';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import SummarizeIcon from '@mui/icons-material/Summarize';
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
-import ChatIcon from '@mui/icons-material/Chat';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import DescriptionIcon from '@mui/icons-material/Description';
-import ImageIcon from '@mui/icons-material/Image';
-import TextSnippetIcon from '@mui/icons-material/TextSnippet';
-import ArticleIcon from '@mui/icons-material/Article';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
-import Link from 'next/link';
-import axios from 'axios';
-import ChatInterface from '../../components/ChatInterface';
-import SaveIcon from '@mui/icons-material/Save';
+import { TopNavBar } from '@/components/layout/TopNavBar';
+// Optimize icon imports - tree-shakeable
+import {
+  Assignment as AssignmentIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Download as DownloadIcon,
+  ArrowBack as ArrowBackIcon,
+  Search as SearchIcon,
+  Person as PersonIcon,
+  Grade as GradeIcon,
+  Feedback as FeedbackIcon,
+  BarChart as BarChartIcon,
+  Summarize as SummarizeIcon,
+  FormatListBulleted as FormatListBulletedIcon,
+  Chat as ChatIcon,
+  Article as ArticleIcon,
+} from '@mui/icons-material';
 
-// Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'https://34-13-75-235.nip.io';
-axios.defaults.headers.common['Accept'] = 'application/json';
+import Link from 'next/link';
+import apiClient from '@/utils/apiClient';
+// Lazy load heavy components
+import dynamic from 'next/dynamic';
+const ChatInterface = dynamic(() => import('../../components/ChatInterface'), { ssr: false });
+const FileBrowser = dynamic(() => import('../../components/FileBrowser'), { ssr: false });
+import SaveIcon from '@mui/icons-material/Save';
 
 // Define types for the data
 interface CriterionScore {
@@ -88,6 +85,20 @@ interface StudentResult {
   criteria_scores: CriterionScore[];
   mistakes: Record<string, Mistake>;
   timestamp?: string;
+  canvas_comparison?: {
+    canvas_posted_grade?: string;
+    canvas_posted_score?: number;
+    canvas_posted_percentage?: number;
+    ai_score: number;
+    ai_total: number;
+    ai_percentage: number;
+    score_difference?: number;
+    percentage_difference?: number;
+    comparison_status: string;
+    canvas_submission_url?: string;
+    last_updated?: string;
+  } | null;
+  ai_model_used?: string;
 }
 
 interface FileInfo {
@@ -132,6 +143,21 @@ interface GradingResults {
   answer_key?: string;
   submission_text?: string;
   files?: FilesList;
+  canvas_comparison?: {
+    canvas_posted_grade?: string;
+    canvas_posted_score?: number;
+    canvas_posted_percentage?: number;
+    ai_score: number;
+    ai_total: number;
+    ai_percentage: number;
+    score_difference?: number;
+    percentage_difference?: number;
+    comparison_status: string;
+    canvas_submission_url?: string;
+    last_updated?: string;
+  } | null;
+  ai_model_used?: string;
+  rubric?: any;
 }
 
 // Styled components
@@ -204,6 +230,22 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+// Static generation for dynamic routes - compile at build time
+export const getStaticPaths: GetStaticPaths = async () => {
+  // Return empty paths array - pages will be generated on-demand
+  return {
+    paths: [],
+    fallback: 'blocking', // Generate page on-demand but cache it
+  };
+};
+
+export const getStaticProps: GetStaticProps = async (context) => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
+
 export default function ResultsPage() {
   const router = useRouter();
   const { id } = router.query;
@@ -214,10 +256,7 @@ export default function ResultsPage() {
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [files, setFiles] = useState<FilesList | null>(null);
-  const [loadingFiles, setLoadingFiles] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
-  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+
   
   useEffect(() => {
     if (!id) return;
@@ -225,21 +264,53 @@ export default function ResultsPage() {
     const fetchResults = async () => {
       try {
         setIsLoading(true);
-        const response = await axios.get(`/grading-results/${id}`);
-        setResults(response.data);
-        
-        // Select the first student by default if available
-        if (response.data && response.data.student_results) {
-          const studentNames = Object.keys(response.data.student_results);
-          if (studentNames.length > 0) {
-            setSelectedStudent(studentNames[0]);
+        // Try new MongoDB API first, fall back to old endpoint
+        let response;
+        try {
+          response = await apiClient.get(`/api/results/${id}?include_canvas_comparison=true`);
+          // Transform MongoDB result to expected format
+          const result = response.data;
+          const transformedData: GradingResults = {
+            id: result.id || id as string,
+            assignment_id: result.assignment_id,
+            assignment_name: result.assignment_id,
+            student_name: result.student_name,
+            score: result.score,
+            total: result.total_points,
+            percentage: result.percentage,
+            grade_letter: result.grade_letter,
+            grading_feedback: result.overall_feedback || result.detailed_feedback,
+            criteria_scores: result.criteria_scores || [],
+            mistakes: result.mistakes || {},
+            submission_text: result.submission_text,
+            question_text: result.question_text,
+            answer_key: result.answer_key_text,
+            timestamp: result.graded_at || new Date().toISOString(),
+            canvas_comparison: result.canvas_comparison || null,
+            ai_model_used: result.ai_model_used || 'Unknown',
+            rubric: result.rubric_used || result.rubric,
+          };
+          setResults(transformedData);
+          if (result.student_name) {
+            setSelectedStudent(result.student_name);
           }
-        } else if (response.data && response.data.student_name) {
-          // If it's a single submission, select that student
-          setSelectedStudent(response.data.student_name);
+        } catch (newApiError) {
+          // Fall back to old endpoint
+          response = await apiClient.get(`/grading-results/${id}`);
+          setResults(response.data);
+          
+          // Select the first student by default if available
+          if (response.data && response.data.student_results) {
+            const studentNames = Object.keys(response.data.student_results);
+            if (studentNames.length > 0) {
+              setSelectedStudent(studentNames[0]);
+            }
+          } else if (response.data && response.data.student_name) {
+            setSelectedStudent(response.data.student_name);
+          }
         }
       } catch (err) {
-        console.error('Error fetching results:', err);
+        // Error handled by UI state
         setError('Failed to load results. Please try again later.');
       } finally {
         setIsLoading(false);
@@ -249,24 +320,7 @@ export default function ResultsPage() {
     fetchResults();
   }, [id]);
   
-  // Add useEffect for fetching files
-  useEffect(() => {
-    if (!id) return;
-    
-    const fetchFiles = async () => {
-      try {
-        setLoadingFiles(true);
-        const response = await axios.get(`/grading-results/${id}/files`);
-        setFiles(response.data);
-      } catch (err) {
-        console.error('Error fetching files:', err);
-      } finally {
-        setLoadingFiles(false);
-      }
-    };
-    
-    fetchFiles();
-  }, [id]);
+
   
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -276,10 +330,40 @@ export default function ResultsPage() {
     setSelectedStudent(studentName);
     setTabValue(1); // Switch to student details tab
   };
+
+  // Memoize filtered students calculation - MUST be before conditional returns
+  const filteredStudents = useMemo<[string, StudentResult][]>(() => {
+    if (!results) return [];
+    
+    // For single student submissions
+    if (!results.student_results && results.student_name && results.score !== undefined) {
+      const singleStudentResult: StudentResult = {
+        score: results.score,
+        total: results.total || 100,
+        percentage: results.percentage || 0,
+        grade_letter: results.grade_letter || 'N/A',
+        grading_feedback: results.grading_feedback || '',
+        criteria_scores: results.criteria_scores || [],
+        mistakes: results.mistakes || {}
+      };
+      
+      if (!searchQuery || results.student_name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return [[results.student_name, singleStudentResult]];
+      }
+      return [];
+    }
+    // For multiple students
+    if (results.student_results) {
+      return Object.entries(results.student_results)
+        .filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => b[1].percentage - a[1].percentage);
+    }
+    return [];
+  }, [results, searchQuery]);
   
   const handleDownloadResults = async () => {
     try {
-      const response = await axios.get(`/grading-results/${id}/download`, {
+      const response = await apiClient.get(`/grading-results/${id}/download`, {
         responseType: 'blob'
       });
       
@@ -291,46 +375,12 @@ export default function ResultsPage() {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Error downloading results:', err);
+      // Download error handled by UI
       setError('Failed to download results');
     }
   };
   
-  // File related functions
-  const handleFileSelect = (file: FileInfo) => {
-    setSelectedFile(file);
-    if (file.content_type === 'application/pdf' || file.content_type.includes('pdf')) {
-      setPdfViewerOpen(true);
-    } else {
-      // For non-PDF files, open in a new tab or download
-      window.open(`${axios.defaults.baseURL}${file.path}`, '_blank');
-    }
-  };
-  
-  const handleCloseViewer = () => {
-    setPdfViewerOpen(false);
-    setSelectedFile(null);
-  };
-  
-  const getFileIcon = (contentType: string) => {
-    if (contentType.includes('pdf')) {
-      return <PictureAsPdfIcon color="error" />;
-    } else if (contentType.includes('word') || contentType.includes('document')) {
-      return <DescriptionIcon color="primary" />;
-    } else if (contentType.includes('image')) {
-      return <ImageIcon color="success" />;
-    } else if (contentType.includes('text')) {
-      return <TextSnippetIcon color="info" />;
-    } else {
-      return <InsertDriveFileIcon />;
-    }
-  };
-  
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
+
   
   // Helper functions
   const getScoreColor = (percentage: number) => {
@@ -353,88 +403,84 @@ export default function ResultsPage() {
   // Render loading state
   if (isLoading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 6 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8 }}>
-          <CircularProgress size={60} thickness={4} />
-          <Typography variant="h6" sx={{ mt: 3 }}>
-            Loading grading results...
-          </Typography>
-        </Box>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8 }}>
+            <CircularProgress size={60} thickness={4} />
+            <Typography variant="h6" sx={{ mt: 3 }}>
+              Loading grading results...
+            </Typography>
+          </Box>
+        </Container>
+      </div>
     );
   }
   
   // Render error state
   if (error) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-        <Button
-          variant="contained"
-          startIcon={<ArrowBackIcon />}
-          component={Link}
-          href="/results"
-        >
-          Back to Results
-        </Button>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+          <Button
+            variant="contained"
+            startIcon={<ArrowBackIcon />}
+            component={Link}
+            href="/results"
+          >
+            Back to Results
+          </Button>
+        </Container>
+      </div>
     );
   }
   
   // Render empty state
   if (!results) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="info" sx={{ mb: 3 }}>
-          No results found for this assignment.
-        </Alert>
-        <Button
-          variant="contained"
-          startIcon={<ArrowBackIcon />}
-          component={Link}
-          href="/results"
-        >
-          Back to Results
-        </Button>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Alert severity="info" sx={{ mb: 3 }}>
+            No results found for this assignment.
+          </Alert>
+          <Button
+            variant="contained"
+            startIcon={<ArrowBackIcon />}
+            component={Link}
+            href="/results"
+          >
+            Back to Results
+          </Button>
+        </Container>
+      </div>
     );
   }
   
-  // Calculate filtered students
-  let filteredStudents: [string, StudentResult][] = [];
-  
-  // For single student submissions
-  if (!results.student_results && results.student_name && results.score !== undefined) {
-    const singleStudentResult: StudentResult = {
-      score: results.score,
-      total: results.total || 100,
-      percentage: results.percentage || 0,
-      grade_letter: results.grade_letter || 'N/A',
-      grading_feedback: results.grading_feedback || '',
-      criteria_scores: results.criteria_scores || [],
-      mistakes: results.mistakes || {}
-    };
-    
-    if (!searchQuery || results.student_name.toLowerCase().includes(searchQuery.toLowerCase())) {
-      filteredStudents = [[results.student_name, singleStudentResult]];
-    }
-  }
-  // For multiple students
-  else if (results.student_results) {
-    filteredStudents = Object.entries(results.student_results)
-      .filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
-      .sort((a, b) => b[1].percentage - a[1].percentage);
-  }
-  
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      {/* Header */}
-      <Box mb={4}>
-        <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
-          {results.assignment_name || "Assignment Results"}
-        </Typography>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+      <TopNavBar />
+      <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+        {/* Header */}
+        <Box mb={4}>
+          <Typography 
+            variant="h3" 
+            component="h1" 
+            gutterBottom 
+            fontWeight="bold"
+            sx={{ 
+              background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              mb: 1
+            }}
+          >
+            {results.assignment_name || "Assignment Results"}
+          </Typography>
         <Typography variant="subtitle1" color="text.secondary" gutterBottom>
           {new Date(results.timestamp).toLocaleDateString(undefined, { 
             year: 'numeric', 
@@ -525,6 +571,9 @@ export default function ResultsPage() {
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="results tabs">
           <Tab icon={<SummarizeIcon />} label="Summary" iconPosition="start" />
           <Tab icon={<PersonIcon />} label="Student Details" iconPosition="start" />
+          {results?.canvas_comparison && (
+            <Tab icon={<GradeIcon />} label="Grade Comparison" iconPosition="start" />
+          )}
           <Tab icon={<BarChartIcon />} label="Analytics" iconPosition="start" />
           <Tab icon={<ArticleIcon />} label="Files" iconPosition="start" />
         </Tabs>
@@ -538,7 +587,7 @@ export default function ResultsPage() {
             <Card sx={{ height: '100%' }}>
         <CardContent>
                 <Typography variant="h6" gutterBottom fontWeight="medium">
-                  Assignment Statistics
+                  Rubric-Based Assignment Statistics
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
                 <List dense>
@@ -761,7 +810,7 @@ export default function ResultsPage() {
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ textAlign: 'center', pt: 4 }}>
                   <GradeAvatar 
-              sx={{ 
+                    sx={{ 
                       mx: 'auto',
                       bgcolor: getGradeColor(
                         (selectedStudent && results.student_results && results.student_results[selectedStudent]?.grade_letter) || 
@@ -804,90 +853,225 @@ export default function ResultsPage() {
               </Card>
             </Grid>
             
-            {/* Criteria Scores */}
+            {/* Rubric Analysis - Enhanced */}
             <Grid item xs={12} md={8}>
               <Card>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
-                    Grading Criteria
+                    Rubric-Based Assessment
                   </Typography>
                   
+                  {/* Rubric Summary */}
+                  <Box mb={3}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Performance by Criterion
+                    </Typography>
+                    <Box display="flex" gap={1} flexWrap="wrap">
+                      {(() => {
+                        const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                             results.criteria_scores;
+                        return Array.isArray(criteriaScores) ? criteriaScores : [];
+                      })().map((criterion: CriterionScore, index: number) => {
+                        const percentage = (criterion.points / criterion.max_points) * 100;
+                        return (
+                          <Chip
+                            key={index}
+                            label={`${criterion.name}: ${criterion.points}/${criterion.max_points}`}
+                            color={percentage >= 80 ? 'success' : percentage >= 60 ? 'warning' : 'error'}
+                            variant="outlined"
+                            size="small"
+                          />
+                        );
+                      })}
+                    </Box>
+                  </Box>
+                  
+                  {/* Detailed Rubric Table */}
                   <TableContainer>
                     <Table>
                       <TableHead>
                         <TableRow>
-                          <TableCell>Criterion</TableCell>
-                          <TableCell align="center">Score</TableCell>
-                          <TableCell>Feedback</TableCell>
+                          <TableCell><strong>Rubric Criterion</strong></TableCell>
+                          <TableCell align="center"><strong>Score</strong></TableCell>
+                          <TableCell align="center"><strong>Performance</strong></TableCell>
+                          <TableCell><strong>Detailed Feedback</strong></TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
-                          results.criteria_scores || []).map((criterion: CriterionScore, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell component="th" scope="row">
-                              <Typography fontWeight="medium">{criterion.name}</Typography>
-                            </TableCell>
-                            <TableCell align="center">
-                              <Box>
-                                <Typography variant="body2" fontWeight="medium">
-                                  {criterion.points}/{criterion.max_points}
+                        {(() => {
+                          const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                               results.criteria_scores;
+                          return Array.isArray(criteriaScores) ? criteriaScores : [];
+                        })().map((criterion: CriterionScore, index: number) => {
+                          const percentage = (criterion.points / criterion.max_points) * 100;
+                          return (
+                            <TableRow key={index}>
+                              <TableCell component="th" scope="row">
+                                <Typography fontWeight="medium">{criterion.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  Max: {criterion.max_points} points
                                 </Typography>
-                                <ScoreBar value={(criterion.points / criterion.max_points) * 100} />
-                              </Box>
-                            </TableCell>
-              <TableCell>
-                              <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-line' }}>
-                                {criterion.feedback}
-                              </Typography>
-              </TableCell>
-            </TableRow>
-                        ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-      
-                  {/* Deductions */}
-                  {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes && 
-                    Object.keys(results.student_results[selectedStudent].mistakes).length > 0) || 
-                   (results.mistakes && Object.keys(results.mistakes).length > 0)) ? (
-                    <Box mt={4}>
-                      <Typography variant="h6" gutterBottom>
-                        Deductions
-                      </Typography>
-                      
-                      <TableContainer component={Paper} variant="outlined">
-                        <Table>
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Section</TableCell>
-                              <TableCell>Points Lost</TableCell>
-                              <TableCell>Reason</TableCell>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Box>
+                                  <Typography variant="body2" fontWeight="medium">
+                                    {criterion.points}/{criterion.max_points}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {percentage.toFixed(1)}%
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Box>
+                                  <ScoreBar value={percentage} />
+                                  <Typography variant="caption" color="text.secondary">
+                                    {percentage >= 80 ? 'Excellent' : 
+                                     percentage >= 60 ? 'Good' : 
+                                     percentage >= 40 ? 'Fair' : 'Needs Improvement'}
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-line' }}>
+                                  {criterion.feedback || 'No specific feedback provided for this criterion.'}
+                                </Typography>
+                              </TableCell>
                             </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {Object.entries(
-                              (selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes) || 
-                              results.mistakes || {}
-                            )
-                            .filter(([_, mistake]) => mistake && mistake.deductions !== undefined && mistake.deductions > 0)
-                            .map(([section, mistake], index) => (
-                              <TableRow key={index}>
-                                <TableCell>{section}</TableCell>
-                                <TableCell>
-                                  <Typography color="error">-{mistake.deductions}</Typography>
-                                </TableCell>
-                                <TableCell>{mistake.reasons}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </TableContainer>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                  
+                  {/* Rubric Performance Summary */}
+                  <Box mt={3} p={2} bgcolor="grey.50" borderRadius={1}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Rubric Performance Summary
+                    </Typography>
+                    <Box display="flex" gap={2} flexWrap="wrap">
+                      {(() => {
+                        const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                             results.criteria_scores;
+                        const safeCriteriaScores = Array.isArray(criteriaScores) ? criteriaScores : [];
+                        const totalPoints = safeCriteriaScores.reduce((sum, c) => sum + c.points, 0);
+                        const totalMaxPoints = safeCriteriaScores.reduce((sum, c) => sum + c.max_points, 0);
+                        const overallPercentage = totalMaxPoints > 0 ? (totalPoints / totalMaxPoints) * 100 : 0;
+                        
+                        const excellentCriteria = safeCriteriaScores.filter(c => (c.points / c.max_points) * 100 >= 80).length;
+                        const goodCriteria = safeCriteriaScores.filter(c => {
+                          const pct = (c.points / c.max_points) * 100;
+                          return pct >= 60 && pct < 80;
+                        }).length;
+                        const needsImprovementCriteria = safeCriteriaScores.filter(c => (c.points / c.max_points) * 100 < 60).length;
+                        
+                        return (
+                          <>
+                            <Chip 
+                              label={`Overall: ${overallPercentage.toFixed(1)}%`}
+                              color={overallPercentage >= 80 ? 'success' : overallPercentage >= 60 ? 'warning' : 'error'}
+                              variant="filled"
+                            />
+                            <Chip 
+                              label={`Excellent: ${excellentCriteria}`}
+                              color="success"
+                              size="small"
+                            />
+                            <Chip 
+                              label={`Good: ${goodCriteria}`}
+                              color="warning"
+                              size="small"
+                            />
+                            <Chip 
+                              label={`Needs Improvement: ${needsImprovementCriteria}`}
+                              color="error"
+                              size="small"
+                            />
+                          </>
+                        );
+                      })()}
                     </Box>
-                  ) : null}
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
+            
+            {/* Rubric Analysis - Areas for Improvement */}
+            {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes && 
+              Object.keys(results.student_results[selectedStudent].mistakes).length > 0) || 
+             (results.mistakes && Object.keys(results.mistakes).length > 0)) && (
+              <Grid item xs={12}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Areas for Improvement
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Specific areas where the student can improve based on rubric criteria
+                    </Typography>
+                    
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell><strong>Rubric Area</strong></TableCell>
+                            <TableCell><strong>Issue Identified</strong></TableCell>
+                            <TableCell><strong>Impact on Score</strong></TableCell>
+                            <TableCell><strong>Recommendation</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {Object.entries(
+                            (selectedStudent && results.student_results && results.student_results[selectedStudent]?.mistakes) || 
+                            results.mistakes || {}
+                          )
+                          .filter(([_, mistake]) => mistake && (mistake.deductions !== undefined || mistake.description))
+                          .map(([section, mistake], index) => (
+                            <TableRow key={index}>
+                              <TableCell>
+                                <Typography fontWeight="medium">{section}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {mistake.description || mistake.reasons || 'Specific issue not detailed'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                {mistake.deductions !== undefined && mistake.deductions > 0 ? (
+                                  <Typography color="error" fontWeight="medium">
+                                    -{mistake.deductions} points
+                                  </Typography>
+                                ) : (
+                                  <Typography color="warning" variant="body2">
+                                    Minor impact
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {(() => {
+                                    const issue = mistake.description || mistake.reasons || '';
+                                    if (issue.toLowerCase().includes('missing')) {
+                                      return 'Include this element in future submissions';
+                                    } else if (issue.toLowerCase().includes('unclear') || issue.toLowerCase().includes('vague')) {
+                                      return 'Provide more specific and detailed explanations';
+                                    } else if (issue.toLowerCase().includes('incorrect')) {
+                                      return 'Review the correct approach or concept';
+                                    } else {
+                                      return 'Focus on improving clarity and completeness';
+                                    }
+                                  })()}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </CardContent>
+                </Card>
+              </Grid>
+            )}
             
             {/* For single submissions, show question and answer texts */}
             {!results.student_results && results.student_name && (
@@ -969,6 +1153,27 @@ export default function ResultsPage() {
                       gradingFeedback={(selectedStudent && results.student_results && 
                         results.student_results[selectedStudent]?.grading_feedback) || 
                         results.grading_feedback}
+                      rubric={results.rubric}
+                      criteriaScores={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.criteria_scores) || 
+                        results.criteria_scores}
+                      mistakes={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.mistakes) || 
+                        results.mistakes}
+                      score={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.score) || 
+                        results.score}
+                      maxScore={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.total) || 
+                        results.total}
+                      percentage={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.percentage) || 
+                        results.percentage}
+                      gradeLetter={(selectedStudent && results.student_results && 
+                        results.student_results[selectedStudent]?.grade_letter) || 
+                        results.grade_letter}
+                      answerKey={results.answer_key}
+                      assignmentName={results.assignment_name}
                     />
                   </Box>
                 </CardContent>
@@ -984,8 +1189,150 @@ export default function ResultsPage() {
         )}
       </TabPanel>
       
+      {/* Grade Comparison Tab */}
+      {results?.canvas_comparison && (
+        <TabPanel value={tabValue} index={2}>
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    AI Grade vs Canvas Posted Grade
+                  </Typography>
+                  <Divider sx={{ mb: 3 }} />
+                  
+                  <Grid container spacing={3}>
+                    {/* AI Grade Card */}
+                    <Grid item xs={12} md={6}>
+                      <Card variant="outlined" sx={{ bgcolor: 'primary.50' }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            AI Grade ({results.ai_model_used || 'Unknown Model'})
+                          </Typography>
+                          <Typography variant="h4" fontWeight="bold" color="primary.main">
+                            {results.score?.toFixed(1)} / {results.total?.toFixed(1)}
+                          </Typography>
+                          <Typography variant="h6" color="text.secondary">
+                            {results.percentage?.toFixed(1)}% ({results.grade_letter})
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Canvas Grade Card */}
+                    <Grid item xs={12} md={6}>
+                      <Card variant="outlined" sx={{ bgcolor: 'info.50' }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Canvas Posted Grade
+                          </Typography>
+                          {results.canvas_comparison?.canvas_posted_score !== null && results.canvas_comparison?.canvas_posted_score !== undefined ? (
+                            <>
+                              <Typography variant="h4" fontWeight="bold" color="info.main">
+                                {results.canvas_comparison.canvas_posted_score.toFixed(1)} / {results.total?.toFixed(1)}
+                              </Typography>
+                              <Typography variant="h6" color="text.secondary">
+                                {results.canvas_comparison.canvas_posted_percentage?.toFixed(1)}%
+                              </Typography>
+                            </>
+                          ) : (
+                            <Typography variant="body1" color="text.secondary">
+                              No grade posted yet
+                            </Typography>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Comparison Stats */}
+                    {results.canvas_comparison?.score_difference !== null && results.canvas_comparison?.score_difference !== undefined && (
+                      <Grid item xs={12}>
+                        <Card variant="outlined">
+                          <CardContent>
+                            <Typography variant="subtitle1" gutterBottom>
+                              Comparison Analysis
+                            </Typography>
+                            <Grid container spacing={2} sx={{ mt: 1 }}>
+                              <Grid item xs={12} sm={6}>
+                                <Box>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Score Difference
+                                  </Typography>
+                                  <Typography 
+                                    variant="h6" 
+                                    color={
+                                      Math.abs(results.canvas_comparison.score_difference) <= 1 ? 'success.main' :
+                                      Math.abs(results.canvas_comparison.score_difference) <= 5 ? 'warning.main' : 'error.main'
+                                    }
+                                  >
+                                    {results.canvas_comparison.score_difference > 0 ? '+' : ''}
+                                    {results.canvas_comparison.score_difference.toFixed(2)} points
+                                  </Typography>
+                                </Box>
+                              </Grid>
+                              <Grid item xs={12} sm={6}>
+                                <Box>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Percentage Difference
+                                  </Typography>
+                                  <Typography 
+                                    variant="h6"
+                                    color={
+                                      Math.abs(results.canvas_comparison.percentage_difference || 0) <= 1 ? 'success.main' :
+                                      Math.abs(results.canvas_comparison.percentage_difference || 0) <= 5 ? 'warning.main' : 'error.main'
+                                    }
+                                  >
+                                    {results.canvas_comparison.percentage_difference && results.canvas_comparison.percentage_difference > 0 ? '+' : ''}
+                                    {results.canvas_comparison.percentage_difference?.toFixed(2)}%
+                                  </Typography>
+                                </Box>
+                              </Grid>
+                              <Grid item xs={12}>
+                                <Chip
+                                  label={
+                                    results.canvas_comparison.comparison_status === 'exact_match' ? 'Exact Match' :
+                                    results.canvas_comparison.comparison_status === 'close_match' ? 'Close Match' :
+                                    results.canvas_comparison.comparison_status === 'moderate_difference' ? 'Moderate Difference' :
+                                    results.canvas_comparison.comparison_status === 'significant_difference' ? 'Significant Difference' :
+                                    'No Comparison Available'
+                                  }
+                                  color={
+                                    results.canvas_comparison.comparison_status === 'exact_match' ? 'success' :
+                                    results.canvas_comparison.comparison_status === 'close_match' ? 'info' :
+                                    results.canvas_comparison.comparison_status === 'moderate_difference' ? 'warning' :
+                                    'error'
+                                  }
+                                  sx={{ mt: 1 }}
+                                />
+                              </Grid>
+                            </Grid>
+                            {results.canvas_comparison.canvas_submission_url && (
+                              <Box sx={{ mt: 2 }}>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  href={results.canvas_comparison.canvas_submission_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  View Canvas Submission
+                                </Button>
+                              </Box>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    )}
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </TabPanel>
+      )}
+      
       {/* Analytics Tab */}
-      <TabPanel value={tabValue} index={2}>
+      <TabPanel value={tabValue} index={results?.canvas_comparison ? 3 : 2}>
         <Card>
           <CardContent>
             <Typography variant="h6" gutterBottom>
@@ -1006,264 +1353,14 @@ export default function ResultsPage() {
       </TabPanel>
       
       {/* Files Tab */}
-      <TabPanel value={tabValue} index={3}>
-        {loadingFiles ? (
-          <Box display="flex" justifyContent="center" my={4}>
-            <CircularProgress />
-          </Box>
-        ) : !files ? (
-          <Alert severity="info">No files found for this submission.</Alert>
-        ) : (
-          <Grid container spacing={3}>
-            {/* Files List */}
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Submission Files
-                  </Typography>
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {/* Question Papers */}
-                  {files.question_papers && files.question_papers.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom>
-                        Question Papers
-                      </Typography>
-                      <List>
-                        {files.question_papers.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Student Submissions */}
-                  {files.submissions && files.submissions.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Student Submissions
-                      </Typography>
-                      <List>
-                        {files.submissions.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Answer Keys */}
-                  {files.answer_keys && files.answer_keys.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Answer Keys
-                      </Typography>
-                      <List>
-                        {files.answer_keys.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-                    </>
-                  )}
-                  
-                  {/* Original Files */}
-                  {files.original_files && files.original_files.length > 0 && (
-                    <>
-                      <Typography variant="subtitle1" fontWeight="medium" color="primary" gutterBottom sx={{ mt: 3 }}>
-                        Other Files
-                      </Typography>
-                      <List>
-                        {files.original_files.map((file, index) => (
-                          <ListItem 
-                            key={index} 
-                            disablePadding
-                            secondaryAction={
-                              <IconButton 
-                                edge="end" 
-                                aria-label="download"
-                                href={`${axios.defaults.baseURL}${file.path}`}
-                                target="_blank"
-                                rel="noopener"
-                              >
-                                <DownloadIcon />
-                              </IconButton>
-                            }
-                          >
-                            <ListItemButton onClick={() => handleFileSelect(file)}>
-                              <ListItemIcon>
-                                {getFileIcon(file.content_type)}
-                              </ListItemIcon>
-                              <ListItemText 
-                                primary={file.filename} 
-                                secondary={`${formatFileSize(file.size)} · ${new Date(file.last_modified).toLocaleDateString()}`}
-                              />
-                            </ListItemButton>
-                          </ListItem>
-                        ))}
-                      </List>
-        </>
-      )}
-      
-                  {/* No files found */}
-                  {(!files.question_papers || files.question_papers.length === 0) &&
-                   (!files.submissions || files.submissions.length === 0) &&
-                   (!files.answer_keys || files.answer_keys.length === 0) &&
-                   (!files.original_files || files.original_files.length === 0) && (
-                    <Box textAlign="center" py={4}>
-                      <Typography variant="body1" color="text.secondary">
-                        No files found for this submission.
-                      </Typography>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-            
-            {/* PDF/File Viewer */}
-            <Grid item xs={12} md={6}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Typography variant="h6" gutterBottom>
-                    File Preview
-                  </Typography>
-                  <Divider sx={{ mb: 2 }} />
-                  
-                  {selectedFile ? (
-                    <>
-                      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                        <Typography variant="subtitle1">
-                          {selectedFile.filename}
-                        </Typography>
-                        <Button 
-                          variant="outlined" 
-                          startIcon={<OpenInNewIcon />}
-                          href={`${axios.defaults.baseURL}${selectedFile.path}`}
-                          target="_blank"
-                        >
-                          Open in New Tab
-                        </Button>
-                      </Box>
-                      
-                      {selectedFile.content_type.includes('pdf') ? (
-                        <Box sx={{ flexGrow: 1, minHeight: 500 }}>
-                          <iframe 
-                            src={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            style={{ width: '100%', height: '100%', minHeight: 500, border: 'none' }}
-                            title={selectedFile.filename}
-                          />
-                        </Box>
-                      ) : selectedFile.content_type.includes('image') ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1 }}>
-                          <img 
-                            src={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            alt={selectedFile.filename}
-                            style={{ maxWidth: '100%', maxHeight: 500, objectFit: 'contain' }}
-                          />
-                        </Box>
-                      ) : (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexGrow: 1 }}>
-                          {getFileIcon(selectedFile.content_type)}
-                          <Typography variant="body1" sx={{ mt: 2 }}>
-                            This file type cannot be previewed directly.
-                          </Typography>
-                          <Button
-                            variant="contained"
-                            startIcon={<DownloadIcon />}
-                            href={`${axios.defaults.baseURL}${selectedFile.path}`}
-                            download
-                            sx={{ mt: 2 }}
-                          >
-                            Download File
-                          </Button>
-                        </Box>
-                      )}
-                    </>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexGrow: 1 }}>
-                      <ArticleIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
-                      <Typography variant="body1" color="text.secondary">
-                        Select a file to preview
-        </Typography>
-      </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
-        )}
+      <TabPanel value={tabValue} index={results?.canvas_comparison ? 4 : 3}>
+        <FileBrowser 
+          assignmentId={id as string}
+          title="Assignment Files"
+          showCategories={true}
+        />
       </TabPanel>
-    </Container>
+      </Container>
+    </div>
   );
 } 

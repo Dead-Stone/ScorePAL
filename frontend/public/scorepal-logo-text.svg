@@ -1,0 +1,23 @@
+<svg width="400" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .brand-blue { fill: #1D80C3; }
+      .brand-text { font-family: 'Arial', 'Helvetica', sans-serif; font-weight: bold; }
+    </style>
+  </defs>
+  
+  <rect x="10" y="10" width="180" height="180" rx="30" ry="30" class="brand-blue" />
+  
+  <rect x="50" y="50" width="35" height="35" rx="4" fill="white" />
+  <rect x="95" y="50" width="35" height="35" rx="4" fill="white" />
+  
+  <path d="M 45 115 L 80 150 L 145 80" 
+        stroke="white" 
+        stroke-width="28" 
+        fill="none" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+  
+  <text x="220" y="95" class="brand-blue brand-text" font-size="95" letter-spacing="-2">score</text>
+  <text x="220" y="180" class="brand-blue brand-text" font-size="90" letter-spacing="1">PAL</text>
+</svg>

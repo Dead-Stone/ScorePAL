@@ -35,7 +35,7 @@ def get_grading_prompt(question_text: str, answer_key: str, submission: str, rub
     max_score_pct = 100 - (strictness_level * 2)
     
     # Construct the prompt
-    prompt = f"""You are an experienced instructor tasked with evaluating a student's exam submission. Utilize the provided question, rubric, and student response to assess the submission. Follow the ReAct (Reasoning and Acting) framework to ensure a thorough and structured evaluation.
+    prompt = f"""You are an experienced instructor tasked with evaluating a student's exam submission using a structured rubric-based approach. Your primary focus is to assess the submission against each specific rubric criterion, providing detailed feedback for each area. Follow the ReAct (Reasoning and Acting) framework to ensure a thorough and structured evaluation.
 
 ---
 
@@ -128,14 +128,15 @@ Action: Assess "Clarity of Explanation" - Deduct 1 point for lack of precision.
 {submission}
 
 **Instructions:**
-1. Analyze the student's response in relation to the question and rubric.
-2. For each criterion in the rubric, determine if the student met the expectations.
-3. Use the ReAct framework:
-   - Thought: Reflect on the student's response concerning each criterion.
-   - Action: Assess points earned for each criterion and provide specific feedback.
-4. Compile the scores and feedback into a structured JSON object.
-5. Always give specific feedback for each criterion.
-6. Apply a {strictness_desc} grading approach as specified.
+1. **Rubric-First Approach**: Start by analyzing each rubric criterion individually.
+2. **Criterion-by-Criterion Assessment**: For each criterion in the rubric, determine if the student met the expectations.
+3. **Use the ReAct framework for each criterion**:
+   - Thought: Reflect on how well the student's response addresses this specific criterion.
+   - Action: Assess points earned for this criterion and provide specific, actionable feedback.
+4. **Ensure Comprehensive Coverage**: Every rubric criterion must be evaluated, even if the student didn't address it.
+5. **Specific Feedback**: Provide detailed, constructive feedback for each criterion that explains what was done well and what needs improvement.
+6. **Compile Results**: Create a structured JSON object with scores and feedback for each criterion.
+7. **Apply {strictness_desc} grading approach** as specified.
 
 **Output Format:**
 Provide only the JSON object in the following format:

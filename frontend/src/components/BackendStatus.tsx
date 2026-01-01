@@ -7,7 +7,7 @@
  * @repository https://github.com/Dead-Stone/ScorePAL
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Button,
@@ -70,15 +70,15 @@ const StatusButton = styled(Button)<{ statuscolor: string }>(({ theme, statuscol
 const BackendStatus: React.FC = () => {
   const [status, setStatus] = useState<BackendStatusData>({
     status: 'offline',
-    message: 'Checking...',
+    message: 'Click to check status',
     timestamp: new Date().toISOString(),
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   const checkBackendStatus = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/health', { timeout: 5000 });
+      const response = await axios.get('http://localhost:8000/health', { timeout: 5000 });
       
       if (response.data) {
         setStatus({
@@ -115,11 +115,7 @@ const BackendStatus: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    checkBackendStatus();
-    const interval = setInterval(checkBackendStatus, 30000); // Check every 30 seconds
-    return () => clearInterval(interval);
-  }, []);
+  // No automatic backend check on mount - only when button is clicked
 
   const getStatusColor = () => {
     switch (status.status) {

@@ -18,7 +18,7 @@ export default async function handler(req, res) {
 
     // Forward request to backend with extended timeout for grading operations
     const response = await axios.post(
-      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/grade-selected-submissions`,
+      `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/grade-selected-submissions`,
       {
         sync_job_id: sync_job_id,
         selected_user_ids: selected_user_ids,

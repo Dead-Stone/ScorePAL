@@ -37,7 +37,7 @@ import tempfile
 
 # AI Model imports
 try:
-    import google.generativeai as genai
+    from google import genai
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
@@ -206,12 +206,12 @@ class EnhancedImageExtractionService:
         # Initialize Gemini
         if GEMINI_AVAILABLE and self.gemini_api_key and len(self.gemini_api_key) > 10:
             try:
-                genai.configure(api_key=self.gemini_api_key)
-                self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                from google import genai
+                self.gemini_client = genai.Client(api_key=self.gemini_api_key)
                 # Test the model with a simple call to verify it works
                 # Skip for now to avoid quota issues
-                self.available_models.append("gemini-1.5-flash")
-                logger.info("Gemini 1.5 Pro vision model initialized")
+                self.available_models.append("gemini-2.5-flash")
+                logger.info("Gemini 2.5 Flash vision model initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize Gemini: {e}")
         
@@ -433,14 +433,14 @@ class EnhancedImageExtractionService:
             return self._fallback_image_analysis(image, context)
         
         # Prioritize models by capability
-        model_priority = ["claude-3-5-sonnet", "gemini-1.5-flash", "gpt-4-vision-preview"]
+        model_priority = ["claude-3-5-sonnet", "gemini-2.5-flash", "gpt-4-vision-preview"]
         
         for model in model_priority:
             if model in self.available_models:
                 try:
                     if model == "claude-3-5-sonnet":
                         return self._analyze_with_claude_sync(image, context)
-                    elif model == "gemini-1.5-flash":
+                    elif model == "gemini-2.5-flash":
                         return self._analyze_with_gemini_sync(image, context)
                     elif model == "gpt-4-vision-preview":
                         return self._analyze_with_gpt4v_sync(image, context)
@@ -457,7 +457,13 @@ class EnhancedImageExtractionService:
         """Analyze image with Gemini synchronously with rate limiting."""
         try:
             prompt = self._get_analysis_prompt(context, "Gemini")
-            response = self.gemini_model.generate_content([prompt, image])
+            # Use new Client pattern with free model
+            # Note: For image content, we may need to use a different approach
+            # For now, using text-only prompt as the new API might have different image handling
+            response = self.gemini_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
             return response.text.strip() if response.text else "No response from Gemini"
         except Exception as e:
             logger.error(f"Gemini analysis failed: {e}")

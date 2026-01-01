@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { normalizeCanvasUrl } from '../../../utils/canvas';
+import { API_BASE_URL } from '../../../config/api';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -22,8 +23,10 @@ export default async function handler(req, res) {
 
     // Forward request to backend with query parameters
     // Use the /api/canvas/courses endpoint that works with the session-based canvas_service_global
+    // Using centralized API config - change in /src/config/api.js for all endpoints
+    // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/canvas/courses`, {
     const response = await axios.get(
-      `${process.env.BACKEND_URL || 'https://34-13-75-235.nip.io'}/api/canvas/courses`,
+      `${API_BASE_URL}/api/canvas/courses`,
       {
         // No need to pass canvas_url and api_key here as they're already stored in the session
       }

@@ -40,7 +40,7 @@ except ImportError:
 # PaddleOCR imports
 try:
     from paddleocr import PaddleOCR
-    paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+    paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en')
     paddle_available = True
 except ImportError:
     logger.warning("paddleocr package not installed. PaddleOCR will not be available.")
@@ -766,3 +766,269 @@ def extract_submissions(zip_file_path: str) -> dict[str, str]:
     
     logger.info(f"Processed {len(submissions)} submissions")
     return submissions
+
+def extract_academic_content_enhanced(file_path: str) -> str:
+    """
+    Enhanced extraction specifically for academic documents with technical content.
+    Optimized for homework, assignments, and technical documents.
+    
+    Args:
+        file_path: Path to the document
+        
+    Returns:
+        Enhanced extracted text with better structure and formatting
+    """
+    try:
+        logger.info(f"Starting enhanced academic content extraction for: {file_path}")
+        
+        # First, try to extract with multiple OCR engines
+        results = {}
+        
+        # Try PaddleOCR first (best for structured content)
+        if paddle_available:
+            try:
+                results["paddle"] = extract_with_paddleocr(file_path, save_data=False)
+                logger.info("PaddleOCR extraction completed")
+            except Exception as e:
+                logger.warning(f"PaddleOCR failed: {e}")
+        
+        # Try EasyOCR (good for handwritten and complex fonts)
+        if easyocr_available:
+            try:
+                results["easyocr"] = extract_with_easyocr(file_path)
+                logger.info("EasyOCR extraction completed")
+            except Exception as e:
+                logger.warning(f"EasyOCR failed: {e}")
+        
+        # Try Tesseract (good for clean text)
+        if tesseract_available:
+            try:
+                results["tesseract"] = extract_with_tesseract(file_path, save_data=False)
+                logger.info("Tesseract extraction completed")
+            except Exception as e:
+                logger.warning(f"Tesseract failed: {e}")
+        
+        # Select the best result
+        if not results:
+            logger.error("All OCR methods failed")
+            return ""
+        
+        # Choose the result with the most content
+        best_result = max(results.items(), key=lambda x: len(x[1]))[1]
+        
+        # Enhance the extracted content
+        enhanced_text = enhance_academic_content(best_result)
+        
+        logger.info(f"Enhanced extraction completed. Original length: {len(best_result)}, Enhanced length: {len(enhanced_text)}")
+        
+        return enhanced_text
+        
+    except Exception as e:
+        logger.error(f"Enhanced academic content extraction failed: {e}")
+        return ""
+
+def enhance_academic_content(text: str) -> str:
+    """
+    Enhance extracted academic content with better formatting and structure.
+    
+    Args:
+        text: Raw extracted text
+        
+    Returns:
+        Enhanced text with better structure
+    """
+    if not text:
+        return ""
+    
+    # Clean up common OCR artifacts
+    enhanced = text.strip()
+    
+    # Fix common OCR issues
+    enhanced = enhanced.replace("|", "I")  # Common OCR mistake
+    enhanced = enhanced.replace("0", "O")  # In context where it makes sense
+    enhanced = enhanced.replace("1", "l")  # In context where it makes sense
+    
+    # Improve question numbering
+    import re
+    
+    # Fix question numbers (e.g., "1." -> "1.")
+    enhanced = re.sub(r'(\d+)\s*\.', r'\1.', enhanced)
+    
+    # Fix sub-question formatting (e.g., "a." -> "a.")
+    enhanced = re.sub(r'([a-z])\s*\.', r'\1.', enhanced)
+    
+    # Fix IPv6 address formatting
+    enhanced = re.sub(r'(\d+):\s*(\d+)', r'\1:\2', enhanced)  # Remove spaces in IPv6
+    
+    # Fix IP address formatting
+    enhanced = re.sub(r'(\d+)\.\s*(\d+)', r'\1.\2', enhanced)  # Remove spaces in IP addresses
+    
+    # Improve paragraph breaks
+    enhanced = re.sub(r'\n\s*\n\s*\n+', '\n\n', enhanced)  # Remove excessive line breaks
+    
+    # Fix bullet points
+    enhanced = re.sub(r'•\s*', '• ', enhanced)
+    enhanced = re.sub(r'-\s*', '- ', enhanced)
+    
+    # Fix technical terms
+    technical_fixes = {
+        "subnet ting": "subnetting",
+        "IP v6": "IPv6",
+        "IP v4": "IPv4",
+        "broad cast": "broadcast",
+        "net work": "network",
+        "rout ing": "routing",
+        "ad dress": "address",
+        "pre fix": "prefix",
+        "mask": "mask",
+        "ag gregation": "aggregation",
+        "super netting": "supernetting",
+        "class ful": "classful",
+        "class less": "classless"
+    }
+    
+    for wrong, correct in technical_fixes.items():
+        enhanced = enhanced.replace(wrong, correct)
+    
+    # Improve structure for questions
+    # Find and format question sections
+    question_pattern = r'(\d+\.\s*[A-Z][^.]*\.)'
+    enhanced = re.sub(question_pattern, r'\n\n\1', enhanced)
+    
+    # Find and format sub-questions
+    sub_question_pattern = r'([a-z]\.\s*[A-Z][^.]*\.)'
+    enhanced = re.sub(sub_question_pattern, r'\n\1', enhanced)
+    
+    # Clean up excessive whitespace
+    enhanced = re.sub(r'\s+', ' ', enhanced)
+    enhanced = re.sub(r'\n\s*\n\s*\n+', '\n\n', enhanced)
+    
+    # Add structure markers for better parsing
+    enhanced = enhanced.replace("Question:", "\nQuestion:")
+    enhanced = enhanced.replace("Answer:", "\nAnswer:")
+    enhanced = enhanced.replace("Solution:", "\nSolution:")
+    
+    return enhanced.strip()
+
+def extract_networking_homework_content(file_path: str) -> str:
+    """
+    Specialized extraction for networking homework documents.
+    
+    Args:
+        file_path: Path to the networking homework document
+        
+    Returns:
+        Extracted and enhanced networking content
+    """
+    try:
+        logger.info(f"Starting specialized networking homework extraction: {file_path}")
+        
+        # Extract base content
+        base_content = extract_academic_content_enhanced(file_path)
+        
+        if not base_content:
+            logger.error("Failed to extract base content")
+            return ""
+        
+        # Apply networking-specific enhancements
+        enhanced_content = enhance_networking_content(base_content)
+        
+        logger.info(f"Networking homework extraction completed. Length: {len(enhanced_content)}")
+        
+        return enhanced_content
+        
+    except Exception as e:
+        logger.error(f"Networking homework extraction failed: {e}")
+        return ""
+
+def enhance_networking_content(text: str) -> str:
+    """
+    Apply networking-specific content enhancements.
+    
+    Args:
+        text: Base extracted text
+        
+    Returns:
+        Enhanced networking content
+    """
+    if not text:
+        return ""
+    
+    import re
+    
+    enhanced = text
+    
+    # Fix common networking terminology
+    networking_fixes = {
+        "subnet ting": "subnetting",
+        "IP v6": "IPv6", 
+        "IP v4": "IPv4",
+        "broad cast": "broadcast",
+        "net work": "network",
+        "rout ing": "routing",
+        "ad dress": "address",
+        "pre fix": "prefix",
+        "sub net": "subnet",
+        "net work": "network",
+        "ag gregation": "aggregation",
+        "super netting": "supernetting",
+        "class ful": "classful",
+        "class less": "classless",
+        "dis tance": "distance",
+        "vec tor": "vector",
+        "link state": "link-state",
+        "rout ing": "routing",
+        "pro tocol": "protocol",
+        "band width": "bandwidth",
+        "de lay": "delay",
+        "lat ency": "latency"
+    }
+    
+    for wrong, correct in networking_fixes.items():
+        enhanced = enhanced.replace(wrong, correct)
+    
+    # Fix IPv6 address formatting
+    # Remove spaces in IPv6 addresses
+    enhanced = re.sub(r'(\d+):\s*(\d+)', r'\1:\2', enhanced)
+    enhanced = re.sub(r'([a-fA-F0-9]+):\s*([a-fA-F0-9]+)', r'\1:\2', enhanced)
+    
+    # Fix IPv4 address formatting
+    enhanced = re.sub(r'(\d+)\.\s*(\d+)\.\s*(\d+)\.\s*(\d+)', r'\1.\2.\3.\4', enhanced)
+    
+    # Fix subnet mask notation
+    enhanced = re.sub(r'(\d+)\.\s*(\d+)\.\s*(\d+)\.\s*(\d+)\s*/\s*(\d+)', r'\1.\2.\3.\4/\5', enhanced)
+    
+    # Fix CIDR notation
+    enhanced = re.sub(r'(\d+\.\d+\.\d+\.\d+)\s*/\s*(\d+)', r'\1/\2', enhanced)
+    
+    # Improve question structure
+    # Find numbered questions and format them
+    question_pattern = r'(\d+\.\s*[A-Z][^.]*?[?:])'
+    enhanced = re.sub(question_pattern, r'\n\n\1', enhanced)
+    
+    # Find sub-questions (a, b, c, etc.)
+    sub_question_pattern = r'([a-z]\.\s*[A-Z][^.]*?[?:])'
+    enhanced = re.sub(sub_question_pattern, r'\n\1', enhanced)
+    
+    # Fix technical terms with proper spacing
+    technical_terms = [
+        "subnetting", "IPv6", "IPv4", "broadcast", "network", "routing", 
+        "address", "prefix", "mask", "aggregation", "supernetting", 
+        "classful", "classless", "distance-vector", "link-state"
+    ]
+    
+    for term in technical_terms:
+        # Ensure proper spacing around technical terms
+        enhanced = re.sub(rf'\b{term}\b', f' {term} ', enhanced)
+    
+    # Clean up excessive whitespace
+    enhanced = re.sub(r'\s+', ' ', enhanced)
+    enhanced = re.sub(r'\n\s*\n\s*\n+', '\n\n', enhanced)
+    
+    # Add structure for better readability
+    enhanced = enhanced.replace("Question:", "\nQuestion:")
+    enhanced = enhanced.replace("Answer:", "\nAnswer:")
+    enhanced = enhanced.replace("Solution:", "\nSolution:")
+    enhanced = enhanced.replace("Explanation:", "\nExplanation:")
+    
+    return enhanced.strip()

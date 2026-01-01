@@ -14,6 +14,7 @@ This module defines the FastAPI routes for the application.
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query, APIRouter, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 import os
 import json
@@ -22,6 +23,7 @@ import shutil
 import zipfile
 from pathlib import Path
 import uuid
+from uuid import uuid4
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import asyncio
@@ -30,25 +32,39 @@ import mimetypes
 import tempfile
 import time
 import psutil
+from pydantic import BaseModel
+
+"""
+Main FastAPI API module for ScorePAL.
+
+Note: This file was refactored to use the new services in `backend/services`
+instead of the legacy `preprocessing_v2` / `grading_v2` modules.
+"""
 
 # Import our existing services
-from preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
-from grading_v2 import GradingService
+from services.file_preprocessor import FilePreprocessor
+from services.grading_service import GradingService
 from utils.neo4j_connector import Neo4jConnector
 from utils.directory_utils import ensure_directory_structure
-from rubric_api import router as rubric_router
+from rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
 from canvas_service import CanvasGradingService
 from config import get_settings  # Use absolute import
 from multi_agent_grading import MultiAgentGradingSystem
 from chat_api import router as chat_router
 
-# Try to import our custom canvas routes
-try:
-    from api.canvas_routes import router as custom_canvas_router
-    has_custom_canvas_routes = True
-except ImportError:
-    has_custom_canvas_routes = False
-    logger.warning("Could not import custom canvas routes")
+from ai_extraction_service import ai_extraction_service, ExtractionResult
+from rubric_generation import get_rubric_from_text
+from auth.auth_config import require_roles
+from models.user import User, UserRole
+
+# Import MongoDB services
+from services.results_service import save_grading_result
+from services.mongodb_service import get_submissions_collection, get_assignments_collection
+from models.submission import Submission, SubmissionCreate
+
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -63,9 +79,22 @@ except ImportError:
     PSUTIL_AVAILABLE = False
     logger.warning("psutil not available - system metrics will be limited")
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Try to import our custom canvas routes
+try:
+    from .api.canvas_routes import router as custom_canvas_router
+    has_custom_canvas_routes = True
+except ImportError:
+    has_custom_canvas_routes = False
+    logger.warning("Could not import custom canvas routes")
+
+# Import authentication system
+try:
+    from .auth import auth_router, current_active_user
+    has_auth_system = True
+    logger.info("Authentication system imported successfully")
+except ImportError as e:
+    has_auth_system = False
+    logger.warning(f"Could not import authentication system: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -73,6 +102,9 @@ app = FastAPI(
     description="API for the ScorePAL grading system",
     version="1.0.0",
 )
+
+# Add compression middleware for faster responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure CORS - Allow all origins for development
 app.add_middleware(
@@ -85,9 +117,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(rubric_router, tags=["rubrics"])
+app.include_router(rubric_router, prefix="/api", tags=["rubrics"])
 
 # Import and include the knowledge graph router
-from knowledge_graph_api import router as knowledge_graph_router
+from .knowledge_graph_api import router as knowledge_graph_router
 app.include_router(knowledge_graph_router)
 
 # Include the chat router
@@ -95,7 +128,7 @@ app.include_router(chat_router)
 
 # Include image extraction router
 try:
-    from api.image_extraction import router as image_extraction_router
+    from .api.image_extraction import router as image_extraction_router
     app.include_router(image_extraction_router, tags=["image-extraction"])
     logger.info("Image extraction router included successfully")
 except ImportError as e:
@@ -105,11 +138,90 @@ except ImportError as e:
 if has_custom_canvas_routes:
     app.include_router(custom_canvas_router, prefix="/api/canvas", tags=["Canvas"])
 
+# Include authentication routes if available
+if has_auth_system:
+    app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+    logger.info("Authentication routes included successfully")
+
+# Include results routes
+try:
+    from .api.results_routes import router as results_router
+    app.include_router(results_router)
+    logger.info("Results routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import results routes: {e}")
+
+# Include analytics routes
+try:
+    from api.analytics_routes import router as analytics_router
+    app.include_router(analytics_router)
+    logger.info("Analytics routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import analytics routes: {e}")
+
+# Include settings routes (Canvas/API key configuration)
+try:
+    from api.settings_routes import router as settings_router
+    # settings_router already has prefix="/api/settings"
+    app.include_router(settings_router)
+    logger.info("Settings routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import settings routes: {e}")
+
+# Include credits routes
+try:
+    from api.credits_routes import router as credits_router
+    app.include_router(credits_router)
+    logger.info("Credits routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import credits routes: {e}")
+
+# Include public grading routes (no authentication required)
+try:
+    from api.grade_public_routes import router as public_grade_router
+    app.include_router(public_grade_router)
+    
+    # Institution management routes
+    try:
+        from .api.institution_routes import router as institution_router
+        app.include_router(institution_router, prefix="/api", tags=["Institutions"])
+        logger.info("Institution management routes imported successfully")
+    except ImportError as e:
+        logger.warning(f"Could not import institution routes: {e}")
+    logger.info("Public grading routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import public grading routes: {e}")
+
+# Include AI configuration routes
+try:
+    from api.ai_config_routes import router as ai_config_router
+    app.include_router(ai_config_router, prefix="/api/ai-config", tags=["AI Configuration"])
+    logger.info("AI configuration routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import AI configuration routes: {e}")
+
+# Include LTI routes
+try:
+    from .api.lti_routes import router as lti_router
+    app.include_router(lti_router, tags=["LTI"])
+    logger.info("LTI routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import LTI routes: {e}")
+
 # Initialize services
 try:
     # Ensure directories exist before initializing services
     directories = ensure_directory_structure()
     logger.info("Directory structure ensured")
+    
+    # Initialize MongoDB indexes
+    try:
+        from .services.mongodb_service import initialize_indexes
+        import asyncio
+        # Try to initialize indexes (will be done properly on startup event)
+        logger.info("MongoDB indexes will be initialized on startup")
+    except Exception as e:
+        logger.warning(f"Could not prepare MongoDB index initialization: {e}")
     
     file_preprocessor = FilePreprocessor()
     logger.info("FilePreprocessor initialized")
@@ -126,12 +238,138 @@ try:
         logger.info("Neo4j database connected")
     else:
         logger.warning("Neo4j database not connected")
+    
+    # Initialize authentication database
+    if has_auth_system:
+        try:
+            # MongoDB will be initialized asynchronously in startup event
+            logger.info("Authentication system will be initialized on startup")
+        except Exception as auth_error:
+            logger.error(f"Error preparing authentication system: {auth_error}")
 except Exception as e:
     logger.error(f"Error initializing services: {e}", exc_info=True)
     # We'll continue without failing, but the API might not function properly
 
+# Add startup event for MongoDB initialization
+@app.on_event("startup")
+async def startup_event():
+    """Initialize MongoDB and other async services on startup"""
+    # Initialize MongoDB indexes
+    try:
+        from .services.mongodb_service import initialize_indexes
+        await initialize_indexes()
+        logger.info("MongoDB indexes initialized successfully")
+    except Exception as e:
+        logger.warning(f"Could not initialize MongoDB indexes: {e}")
+    
+    if has_auth_system:
+        try:
+            from auth.auth_config import create_db_and_tables
+            await create_db_and_tables()
+            logger.info("MongoDB authentication system initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing MongoDB authentication system: {e}")
+
 # Background task queue
 background_tasks = {}
+
+class RubricGenerationRequest(BaseModel):
+    """
+    Request model for AI-powered rubric generation.
+    """
+    name: str
+    context: str
+    question: Optional[str] = None
+
+# ---------------------------------------------------------------------------
+# Rubric generation endpoint
+# ---------------------------------------------------------------------------
+@app.post("/generate-rubric")
+async def generate_rubric(
+    payload: RubricGenerationRequest,
+    user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))
+):
+    """
+    Generate a rubric using Gemini and store it for reuse.
+    Only accessible to teachers and graders.
+    """
+    try:
+        logger.info("Received rubric generation request")
+        raw_rubric = get_rubric_from_text(
+            payload.question or "",
+            payload.context or "",
+            os.getenv("GEMINI_API_KEY"),
+        )
+        
+        criteria: List[Dict[str, Any]] = []
+        total_points = 0.0
+        
+        sections = raw_rubric.get("sections") or []
+        if sections:
+            for section in sections:
+                section_name = section.get("name") or section.get("question") or "Section"
+                for criterion in section.get("criteria", []):
+                    max_points = (
+                        criterion.get("points")
+                        or criterion.get("max_points")
+                        or section.get("max_points")
+                        or 0
+                    )
+                    levels = [
+                        {
+                            "level": level.get("level"),
+                            "points": level.get("points"),
+                            "description": level.get("description"),
+                        }
+                        for level in criterion.get("grading_scale", [])
+                    ]
+                    criteria.append(
+                        {
+                            "name": f"{section_name} - {criterion.get('name', 'Criterion')}",
+                            "description": criterion.get("description", ""),
+                            "max_points": max_points,
+                            "weight": criterion.get("weight", 1.0),
+                            "levels": levels,
+                        }
+                    )
+                    total_points += max_points or 0
+        else:
+            criteria = raw_rubric.get("criteria", [])
+            if isinstance(criteria, list):
+                total_points = sum(c.get("max_points", 0) for c in criteria)
+        
+        if not criteria:
+            raise HTTPException(status_code=500, detail="Generated rubric did not contain any criteria")
+        
+        if not total_points:
+            total_points = raw_rubric.get("total_points", len(criteria) * 5)
+        
+        rubric_id = f"rubric_{len(RUBRICS) + 1}"
+        now_iso = datetime.utcnow().isoformat()
+        new_rubric = {
+            "id": rubric_id,
+            "name": payload.name or raw_rubric.get("name") or "Generated Rubric",
+            "description": payload.context or raw_rubric.get("description", ""),
+            "criteria": criteria,
+            "total_points": total_points,
+            "strictness": 0.5,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        
+        RUBRICS[rubric_id] = new_rubric
+        save_rubrics_to_disk()
+        
+        logger.info(f"Generated rubric '{new_rubric['name']}' with {len(criteria)} criteria")
+        return {
+            "status": "success",
+            "rubric": new_rubric,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error generating rubric: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 # File upload handling
 async def save_upload_file(upload_file: UploadFile, destination: Path) -> Path:
@@ -863,11 +1101,54 @@ async def grade_assignment_task(assignment_id: str, assignment: Dict[str, Any]):
             for directory in [results_dir, batch_dir, student_results_dir]:
                 directory.mkdir(parents=True, exist_ok=True)
             
-            # Save each student result
+            # Save each student result to MongoDB and JSON
             for student_name, result in results.items():
                 safe_name = student_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
                 
-                # Save in the new structure
+                # Save to MongoDB
+                try:
+                    # Find or create submission
+                    submissions_collection = await get_submissions_collection()
+                    existing_submission = await submissions_collection.find_one({
+                        "assignment_id": assignment_id,
+                        "student_name": student_name
+                    })
+                    
+                    submission_id = None
+                    if existing_submission:
+                        submission_id = str(existing_submission["_id"])
+                    else:
+                        # Create submission record
+                        submission_doc = {
+                            "assignment_id": assignment_id,
+                            "student_name": student_name,
+                            "files": [],
+                            "submission_text": submissions.get(student_name, ""),
+                            "file_count": 0,
+                            "submitted_at": datetime.utcnow(),
+                            "status": "submitted",
+                            "metadata": {}
+                        }
+                        sub_result = await submissions_collection.insert_one(submission_doc)
+                        submission_id = str(sub_result.inserted_id)
+                    
+                    # Save grading result
+                    await save_grading_result(
+                        result_data={
+                            **result,
+                            "question_text": question_text,
+                            "answer_key": answer_key,
+                            "submission_text": submissions.get(student_name, ""),
+                            "rubric": default_rubric
+                        },
+                        submission_id=submission_id,
+                        assignment_id=assignment_id,
+                        student_name=student_name
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not save result for {student_name} to MongoDB: {e}")
+                
+                # Save in the new structure (JSON for backward compatibility)
                 with open(student_results_dir / f"{safe_name}_result.json", "w", encoding="utf-8") as f:
                     json.dump(result, f, indent=2)
                 
@@ -977,10 +1258,46 @@ def get_grade_letter(percentage: float) -> str:
 
 @app.get("/grading-results/{assignment_id}")
 async def get_grading_results(assignment_id: str):
-    """Get grading results for a specific assignment."""
+    """Get grading results for a specific assignment. Checks MongoDB first, then falls back to JSON files."""
     try:
         logger.info(f"Getting grading results for assignment/submission: {assignment_id}")
         
+        # First, try to get results from MongoDB
+        try:
+            from .services.results_service import get_results_by_assignment
+            mongo_results = await get_results_by_assignment(assignment_id)
+            if mongo_results:
+                logger.info(f"Found {len(mongo_results)} results in MongoDB for assignment {assignment_id}")
+                # Return the first result (for single submission) or all results (for batch)
+                if len(mongo_results) == 1:
+                    result = mongo_results[0]
+                    return {
+                        "assignment_id": assignment_id,
+                        "student_name": result.get("student_name"),
+                        "graded_at": result.get("graded_at", datetime.now().isoformat()),
+                        "score": result.get("score"),
+                        "total": result.get("total_points", 100),
+                        "percentage": result.get("percentage"),
+                        "grade_letter": result.get("grade_letter"),
+                        "grading_feedback": result.get("overall_feedback"),
+                        "criteria_scores": result.get("criteria_scores", []),
+                        "mistakes": result.get("mistakes", []),
+                        "submission_text": result.get("submission_text"),
+                        "question_text": result.get("question_text"),
+                        "answer_key": result.get("answer_key_text"),
+                        "timestamp": result.get("graded_at", datetime.now().isoformat())
+                    }
+                else:
+                    # Multiple results - return summary
+                    return {
+                        "assignment_id": assignment_id,
+                        "results": mongo_results,
+                        "count": len(mongo_results)
+                    }
+        except Exception as e:
+            logger.warning(f"Could not retrieve results from MongoDB: {e}, falling back to JSON files")
+        
+        # Fall back to JSON file-based retrieval (backward compatibility)
         # First, retrieve the assignment info to determine if it's a single submission
         try:
             assignment_info = await get_assignment(assignment_id)
@@ -1489,8 +1806,69 @@ async def process_and_grade_single(upload_id: str, metadata: Dict[str, Any]):
             update_upload_status(upload_id, "failed", metadata, error_msg)
             return
         
-        # Save the results
+        # Save the results to MongoDB and JSON (for backward compatibility)
+        submission_id = None
         try:
+            # First, create or find submission record in MongoDB
+            try:
+                submissions_collection = await get_submissions_collection()
+                
+                # Check if submission already exists
+                existing_submission = await submissions_collection.find_one({
+                    "assignment_id": assignment_id,
+                    "student_name": student_name
+                })
+                
+                if existing_submission:
+                    submission_id = str(existing_submission["_id"])
+                else:
+                    # Create new submission record
+                    submission_doc = {
+                        "assignment_id": assignment_id,
+                        "student_name": student_name,
+                        "student_id": metadata.get("student_id"),
+                        "student_email": metadata.get("student_email"),
+                        "files": [{
+                            "path": str(submission_path),
+                            "name": os.path.basename(submission_path),
+                            "type": os.path.splitext(submission_path)[1],
+                            "size": os.path.getsize(submission_path) if os.path.exists(submission_path) else 0
+                        }],
+                        "submission_text": submission_text,
+                        "file_count": 1,
+                        "submitted_at": datetime.utcnow(),
+                        "status": "submitted",
+                        "extraction_method": metadata.get("extraction_method"),
+                        "metadata": metadata
+                    }
+                    result = await submissions_collection.insert_one(submission_doc)
+                    submission_id = str(result.inserted_id)
+                    logger.info(f"Created submission record {submission_id} in MongoDB")
+            except Exception as e:
+                logger.warning(f"Could not create submission record in MongoDB: {e}")
+            
+            # Save to MongoDB
+            try:
+                result_id = await save_grading_result(
+                    result_data={
+                        **grading_result,
+                        "question_text": question_text,
+                        "answer_key": answer_key_text,
+                        "submission_text": submission_text,
+                        "rubric": default_rubric
+                    },
+                    submission_id=submission_id,
+                    assignment_id=assignment_id,
+                    student_id=metadata.get("student_id"),
+                    student_name=student_name,
+                    grader_id=metadata.get("grader_id"),
+                    grader_name=metadata.get("grader_name")
+                )
+                logger.info(f"Saved grading result {result_id} to MongoDB")
+            except Exception as e:
+                logger.warning(f"Could not save to MongoDB, continuing with JSON save: {e}")
+            
+            # Also save to JSON for backward compatibility
             results_dir = directories["grading_results"] / upload_id
             results_dir.mkdir(parents=True, exist_ok=True)
             
@@ -2627,12 +3005,145 @@ async def get_canvas_job_results(job_id: str):
             "message": f"Error getting Canvas job results: {str(e)}"
         }
 
+@canvas_router.post("/jobs/{job_id}/save-results")
+async def save_canvas_results(
+    job_id: str
+):
+    """
+    Save Canvas grading results to MongoDB without posting to Canvas.
+    This allows results to be saved for analytics and later posting.
+    """
+    try:
+        # Find the job directory
+        job_dir = directories["grading_results"] / job_id
+        
+        if not job_dir.exists():
+            return {
+                "status": "error",
+                "message": f"Canvas grading job {job_id} not found"
+            }
+        
+        # Read the results file
+        results_path = job_dir / "grading_results.json"
+        if not results_path.exists():
+            # Try alternative location
+            results_path = job_dir / "results" / "grading_results.json"
+            if not results_path.exists():
+                return {
+                    "status": "error",
+                    "message": f"Canvas grading results not found for job {job_id}"
+                }
+        
+        with open(results_path, "r", encoding="utf-8") as f:
+            results_data = json.load(f)
+        
+        # Extract assignment info
+        job_info = results_data.get("job_info", {})
+        course_id = job_info.get("course_id")
+        assignment_id = job_info.get("assignment_id")
+        canvas_assignment_id = f"canvas_{course_id}_{assignment_id}"
+        
+        grading_results = results_data.get("results", [])
+        saved_count = 0
+        
+        # Save each result to MongoDB
+        for result in grading_results:
+            if result.get("status") == "graded":
+                try:
+                    from services.results_service import save_grading_result
+                    from services.mongodb_service import get_submissions_collection
+                    
+                    # Create or find submission
+                    submissions_collection = await get_submissions_collection()
+                    existing_submission = await submissions_collection.find_one({
+                        "assignment_id": canvas_assignment_id,
+                        "canvas_user_id": str(result.get("user_id", ""))
+                    })
+                    
+                    submission_id = None
+                    if existing_submission:
+                        submission_id = str(existing_submission["_id"])
+                    else:
+                        submission_doc = {
+                            "assignment_id": canvas_assignment_id,
+                            "student_name": result.get("user_name", ""),
+                            "canvas_user_id": str(result.get("user_id", "")),
+                            "files": [],
+                            "submission_text": result.get("submission_content", ""),
+                            "file_count": result.get("files_processed", 0),
+                            "submitted_at": datetime.utcnow(),
+                            "status": "graded",
+                            "metadata": {
+                                "grading_job_id": job_id,
+                                "canvas_course_id": course_id,
+                                "canvas_assignment_id": assignment_id
+                            }
+                        }
+                        sub_result = await submissions_collection.insert_one(submission_doc)
+                        submission_id = str(sub_result.inserted_id)
+                    
+                    # Transform rubric breakdown
+                    criteria_scores = []
+                    for criterion in result.get("rubric_breakdown", []):
+                        criteria_scores.append({
+                            "criterion_name": criterion.get("criterion_name", ""),
+                            "score": criterion.get("points_awarded", 0),
+                            "max_points": criterion.get("max_points", 0),
+                            "feedback": criterion.get("feedback", "")
+                        })
+                    
+                    # Save result
+                    await save_grading_result(
+                        result_data={
+                            "score": result.get("raw_score", 0),
+                            "max_score": result.get("total_points", 100),
+                            "percentage": result.get("percentage", 0),
+                            "overall_feedback": result.get("feedback", ""),
+                            "criteria_scores": criteria_scores,
+                            "submission_text": result.get("submission_content", ""),
+                        },
+                        submission_id=submission_id,
+                        assignment_id=canvas_assignment_id,
+                        student_name=result.get("user_name", "")
+                    )
+                    saved_count += 1
+                except Exception as e:
+                    logger.warning(f"Could not save result for {result.get('user_name')} to MongoDB: {e}")
+        
+        # Invalidate analytics cache
+        try:
+            from services.mongodb_service import get_analytics_collection
+            analytics_collection = await get_analytics_collection()
+            await analytics_collection.update_many(
+                {"assignment_id": canvas_assignment_id},
+                {"$set": {"is_stale": True}}
+            )
+        except Exception as e:
+            logger.warning(f"Could not invalidate analytics cache: {e}")
+        
+        return {
+            "status": "success",
+            "message": f"Saved {saved_count} results to MongoDB",
+            "saved_count": saved_count,
+            "assignment_id": canvas_assignment_id
+        }
+    except Exception as e:
+        logger.error(f"Error saving Canvas results: {e}")
+        return {
+            "status": "error",
+            "message": f"Error saving results: {str(e)}"
+        }
+
 @canvas_router.post("/jobs/{job_id}/post-grades")
 async def post_canvas_grades(
     job_id: str,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    save_to_mongodb: bool = Body(True, embed=True)
 ):
-    """Post grades from a completed grading job back to Canvas."""
+    """
+    Post grades from a completed grading job back to Canvas.
+    Optionally saves results to MongoDB if save_to_mongodb is True.
+    """
     try:
         if not canvas_service_global:
             return {
@@ -2684,7 +3195,8 @@ async def post_canvas_grades(
             job_id=job_id,
             course_id=metadata.get("course_id"),
             assignment_id=metadata.get("assignment_id"),
-            results=results
+            results=results,
+            save_to_mongodb=save_to_mongodb
         )
         
         return {
@@ -2939,15 +3451,450 @@ async def get_canvas_submissions_by_post(
             "message": f"Error getting Canvas submissions: {str(e)}"
         }
 
+@app.post("/api/extract-enhanced")
+async def extract_enhanced_content(file: UploadFile = File(...)):
+    """
+    Enhanced content extraction endpoint for academic documents.
+    Uses specialized extraction for better handling of technical content.
+    """
+    try:
+        # Save uploaded file temporarily
+        temp_file_path = f"uploads/{file.filename}"
+        os.makedirs("uploads", exist_ok=True)
+        
+        with open(temp_file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        logger.info(f"Processing enhanced extraction for: {file.filename}")
+        
+        # Import the enhanced extraction functions
+        from extraction_service_v2 import (
+            extract_networking_homework_content,
+            extract_academic_content_enhanced,
+            enhance_networking_content
+        )
+        
+        # Determine the type of document and use appropriate extraction
+        file_lower = file.filename.lower()
+        
+        if "networking" in file_lower or "network" in file_lower:
+            # Use specialized networking extraction
+            extracted_content = extract_networking_homework_content(temp_file_path)
+            extraction_type = "networking_specialized"
+        else:
+            # Use general academic content extraction
+            extracted_content = extract_academic_content_enhanced(temp_file_path)
+            extraction_type = "academic_enhanced"
+        
+        # Clean up temporary file
+        try:
+            os.remove(temp_file_path)
+        except:
+            pass
+        
+        if extracted_content:
+            return {
+                "success": True,
+                "extraction_type": extraction_type,
+                "content": extracted_content,
+                "content_length": len(extracted_content),
+                "filename": file.filename
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to extract content from document",
+                "filename": file.filename
+            }
+            
+    except Exception as e:
+        logger.error(f"Enhanced extraction failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "filename": file.filename if 'file' in locals() else "unknown"
+        }
+
+@app.post("/api/extract-networking")
+async def extract_networking_content(file: UploadFile = File(...)):
+    """
+    Specialized extraction endpoint for networking homework and technical documents.
+    """
+    try:
+        # Save uploaded file temporarily
+        temp_file_path = f"uploads/{file.filename}"
+        os.makedirs("uploads", exist_ok=True)
+        
+        with open(temp_file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        logger.info(f"Processing networking extraction for: {file.filename}")
+        
+        # Import the networking extraction function
+        from extraction_service_v2 import extract_networking_homework_content
+        
+        # Extract content using specialized networking extraction
+        extracted_content = extract_networking_homework_content(temp_file_path)
+        
+        # Clean up temporary file
+        try:
+            os.remove(temp_file_path)
+        except:
+            pass
+        
+        if extracted_content:
+            return {
+                "success": True,
+                "extraction_type": "networking_specialized",
+                "content": extracted_content,
+                "content_length": len(extracted_content),
+                "filename": file.filename,
+                "features": {
+                    "ipv6_addresses_fixed": True,
+                    "ipv4_addresses_fixed": True,
+                    "technical_terms_enhanced": True,
+                    "question_structure_improved": True,
+                    "subnet_notation_fixed": True
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Failed to extract networking content from document",
+                "filename": file.filename
+            }
+            
+    except Exception as e:
+        logger.error(f"Networking extraction failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "filename": file.filename if 'file' in locals() else "unknown"
+        }
+
+@app.post("/api/extract-with-ai")
+async def extract_with_ai(
+    file: UploadFile = File(...),
+    file_type: str = Form("general"),
+    method: str = Form("ai")  # "ai" or "ocr"
+):
+    """Extract content using AI (Gemini 2.5 Flash) or OCR with confidence scoring."""
+    
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    # Save uploaded file temporarily
+    temp_file_path = f"uploads/{file.filename}"
+    os.makedirs("uploads", exist_ok=True)
+    
+    try:
+        with open(temp_file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        if method == "ai":
+            # Use AI-powered extraction
+            if not ai_extraction_service.gemini_available:
+                raise HTTPException(
+                    status_code=503, 
+                    detail="AI extraction not available. Please check GEMINI_API_KEY configuration."
+                )
+            
+            try:
+                result = await ai_extraction_service.extract_with_confidence(temp_file_path, file_type)
+                
+                return {
+                    "success": True,
+                    "method": "ai_gemini_2.5_flash",
+                    "confidence_score": result.confidence_score,
+                    "processing_time": result.processing_time,
+                    "content": result.content,
+                    "metadata": result.metadata,
+                    "message": f"Extracted with {result.confidence_score:.2%} confidence"
+                }
+                
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"AI extraction failed: {str(e)}")
+        
+        else:
+            # Use traditional OCR extraction
+            try:
+                from backend.extraction_service_v2 import extract_academic_content_enhanced
+                
+                content = extract_academic_content_enhanced(temp_file_path)
+                
+                if not content:
+                    raise HTTPException(status_code=422, detail="OCR extraction returned empty content")
+                
+                return {
+                    "success": True,
+                    "method": "ocr_traditional",
+                    "confidence_score": 0.75,  # Default OCR confidence
+                    "processing_time": 0.0,
+                    "content": content,
+                    "metadata": {
+                        "file_type": file_type,
+                        "file_size": os.path.getsize(temp_file_path)
+                    },
+                    "message": "Extracted using traditional OCR"
+                }
+                
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"OCR extraction failed: {str(e)}")
+    
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+@app.post("/api/grade-with-ai")
+async def grade_with_ai(
+    question_paper: UploadFile = File(...),
+    rubric: UploadFile = File(...),
+    student_submission: UploadFile = File(...),
+    answer_key: UploadFile = File(...)
+):
+    """Grade student submission using AI with confidence scoring."""
+    
+    # Save uploaded files temporarily
+    temp_files = {}
+    os.makedirs("uploads", exist_ok=True)
+    
+    try:
+        # Save all files
+        for name, file in [
+            ("question_paper", question_paper),
+            ("rubric", rubric),
+            ("student_submission", student_submission),
+            ("answer_key", answer_key)
+        ]:
+            temp_path = f"uploads/{name}_{file.filename}"
+            with open(temp_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+            temp_files[name] = temp_path
+        
+        # Check AI availability
+        if not ai_extraction_service.gemini_available:
+            raise HTTPException(
+                status_code=503,
+                detail="AI grading not available. Please check GEMINI_API_KEY configuration."
+            )
+        
+        # Extract content from all files
+        extracted_content = {}
+        
+        for name, file_path in temp_files.items():
+            try:
+                result = await ai_extraction_service.extract_with_confidence(
+                    file_path, 
+                    file_type=name
+                )
+                extracted_content[name] = result.content
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to extract {name}: {str(e)}"
+                )
+        
+        # Perform AI grading
+        try:
+            grading_result = await ai_extraction_service.grade_with_confidence(
+                extracted_content["question_paper"],
+                extracted_content["rubric"],
+                extracted_content["student_submission"],
+                extracted_content["answer_key"]
+            )
+            
+            return {
+                "success": True,
+                "method": "ai_gemini_2.5_flash_grading",
+                "confidence_score": grading_result.confidence_score,
+                "processing_time": grading_result.processing_time,
+                "grading_result": json.loads(grading_result.content),
+                "metadata": grading_result.metadata,
+                "message": f"Graded with {grading_result.confidence_score:.2%} confidence"
+            }
+            
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"AI grading failed: {str(e)}")
+    
+    finally:
+        # Clean up temporary files
+        for file_path in temp_files.values():
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+@app.get("/api/extraction-methods")
+async def get_extraction_methods():
+    """Get available extraction methods and their status."""
+    
+    methods = {
+        "ocr_traditional": {
+            "name": "Traditional OCR",
+            "description": "Uses PyMuPDF and OCR engines for text extraction",
+            "available": True,
+            "confidence_threshold": 0.75,
+            "processing_speed": "fast"
+        },
+        "ai_gemini_2.5_flash": {
+            "name": "AI-Powered (Gemini 2.5 Flash)",
+            "description": "Uses Google Gemini 2.5 Flash for high-accuracy extraction",
+            "available": ai_extraction_service.gemini_available,
+            "confidence_threshold": 0.90,
+            "processing_speed": "medium",
+            "requires_api_key": True
+        }
+    }
+    
+    return {
+        "methods": methods,
+        "recommended": "ai_gemini_2.5_flash" if ai_extraction_service.gemini_available else "ocr_traditional"
+    }
+
+@app.post("/api/extract-images-from-pdf")
+async def extract_images_from_pdf(file: UploadFile = File(...)):
+    """Extract and analyze images from PDF using AI."""
+    
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    # Save uploaded file temporarily
+    temp_file_path = f"uploads/{file.filename}"
+    os.makedirs("uploads", exist_ok=True)
+    
+    try:
+        with open(temp_file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Extract images from PDF
+        try:
+            import fitz  # PyMuPDF
+            
+            doc = fitz.open(temp_file_path)
+            images = []
+            
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                image_list = page.get_images()
+                
+                for img_index, img in enumerate(image_list):
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+                    
+                    if pix.n - pix.alpha < 4:  # GRAY or RGB
+                        img_data = pix.tobytes("png")
+                        images.append({
+                            "page": page_num + 1,
+                            "index": img_index,
+                            "width": pix.width,
+                            "height": pix.height,
+                            "data": img_data
+                        })
+                    
+                    pix = None
+            
+            doc.close()
+            
+            if not images:
+                return {
+                    "success": True,
+                    "images_found": 0,
+                    "message": "No images found in PDF"
+                }
+            
+            # Analyze images with AI if available
+            if ai_extraction_service.gemini_available:
+                analyzed_images = []
+                
+                for img in images:
+                    try:
+                        # Convert image data to base64 for AI analysis
+                        import base64
+                        img_b64 = base64.b64encode(img["data"]).decode()
+                        
+                        # Create prompt for image analysis
+                        prompt = f"""
+Analyze this image from a PDF document. If it contains text, extract it accurately.
+If it's a diagram, chart, or technical illustration, describe its content and any relevant information.
+
+Image details:
+- Page: {img['page']}
+- Dimensions: {img['width']}x{img['height']} pixels
+
+Please provide:
+1. Text content (if any)
+2. Description of visual elements
+3. Technical information or data shown
+4. Relevance to the document context
+"""
+                        
+                        # Get AI analysis
+                        response = await ai_extraction_service._get_ai_response(prompt)
+                        
+                        img["ai_analysis"] = response
+                        analyzed_images.append(img)
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to analyze image: {e}")
+                        img["ai_analysis"] = "Analysis failed"
+                        analyzed_images.append(img)
+                
+                return {
+                    "success": True,
+                    "images_found": len(images),
+                    "images_analyzed": len(analyzed_images),
+                    "images": analyzed_images,
+                    "method": "ai_enhanced"
+                }
+            else:
+                return {
+                    "success": True,
+                    "images_found": len(images),
+                    "images_analyzed": 0,
+                    "images": images,
+                    "method": "basic_extraction",
+                    "message": "AI analysis not available"
+                }
+                
+        except ImportError:
+            raise HTTPException(status_code=503, detail="PyMuPDF not available for image extraction")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Image extraction failed: {str(e)}")
+    
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
 if __name__ == "__main__":
     # Adjust directories based on the new project structure
     for dir_name, dir_path in directories.items():
         if not dir_path.exists():
             logger.info(f"Creating directory: {dir_path}")
             dir_path.mkdir(parents=True, exist_ok=True)
-            
-    # Start the API server
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # Get settings from config
+    settings = get_settings()
+    host = settings.api_host
+    port = settings.api_port
     
     # Log startup
+    logger.info(f"Starting API server on {host}:{port}...")
+    
+    # Start the API server
+    uvicorn.run(
+        app, 
+        host=host, 
+        port=port,
+        reload=settings.api_reload
+    )
+    
     logger.info("API server started successfully") 

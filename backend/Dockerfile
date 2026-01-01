@@ -5,7 +5,7 @@ WORKDIR /app
 # Install system dependencies for OpenCV, OpenGL, Tesseract, and other libraries
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libpng-dev \
     libtiff-dev \
-    libatlas-base-dev \
+    libatlas3-base \
     gfortran \
     tesseract-ocr \
     tesseract-ocr-eng \
@@ -36,20 +36,24 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Remove any conflicting opencv packages and install headless version
-RUN pip uninstall opencv-python opencv-contrib-python opencv-python-headless -y || true
-RUN pip install opencv-python-headless>=4.8.0
 
 # Install remaining Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy application code into /app/backend to preserve package context
+COPY . /app/backend
 
-# Create necessary directories
-RUN mkdir -p temp uploads grading_results synced_submissions
+# Set working directory to backend package
+WORKDIR /app/backend
 
-# Expose port
+# Ensure directories exist
+RUN mkdir -p data uploads temp grading_results synced_submissions
+
+# Set PYTHONPATH so "backend" package is discoverable
+ENV PYTHONPATH=/app
+
+# Expose default API port
 EXPOSE 8000
 
-# Start command - use the correct app module
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Start command using package import so relative imports work
+CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
