@@ -658,7 +658,7 @@ export default function DemoPage() {
               <div>
                 <h4 className="font-semibold text-lg mb-2">Overall Feedback</h4>
                 <p className="text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-lg">
-                  {gradingResult.result.feedback || gradingResult.result.overall_feedback || 'No feedback provided.'}
+                  {gradingResult.result.feedback || 'No feedback provided.'}
                 </p>
               </div>
 
