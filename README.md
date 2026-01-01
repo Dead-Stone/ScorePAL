@@ -1,3 +1,4 @@
+<div align="center">
 
 <img src="frontend/public/scorePAL-logo.png" alt="ScorePAL Logo" width="400"/>
 
@@ -11,8 +12,11 @@
 
 ### ✨ Grade intelligently. Analyze comprehensively. Learn continuously.
 
----
+</div>
+
 <div align="left">
+
+---
 
 ## What is ScorePAL?
 
