@@ -158,7 +158,7 @@ export default function LoginPage() {
             {/* Concise Information */}
             <div className="text-center mt-6">
               <p className="text-white/80 text-sm">
-                Canvas analytics made simple
+                Grade intelligently. Analyze comprehensively. Learn continuously.
               </p>
             </div>
           </div>

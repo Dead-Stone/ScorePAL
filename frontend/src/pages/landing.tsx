@@ -129,8 +129,9 @@ function LandingPage() {
               </h1>
               
               <p className="text-base md:text-lg text-gray-600 mb-6 leading-relaxed">
-                Track student performance, get insights, and save hours with AI grading. 
-                <span className="font-semibold text-gray-800"> Easy to login. Easy to use.</span>
+                <span className="font-semibold text-gray-800">Grade intelligently. Analyze comprehensively. Learn continuously.</span>
+                <br />
+                <span className="text-gray-600">Easy to login. Easy to use.</span>
               </p>
               
               <div className="flex flex-col sm:flex-row gap-4 mb-6">

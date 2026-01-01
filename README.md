@@ -10,9 +10,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-Next.js-blue?style=flat-square&logo=typescript)](https://nextjs.org)
 [![Open Source](https://img.shields.io/badge/Status-Open%20Source-success?style=flat-square)](https://github.com/Dead-Stone/ScorePAL)
 
-### ✨ Transform grading & analytics with AI - Save hours, maintain quality, get insights
+### ✨ Grade intelligently. Analyze comprehensively. Learn continuously.
 
 ---
+<div align="left">
 
 ## What is ScorePAL?
 

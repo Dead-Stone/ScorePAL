@@ -640,7 +640,7 @@ export default function RegisterPage() {
             {/* Concise Information */}
             <div className="text-center mt-6">
               <p className="text-white/80 text-sm">
-                Canvas analytics and insights made simple
+                Grade intelligently. Analyze comprehensively. Learn continuously.
               </p>
             </div>
           </div>
