@@ -206,7 +206,7 @@ export const StudentGradesDetail: React.FC<StudentGradesDetailProps> = ({
                       {overallGrade?.current_grade || 'N/A'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {overallGrade?.current_score !== null
+                      {overallGrade && overallGrade.current_score !== null
                         ? `${overallGrade.current_score.toFixed(1)}%`
                         : 'N/A'}
                     </Typography>
@@ -220,10 +220,10 @@ export const StudentGradesDetail: React.FC<StudentGradesDetailProps> = ({
                       Total Points
                     </Typography>
                     <Typography variant="h4" fontWeight="bold">
-                      {summary?.total_points_earned.toFixed(1) || '0'} / {summary?.total_points_possible.toFixed(0) || '0'}
+                      {summary?.total_points_earned?.toFixed(1) || '0'} / {summary?.total_points_possible?.toFixed(0) || '0'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {summary?.total_points_possible
+                      {summary && summary.total_points_possible
                         ? `${((summary.total_points_earned / summary.total_points_possible) * 100).toFixed(1)}%`
                         : 'N/A'}
                     </Typography>
@@ -259,12 +259,12 @@ export const StudentGradesDetail: React.FC<StudentGradesDetailProps> = ({
                       Average Score
                     </Typography>
                     <Typography variant="h4" fontWeight="bold" color={`${getGradeColor(summary?.average_score || null)}.main`}>
-                      {summary?.average_score !== null
+                      {summary && summary.average_score !== null
                         ? `${summary.average_score.toFixed(1)}%`
                         : 'N/A'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {summary?.average_score !== null
+                      {summary && summary.average_score !== null
                         ? `Grade: ${getGradeLetter(summary.average_score)}`
                         : 'No grades yet'}
                     </Typography>
