@@ -88,9 +88,10 @@ async def list_results(
 @router.get("/{result_id}")
 async def get_result(
     result_id: str,
+    include_canvas_comparison: bool = Query(False, description="Include Canvas grade comparison if available"),
     user: User = Depends(current_active_user)
 ):
-    """Get a specific grading result by ID."""
+    """Get a specific grading result by ID with optional Canvas grade comparison."""
     try:
         result = await get_grading_result(result_id)
         if not result:
@@ -103,6 +104,16 @@ async def get_result(
         # Anonymize if needed
         if user.role == UserRole.STUDENT and result.get("student_id") != user.id:
             result = anonymize_student_data([result], user.id)[0]
+        
+        # Add Canvas grade comparison if requested
+        if include_canvas_comparison:
+            try:
+                canvas_comparison = await _get_canvas_grade_comparison(result, user)
+                if canvas_comparison:
+                    result["canvas_comparison"] = canvas_comparison
+            except Exception as e:
+                logger.warning(f"Could not fetch Canvas grade comparison: {e}")
+                result["canvas_comparison"] = None
         
         return result
     except HTTPException:
@@ -345,4 +356,125 @@ def _calculate_grade_letter(percentage: float) -> str:
         return "D"
     else:
         return "F"
+
+
+async def _get_canvas_grade_comparison(result: Dict[str, Any], user: User) -> Optional[Dict[str, Any]]:
+    """Fetch Canvas posted grade and compare with AI grade."""
+    try:
+        # Check if result has Canvas metadata
+        canvas_course_id = result.get("metadata", {}).get("canvas_course_id")
+        canvas_assignment_id = result.get("metadata", {}).get("canvas_assignment_id")
+        canvas_student_id = result.get("metadata", {}).get("canvas_student_id")
+        
+        if not all([canvas_course_id, canvas_assignment_id, canvas_student_id]):
+            return None
+        
+        # Get user settings for Canvas API
+        try:
+            from api.settings_routes import get_user_settings
+            settings = await get_user_settings(user)
+        except Exception as e:
+            logger.warning(f"Could not get user settings: {e}")
+            return None
+        
+        if not settings or not settings.get("canvas_api_key"):
+            return None
+        
+        canvas_url = settings.get("canvas_url") or "https://canvas.instructure.com"
+        api_key = settings.get("canvas_api_key")
+        
+        # Normalize URL
+        canvas_url = canvas_url.rstrip('/')
+        if not canvas_url.startswith('http'):
+            canvas_url = f"https://{canvas_url}"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}" if not api_key.startswith("Bearer") else api_key,
+            "Content-Type": "application/json"
+        }
+        
+        # Fetch submission with grade from Canvas
+        submission_response = requests.get(
+            f"{canvas_url}/api/v1/courses/{canvas_course_id}/assignments/{canvas_assignment_id}/submissions/{canvas_student_id}",
+            headers=headers,
+            params={"include[]": ["submission_history", "user"]},
+            timeout=30
+        )
+        
+        if submission_response.status_code != 200:
+            logger.warning(f"Could not fetch Canvas submission: {submission_response.status_code}")
+            return None
+        
+        submission_data = submission_response.json()
+        
+        # Get posted grade
+        posted_grade = submission_data.get("grade")
+        posted_score = None
+        posted_percentage = None
+        
+        if posted_grade:
+            try:
+                # Try to parse as number
+                posted_score = float(posted_grade)
+                # Get assignment points
+                assignment_response = requests.get(
+                    f"{canvas_url}/api/v1/courses/{canvas_course_id}/assignments/{canvas_assignment_id}",
+                    headers=headers,
+                    timeout=30
+                )
+                if assignment_response.status_code == 200:
+                    assignment_data = assignment_response.json()
+                    points_possible = assignment_data.get("points_possible", result.get("total_points", 100))
+                    if points_possible and points_possible > 0:
+                        posted_percentage = (posted_score / points_possible) * 100
+            except (ValueError, TypeError):
+                pass
+        
+        # Get AI grade
+        ai_score = result.get("score", 0)
+        ai_total = result.get("total_points", 100)
+        ai_percentage = result.get("percentage", 0)
+        
+        # Calculate difference
+        score_difference = None
+        percentage_difference = None
+        if posted_score is not None and ai_total > 0:
+            score_difference = ai_score - posted_score
+            if posted_percentage is not None:
+                percentage_difference = ai_percentage - posted_percentage
+        
+        return {
+            "canvas_posted_grade": posted_grade,
+            "canvas_posted_score": posted_score,
+            "canvas_posted_percentage": posted_percentage,
+            "ai_score": ai_score,
+            "ai_total": ai_total,
+            "ai_percentage": ai_percentage,
+            "score_difference": score_difference,
+            "percentage_difference": percentage_difference,
+            "comparison_status": _get_comparison_status(score_difference, percentage_difference),
+            "canvas_submission_id": submission_data.get("id"),
+            "canvas_submission_url": submission_data.get("preview_url"),
+            "last_updated": submission_data.get("submitted_at") or submission_data.get("graded_at")
+        }
+    except Exception as e:
+        logger.error(f"Error fetching Canvas grade comparison: {e}", exc_info=True)
+        return None
+
+
+def _get_comparison_status(score_diff: Optional[float], percentage_diff: Optional[float]) -> str:
+    """Determine comparison status based on differences."""
+    if score_diff is None or percentage_diff is None:
+        return "no_comparison"
+    
+    abs_percentage_diff = abs(percentage_diff)
+    
+    if abs_percentage_diff <= 1.0:
+        return "exact_match"
+    elif abs_percentage_diff <= 5.0:
+        return "close_match"
+    elif abs_percentage_diff <= 10.0:
+        return "moderate_difference"
+    else:
+        return "significant_difference"
 

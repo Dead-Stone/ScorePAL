@@ -18,8 +18,8 @@ import re
 import requests
 
 from utils.canvas_connector import CanvasConnector
-from preprocessing_v2 import FilePreprocessor
-from grading_v2 import GradingService
+from services.file_preprocessor import FilePreprocessor
+from services.grading_service import GradingService
 
 logger = logging.getLogger(__name__)
 
@@ -274,15 +274,75 @@ class CanvasGradingService:
                     # Generate answer key if needed
                     answer_key = self.file_preprocessor._generate_answer_key(question_text, None)
                     
-                    # Grade submission
-                    grading_result = self.grading_service.grade_submission(
-                        submission_text=submission_text,
-                        question_text=question_text,
-                        answer_key=answer_key,
-                        student_name=submission_info['user_name'],
-                        rubric=default_rubric,
-                        strictness=0.5  # Default moderate strictness
-                    )
+                    # Import the rubric-based grading function (lazy import to avoid circular dependency)
+                    import asyncio
+                    from api.canvas_routes import grade_submission_with_strict_rubric
+                    
+                    # Handle async function call - use nest_asyncio if available
+                    try:
+                        import nest_asyncio
+                        nest_asyncio.apply()
+                    except ImportError:
+                        pass
+                    
+                    # Grade submission using rubric-based grading
+                    # Run async function in sync context
+                    try:
+                        loop = asyncio.get_running_loop()
+                        # Event loop is running - use nest_asyncio
+                        try:
+                            import nest_asyncio
+                            nest_asyncio.apply()
+                            raw_result = loop.run_until_complete(
+                                grade_submission_with_strict_rubric(
+                                    submission_text=submission_text,
+                                    submission_files=[],
+                                    rubric=default_rubric,
+                                    student_name=submission_info['user_name'],
+                                    strictness=0.5  # Default moderate strictness
+                                )
+                            )
+                        except (ImportError, RuntimeError):
+                            # Use thread pool as fallback
+                            import concurrent.futures
+                            def run_async():
+                                return asyncio.run(
+                                    grade_submission_with_strict_rubric(
+                                        submission_text=submission_text,
+                                        submission_files=[],
+                                        rubric=default_rubric,
+                                        student_name=submission_info['user_name'],
+                                        strictness=0.5
+                                    )
+                                )
+                            with concurrent.futures.ThreadPoolExecutor() as executor:
+                                future = executor.submit(run_async)
+                                raw_result = future.result()
+                    except RuntimeError:
+                        # No event loop running - create new one
+                        raw_result = asyncio.run(
+                            grade_submission_with_strict_rubric(
+                                submission_text=submission_text,
+                                submission_files=[],
+                                rubric=default_rubric,
+                                student_name=submission_info['user_name'],
+                                strictness=0.5  # Default moderate strictness
+                            )
+                        )
+                    
+                    # Transform result to expected format
+                    total_score = raw_result.get("total_score", 0)
+                    max_possible = raw_result.get("max_possible", 100)
+                    grading_result = {
+                        "score": total_score,
+                        "max_score": max_possible,
+                        "total_score": total_score,
+                        "total_points": max_possible,
+                        "percentage": raw_result.get("overall_percentage", 0.0),
+                        "feedback": raw_result.get("overall_feedback", ""),
+                        "overall_feedback": raw_result.get("overall_feedback", ""),
+                        "rubric_breakdown": raw_result.get("rubric_breakdown", [])
+                    }
                     
                     # Store results
                     submission_info['grading_result'] = grading_result

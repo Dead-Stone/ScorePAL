@@ -1,35 +1,36 @@
 /**
  * ScorePAL - Login Page
- * Modern authentication with email/password and social login
+ * JWT authentication with email/password
+ * Statically generated at build time
  * 
  * @author Mohana Moganti (@Dead-Stone)
  * @license MIT
  */
 
 import React, { useState, useEffect } from 'react';
+import { GetStaticProps } from 'next';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import dynamic from 'next/dynamic';
 import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { Label } from '../../components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '../../components/ui/form';
 import { 
   Eye, 
   EyeOff, 
   Mail, 
   Lock, 
-  ArrowLeft,
-  Github,
-  Chrome,
-  Loader2
+  Loader2,
+  CheckCircle
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { TopNavBar } from '../../components/layout/TopNavBar';
+
+// Dynamically import Lottie to avoid SSR issues
+const Lottie = dynamic(() => import('lottie-react'), { ssr: false });
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -38,11 +39,20 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
+// Static generation - compile at build time only
+export const getStaticProps: GetStaticProps = async () => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
+
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [animationData, setAnimationData] = useState<any>(null);
   const router = useRouter();
   const { login, isAuthenticated } = useAuth();
 
@@ -53,6 +63,22 @@ export default function LoginPage() {
       password: '',
     },
   });
+
+  // Load Lottie animation
+  useEffect(() => {
+    const loadAnimation = async () => {
+      try {
+        const response = await fetch('/Analytics Character Animation.json');
+        if (response.ok) {
+          const data = await response.json();
+          setAnimationData(data);
+        }
+      } catch (error) {
+        console.warn('Failed to load animation:', error);
+      }
+    };
+    loadAnimation();
+  }, []);
 
   // Check for messages from URL params
   useEffect(() => {
@@ -66,98 +92,88 @@ export default function LoginPage() {
   useEffect(() => {
     if (isAuthenticated) {
       const returnUrl = router.query.returnUrl as string;
-      router.push(returnUrl || '/grade');
+      router.push(returnUrl || '/dashboard');
     }
   }, [isAuthenticated, router]);
 
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     setError('');
+    setMessage('');
 
     try {
       const success = await login(data.email, data.password);
       
       if (success) {
-        const returnUrl = router.query.returnUrl as string || '/grade';
+        const returnUrl = router.query.returnUrl as string || '/dashboard';
         router.push(returnUrl);
       } else {
-        setError('Login failed. Please check your credentials.');
+        setError('Invalid email or password. Please try again.');
       }
-    } catch (error) {
-      console.error('Login error:', error);
-      setError('An error occurred during login. Please try again.');
+    } catch (error: any) {
+      const errorMessage = error?.message || 'An error occurred during login. Please try again.';
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSocialLogin = (provider: 'google' | 'github') => {
-    // Implement social login - redirect to OAuth endpoints
-    window.location.href = `/auth/${provider}/authorize?redirect_uri=${encodeURIComponent(window.location.origin + '/auth/callback')}`;
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Back to Home */}
-        <Link href="/landing" className="flex items-center text-gray-600 hover:text-gray-900 mb-8 transition-colors">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Home
-        </Link>
+    <div className="min-h-screen bg-white">
+      <TopNavBar />
+      <div className="flex min-h-screen pt-16">
+        {/* Left Side - Blue Graph Sheet with ScorePAL Details */}
+        <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 p-12 flex-col justify-between relative overflow-hidden">
+          {/* Background Pattern */}
+          <div className="absolute inset-0 opacity-10">
+            <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="1"/>
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid)" />
+            </svg>
+          </div>
 
-        <Card className="shadow-2xl border-0">
-          <CardHeader className="text-center pb-6">
-            <div className="flex justify-center mb-4">
-              <Image
-                src="/scorePAL-logo.png"
-                alt="ScorePAL Logo"
-                width={60}
-                height={60}
-                className="rounded-xl"
-              />
-            </div>
-            <CardTitle className="text-2xl font-bold text-gray-900">Welcome back</CardTitle>
-            <CardDescription className="text-gray-600">
-              Sign in to your ScorePAL account
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-6">
-            {/* Social Login Buttons */}
-            <div className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full h-12 text-gray-700 border-gray-300 hover:bg-gray-50"
-                onClick={() => handleSocialLogin('google')}
-                disabled={isLoading}
-              >
-                <Chrome className="w-5 h-5 mr-3" />
-                Continue with Google
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full h-12 text-gray-700 border-gray-300 hover:bg-gray-50"
-                onClick={() => handleSocialLogin('github')}
-                disabled={isLoading}
-              >
-                <Github className="w-5 h-5 mr-3" />
-                Continue with GitHub
-              </Button>
+          <div className="relative z-10 flex flex-col h-full items-center justify-center">
+            {/* Lottie Animation */}
+            <div className="flex-1 flex items-center justify-center w-full">
+              {animationData ? (
+                <div className="w-full max-w-lg">
+                  <Lottie
+                    animationData={animationData}
+                    loop={true}
+                    autoplay={true}
+                    style={{ width: '100%', height: '100%' }}
+                  />
+                </div>
+              ) : (
+                <div className="w-full max-w-lg h-96 bg-white/10 rounded-2xl flex items-center justify-center">
+                  <div className="text-white/50">Loading...</div>
+                </div>
+              )}
             </div>
 
-            {/* Divider */}
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-4 bg-white text-gray-500">Or continue with email</span>
-              </div>
+            {/* Concise Information */}
+            <div className="text-center mt-6">
+              <p className="text-white/80 text-sm">
+                Canvas analytics made simple
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side - Login Form */}
+        <div className="w-full lg:w-1/2 flex items-center justify-center p-8 lg:p-12">
+          <div className="w-full max-w-md">
+            <div className="mb-8">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">Sign in</h1>
+              <p className="text-gray-600">Welcome back! Please enter your details.</p>
             </div>
 
-            {/* Login Form */}
             <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
                 <FormField
                   control={form.control}
                   name="email"
@@ -171,7 +187,7 @@ export default function LoginPage() {
                             {...field}
                             type="email"
                             placeholder="Enter your email"
-                            className="pl-10 h-12 border-gray-300"
+                            className="pl-10 h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
                             disabled={isLoading}
                           />
                         </div>
@@ -194,7 +210,7 @@ export default function LoginPage() {
                             {...field}
                             type={showPassword ? 'text' : 'password'}
                             placeholder="Enter your password"
-                            className="pl-10 pr-10 h-12 border-gray-300"
+                            className="pl-10 pr-10 h-12 border-gray-300 focus:border-blue-500 focus:ring-blue-500"
                             disabled={isLoading}
                           />
                           <button
@@ -235,8 +251,8 @@ export default function LoginPage() {
                       Remember me
                     </label>
                   </div>
-                  <Link href="/auth/forgot-password" className="text-sm text-blue-600 hover:text-blue-700">
-                    Forgot your password?
+                  <Link href="/auth/forgot-password" prefetch={true} className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                    Forgot password?
                   </Link>
                 </div>
 
@@ -258,25 +274,17 @@ export default function LoginPage() {
             </Form>
 
             {/* Sign up link */}
-            <div className="text-center pt-4 border-t border-gray-200">
+            <div className="text-center pt-6 border-t border-gray-200 mt-6">
               <p className="text-sm text-gray-600">
                 Don't have an account?{' '}
-                <Link href="/auth/register" className="text-blue-600 hover:text-blue-700 font-medium">
+                <Link href="/auth/register" prefetch={true} className="text-blue-600 hover:text-blue-700 font-medium">
                   Sign up for free
                 </Link>
               </p>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Terms */}
-        <p className="text-xs text-gray-500 text-center mt-6">
-          By signing in, you agree to our{' '}
-          <a href="#" className="text-blue-600 hover:text-blue-700">Terms of Service</a>
-          {' '}and{' '}
-          <a href="#" className="text-blue-600 hover:text-blue-700">Privacy Policy</a>
-        </p>
+          </div>
+        </div>
       </div>
     </div>
   );
-} 
+}

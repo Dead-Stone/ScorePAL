@@ -2,15 +2,12 @@ import os
 import json
 import re
 import logging
-import google.generativeai as genai
-from google.generativeai import types
-from google.api_core.exceptions import NotFound
 from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-DEFAULT_RUBRIC_MODEL = os.getenv("GEMINI_RUBRIC_MODEL", "gemini-1.5-flash-001")
+DEFAULT_RUBRIC_MODEL = os.getenv("GEMINI_RUBRIC_MODEL", "gemini-2.5-flash")
 
 
 def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None, model_name: str = None) -> dict:
@@ -45,18 +42,11 @@ def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None, m
         if not api_key:
             raise ValueError("No Gemini API key provided and GEMINI_API_KEY environment variable is not set.")
         
-        # Configure Gemini API and instantiate the model
-        genai.configure(api_key=api_key)
+        # Use new Client pattern with free model
+        from google import genai
+        client = genai.Client(api_key=api_key)
         selected_model = model_name or DEFAULT_RUBRIC_MODEL
         logger.info(f"Using Gemini model '{selected_model}' for rubric generation")
-        try:
-            model = genai.GenerativeModel(selected_model)
-        except NotFound as exc:
-            raise ValueError(
-                f"Gemini model '{selected_model}' is unavailable. "
-                "Set GEMINI_RUBRIC_MODEL to a supported model "
-                "(e.g., gemini-1.5-flash-001 or gemini-1.5-flash-latest)."
-            ) from exc
         
         prompt = (
             """
@@ -187,14 +177,11 @@ def get_rubric_from_text(question: str, rubric_text: str, api_key: str = None, m
             
         )
         
-        generation_config = types.GenerationConfig(
-            max_output_tokens=1024,
-            temperature=0.5,
-            top_p=0.9
+        # Use new Client pattern to generate content
+        response = client.models.generate_content(
+            model=selected_model,
+            contents=prompt
         )
-        
-        # response = model.generate_content(prompt, generation_config=generation_config)
-        response = model.generate_content(prompt)
         logger.info(f"Generated response from Gemini for rubric generation")
         
         # Extract JSON from the response using regex

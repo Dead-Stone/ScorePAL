@@ -1,12 +1,14 @@
 /**
  * ScorePAL - Forgot Password Page
  * Password reset request with email validation
+ * Statically generated at build time
  * 
  * @author Mohana Moganti (@Dead-Stone)
  * @license MIT
  */
 
 import React, { useState } from 'react';
+import { GetStaticProps } from 'next';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useForm } from 'react-hook-form';
@@ -23,12 +25,21 @@ import {
   CheckCircle,
   KeyRound
 } from 'lucide-react';
+import { API_ENDPOINTS } from '../../config/api';
 
 const forgotPasswordSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
 });
 
 type ForgotPasswordForm = z.infer<typeof forgotPasswordSchema>;
+
+// Static generation - compile at build time only
+export const getStaticProps: GetStaticProps = async () => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
 
 export default function ForgotPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
@@ -47,7 +58,7 @@ export default function ForgotPasswordPage() {
     setError('');
 
     try {
-      const response = await fetch('/auth/forgot-password', {
+      const response = await fetch(API_ENDPOINTS.AUTH.FORGOT_PASSWORD, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -61,9 +72,9 @@ export default function ForgotPasswordPage() {
         const errorData = await response.json();
         setError(errorData.detail || 'Failed to send reset email. Please try again.');
       }
-    } catch (error) {
-      console.error('Forgot password error:', error);
-      setError('An error occurred. Please try again.');
+    } catch (error: any) {
+      const errorMessage = error?.message || 'An error occurred. Please try again.';
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -73,7 +84,7 @@ export default function ForgotPasswordPage() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <Link href="/auth/login" className="flex items-center text-gray-600 hover:text-gray-900 mb-8 transition-colors">
+          <Link href="/auth/login" prefetch={true} className="flex items-center text-gray-600 hover:text-gray-900 mb-8 transition-colors">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Login
           </Link>
@@ -118,7 +129,7 @@ export default function ForgotPasswordPage() {
                   )}
                 </Button>
                 
-                <Link href="/auth/login">
+                <Link href="/auth/login" prefetch={true}>
                   <Button variant="default" className="w-full bg-blue-600 hover:bg-blue-700">
                     Back to Login
                   </Button>
@@ -206,7 +217,7 @@ export default function ForgotPasswordPage() {
             <div className="text-center pt-4 border-t border-gray-200">
               <p className="text-sm text-gray-600">
                 Remember your password?{' '}
-                <Link href="/auth/login" className="text-blue-600 hover:text-blue-700 font-medium">
+                <Link href="/auth/login" prefetch={true} className="text-blue-600 hover:text-blue-700 font-medium">
                   Sign in
                 </Link>
               </p>

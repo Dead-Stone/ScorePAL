@@ -4,7 +4,10 @@ Production-level security with password hashing, JWT tokens, and rate limiting
 """
 
 import os
-import jwt
+from dotenv import load_dotenv
+from pathlib import Path
+from jose import jwt
+from jose.exceptions import ExpiredSignatureError, JWTError
 from typing import Optional, Union
 from datetime import datetime, timedelta
 from fastapi import Depends, Request, HTTPException, status
@@ -16,6 +19,15 @@ import secrets
 import string
 from bson import ObjectId
 
+# Load environment variables from .env file
+# Try root .env first, then backend/.env
+root_env = Path(__file__).parent.parent.parent / ".env"
+backend_env = Path(__file__).parent.parent / ".env"
+if root_env.exists():
+    load_dotenv(root_env)
+if backend_env.exists():
+    load_dotenv(backend_env, override=True)
+
 # Import models
 from models.user import (
     User, UserCreate, UserRead, UserUpdate, UserRole, 
@@ -26,6 +38,16 @@ from models.user import (
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 DATABASE_NAME = os.getenv("MONGODB_DATABASE", "scorepal")
 COLLECTION_NAME = os.getenv("MONGODB_COLLECTION", "users")
+
+# Log MongoDB URL (mask password for security)
+import logging
+logger = logging.getLogger(__name__)
+if MONGODB_URL and "@" in MONGODB_URL:
+    masked_url = MONGODB_URL.split("@")[0].split(":")[0] + ":***@" + MONGODB_URL.split("@")[1] if "@" in MONGODB_URL else MONGODB_URL
+else:
+    masked_url = MONGODB_URL
+logger.info(f"MongoDB URL configured: {masked_url}")
+logger.info(f"MongoDB Database: {DATABASE_NAME}")
 
 # JWT Configuration
 JWT_SECRET = os.getenv("JWT_SECRET", "your-super-secret-jwt-key-change-in-production")
@@ -45,12 +67,34 @@ _users_collection = None
 
 def get_mongodb_client():
     """Get MongoDB client with lazy initialization"""
-    global _client, _database, _users_collection
+    global _client, _database, _users_collection, MONGODB_URL
+    
+    # Re-read MONGODB_URL in case .env was updated
+    current_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+    
+    # If URL changed, update the global and reset client
+    if current_url != MONGODB_URL:
+        logger.warning(f"MongoDB URL changed from {MONGODB_URL[:30]}... to {current_url[:30]}..., reinitializing client")
+        MONGODB_URL = current_url
+        if _client is not None:
+            try:
+                _client.close()
+            except:
+                pass
+            _client = None
+            _database = None
+            _users_collection = None
     
     if _client is None:
-        _client = AsyncIOMotorClient(MONGODB_URL)
-        _database = _client[DATABASE_NAME]
-        _users_collection = _database[COLLECTION_NAME]
+        logger.info(f"Initializing MongoDB client with URL: {current_url[:50]}...")
+        try:
+            _client = AsyncIOMotorClient(current_url)
+            _database = _client[DATABASE_NAME]
+            _users_collection = _database[COLLECTION_NAME]
+            logger.info(f"MongoDB client initialized successfully for database: {DATABASE_NAME}")
+        except Exception as e:
+            logger.error(f"Failed to initialize MongoDB client: {e}")
+            raise
     
     return _client, _database, _users_collection
 
@@ -97,6 +141,8 @@ class MongoDBUserManager:
         hashed_password = hash_password(user_data.password)
         
         # Create user document
+        # Give signup bonus credits
+        from api.credits_routes import CREDITS_SIGNUP_BONUS
         user_doc = {
             "email": user_data.email,
             "hashed_password": hashed_password,
@@ -111,6 +157,9 @@ class MongoDBUserManager:
             "grading_count": 0,
             "free_gradings_used": 0,
             "premium_active": False,
+            "credits": CREDITS_SIGNUP_BONUS,
+            "credits_earned": CREDITS_SIGNUP_BONUS,
+            "credits_spent": 0,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
             "failed_login_attempts": 0,
@@ -182,7 +231,10 @@ class MongoDBUserManager:
         print(f"User found: {user}")
         if not user:
             print("No user found")
-            return None
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
         
         print(f"User ID: {user.id}")
         print(f"User dict: {user.dict()}")
@@ -240,9 +292,9 @@ def verify_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return payload
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         return None
-    except jwt.JWTError:
+    except JWTError:
         return None
 
 # HTTP Bearer token dependency
@@ -316,6 +368,60 @@ def require_roles(*required_roles: UserRole):
             )
         return user
     return role_checker
+
+def require_institution_member():
+    """Dependency to require user to be a member of an institution"""
+    async def institution_checker(user: User = Depends(current_active_user)):
+        if not user.institution:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You must be a member of an institution to access this resource."
+            )
+        
+        # Verify institution membership is active
+        try:
+            from api.institution_routes import get_institution_members_collection
+            members_collection = await get_institution_members_collection()
+            member = await members_collection.find_one({
+                "user_id": user.id,
+                "institution_id": user.institution,
+                "status": "active"
+            })
+            
+            if not member:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. Your institution membership is not active."
+                )
+        except Exception as e:
+            logger.warning(f"Error checking institution membership: {e}")
+            # Allow access if check fails (graceful degradation)
+        
+        return user
+    return institution_checker
+
+def require_same_institution():
+    """Dependency to require users to be from the same institution"""
+    async def same_institution_checker(
+        user: User = Depends(current_active_user),
+        target_user_id: str = None
+    ):
+        if not user.institution:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You must be a member of an institution."
+            )
+        
+        if target_user_id:
+            target_user = await user_manager.get_user_by_id(target_user_id)
+            if not target_user or target_user.institution != user.institution:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied. You can only access resources from your institution."
+                )
+        
+        return user
+    return same_institution_checker
 
 # Convenience role dependencies
 require_teacher = require_role(UserRole.TEACHER)

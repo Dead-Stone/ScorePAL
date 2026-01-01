@@ -7,6 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Optional, List
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,6 +19,7 @@ from models.user import (
     PasswordResetRequest, PasswordResetConfirm, EmailVerificationRequest, LoginRequest,
     LoginResponse, PasswordResetResponse
 )
+from models.institution import Institution, InstitutionStatus
 from auth.auth_config import (
     user_manager, 
     current_active_user, 
@@ -40,39 +44,182 @@ SMTP_PORT = 587
 SMTP_USERNAME = "your-email@gmail.com"  # Set in environment
 SMTP_PASSWORD = "your-app-password"      # Set in environment
 
-def send_email(to_email: str, subject: str, body: str):
-    """Send email using SMTP (simplified for demo)"""
+def send_email(to_email: str, subject: str, body: str, html_body: str = None):
+    """Send email using SMTP"""
     try:
-        # In production, use proper email service like SendGrid, AWS SES, etc.
-        print(f"Email would be sent to {to_email}: {subject}")
-        print(f"Body: {body}")
+        import os
+        smtp_server = os.getenv("SMTP_SERVER", SMTP_SERVER)
+        smtp_port = int(os.getenv("SMTP_PORT", str(SMTP_PORT)))
+        smtp_username = os.getenv("SMTP_USERNAME", SMTP_USERNAME)
+        smtp_password = os.getenv("SMTP_PASSWORD", SMTP_PASSWORD)
+        
+        # If using default values, just log (for development)
+        if smtp_username == "your-email@gmail.com" or not smtp_password or smtp_password == "your-app-password":
+            logger.info(f"[DEV] Email would be sent to {to_email}: {subject}")
+            logger.info(f"[DEV] Body: {body}")
+            return True
+        
+        # Actually send email
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = smtp_username
+        msg['To'] = to_email
+        
+        text_part = MIMEText(body, 'plain')
+        msg.attach(text_part)
+        
+        if html_body:
+            html_part = MIMEText(html_body, 'html')
+            msg.attach(html_part)
+        
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+        
+        logger.info(f"Email sent successfully to {to_email}")
         return True
     except Exception as e:
-        print(f"Email sending failed: {e}")
+        logger.error(f"Email sending failed: {e}")
+        # In development, still return True to allow testing
+        import os
+        smtp_username = os.getenv("SMTP_USERNAME", SMTP_USERNAME)
+        if smtp_username == "your-email@gmail.com":
+            return True
         return False
 
 # Authentication endpoints
 
 @router.post("/register", response_model=UserRead, tags=["auth"])
 async def register_user(user_data: UserCreate):
-    """Register a new user with production-level security"""
+    """Register a new user with production-level security and institution validation"""
     try:
+        # Auto-detect institution from email domain if not provided
+        if not user_data.institution:
+            from utils.institution_utils import detect_institution_from_email
+            detected_institution = await detect_institution_from_email(user_data.email)
+            if detected_institution:
+                user_data.institution = detected_institution["id"]
+                logger.info(f"Auto-detected institution '{detected_institution['name']}' for email {user_data.email}")
+        
+        # Validate institution if provided
+        if user_data.institution:
+            from api.institution_routes import get_institutions_collection, get_institution_members_collection
+            institutions_collection = await get_institutions_collection()
+            
+            # Try to find institution by code or name
+            institution = await institutions_collection.find_one({
+                "$or": [
+                    {"code": user_data.institution.upper()},
+                    {"name": {"$regex": user_data.institution, "$options": "i"}}
+                ]
+            })
+            
+            if not institution:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Institution '{user_data.institution}' not found. Please contact your administrator."
+                )
+            
+            # Check if institution is active
+            if institution.get("status") != InstitutionStatus.ACTIVE.value:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This institution is not currently accepting new registrations"
+                )
+            
+            # Check if self-registration is allowed
+            if not institution.get("allow_self_registration", True):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Self-registration is not allowed for this institution. Please contact your administrator."
+                )
+            
+            # Validate email domain if institution has domain requirement
+            if institution.get("domain"):
+                email_domain = user_data.email.split("@")[-1].lower()
+                institution_domain = institution["domain"].lower()
+                if email_domain != institution_domain:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Email domain must match institution domain ({institution_domain})"
+                    )
+            
+            # Check if role is allowed for this institution
+            allowed_roles = institution.get("allowed_roles", ["teacher", "student", "grader", "admin"])
+            if user_data.role.value not in allowed_roles:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Role '{user_data.role.value}' is not allowed for this institution. Allowed roles: {', '.join(allowed_roles)}"
+                )
+            
+            # Store institution ID instead of code/name
+            user_data.institution = str(institution["_id"])
+        
         user = await user_manager.create_user(user_data)
         
-        # Create access token
-        access_token = create_access_token(data={"sub": user.id})
+        # Add user to institution members if institution was provided
+        if user_data.institution:
+            from api.institution_routes import get_institution_members_collection
+            members_collection = await get_institution_members_collection()
+            institutions_collection = await get_institutions_collection()
+            
+            # Add member record
+            member_doc = {
+                "user_id": user.id,
+                "institution_id": user_data.institution,
+                "role": user_data.role.value,
+                "status": "pending" if institution.get("require_admin_approval", False) else "active",
+                "joined_at": datetime.utcnow()
+            }
+            await members_collection.insert_one(member_doc)
+            
+            # Update institution statistics
+            role_field = f"total_{user_data.role.value}s" if user_data.role.value != "admin" else "total_users"
+            await institutions_collection.update_one(
+                {"_id": institution["_id"]},
+                {"$inc": {"total_users": 1, role_field: 1}}
+            )
         
-        # Send welcome email (optional)
-        welcome_body = f"""
-        Welcome to ScorePAL!
+        # Generate OTP for email verification
+        import random
+        otp_code = str(random.randint(100000, 999999))
+        otp_expires = datetime.utcnow() + timedelta(minutes=10)
         
-        Your account has been created successfully.
-        Email: {user.email}
-        Role: {user.role.value}
+        # Store OTP in user document
+        from auth.auth_config import get_users_collection
+        users_collection = await get_users_collection()
+        await users_collection.update_one(
+            {"_id": user.id},
+            {"$set": {
+                "otp_code": otp_code,
+                "otp_expires": otp_expires,
+                "otp_verified": False
+            }}
+        )
         
-        You can now log in and start using ScorePAL for automated grading.
-        """
-        send_email(user.email, "Welcome to ScorePAL!", welcome_body)
+        # Send OTP email
+        otp_body = f"""Welcome to ScorePAL!
+
+Your verification code is: {otp_code}
+
+This code will expire in 10 minutes.
+
+If you didn't create an account, please ignore this email."""
+        otp_html = f"""<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2563eb;">Welcome to ScorePAL!</h2>
+        <p>Your verification code is:</p>
+        <div style="background: #f3f4f6; border: 2px solid #2563eb; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #2563eb; font-size: 32px; letter-spacing: 5px; margin: 0;">{otp_code}</h1>
+        </div>
+        <p>This code will expire in 10 minutes.</p>
+        <p style="color: #6b7280; font-size: 14px;">If you didn't create an account, please ignore this email.</p>
+    </div>
+</body>
+</html>"""
+        send_email(user.email, "Verify your ScorePAL account", otp_body, otp_html)
         
         return UserRead(
             id=user.id,
@@ -94,9 +241,91 @@ async def register_user(user_data: UserCreate):
             detail=f"Registration failed: {str(e)}"
         )
 
+@router.post("/send-otp", tags=["auth"])
+async def send_otp(request: EmailVerificationRequest):
+    """Send OTP to email for verification"""
+    try:
+        from auth.auth_config import get_users_collection
+        users_collection = await get_users_collection()
+        user = await users_collection.find_one({"email": request.email})
+        
+        if not user:
+            return {"message": "If the email exists, an OTP has been sent"}
+        
+        import random
+        otp_code = str(random.randint(100000, 999999))
+        otp_expires = datetime.utcnow() + timedelta(minutes=10)
+        
+        await users_collection.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "otp_code": otp_code,
+                "otp_expires": otp_expires,
+                "otp_verified": False
+            }}
+        )
+        
+        otp_body = f"""Your ScorePAL verification code is: {otp_code}
+
+This code will expire in 10 minutes."""
+        otp_html = f"""<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #2563eb;">ScorePAL Verification</h2>
+        <p>Your verification code is:</p>
+        <div style="background: #f3f4f6; border: 2px solid #2563eb; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #2563eb; font-size: 32px; letter-spacing: 5px; margin: 0;">{otp_code}</h1>
+        </div>
+        <p>This code will expire in 10 minutes.</p>
+    </div>
+</body>
+</html>"""
+        send_email(request.email, "Your ScorePAL Verification Code", otp_body, otp_html)
+        return {"message": "OTP sent successfully"}
+    except Exception as e:
+        logger.error(f"Failed to send OTP: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
+
+@router.post("/verify-otp", tags=["auth"])
+async def verify_otp(email: str, otp_code: str):
+    """Verify OTP code"""
+    try:
+        from auth.auth_config import get_users_collection
+        users_collection = await get_users_collection()
+        user = await users_collection.find_one({"email": email})
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        if not user.get("otp_code"):
+            raise HTTPException(status_code=400, detail="No OTP found. Please request a new one.")
+        
+        if user.get("otp_expires") and user["otp_expires"] < datetime.utcnow():
+            raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+        
+        if user.get("otp_code") != otp_code:
+            raise HTTPException(status_code=400, detail="Invalid OTP code")
+        
+        await users_collection.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "otp_verified": True,
+                "is_verified": True,
+                "otp_code": None,
+                "otp_expires": None
+            }}
+        )
+        
+        return {"message": "Email verified successfully", "verified": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to verify OTP: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to verify OTP: {str(e)}")
+
 @router.post("/login", response_model=LoginResponse, tags=["auth"])
 async def login_user(login_data: LoginRequest):
-    """Login user with JWT token response"""
+    """Login user with JWT token response and auto-detect institution"""
     print(f"Login request received: {login_data}")
     try:
         # Test MongoDB connection first
@@ -111,6 +340,58 @@ async def login_user(login_data: LoginRequest):
         
         print(f"Database connection successful")
         user = await user_manager.verify_password(login_data.email, login_data.password)
+        
+        # Check if user was found (verify_password raises exception on failure, but check anyway)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+        
+        # Auto-detect and update institution if user doesn't have one
+        if not user.institution:
+            from utils.institution_utils import detect_institution_from_email
+            detected_institution = await detect_institution_from_email(login_data.email)
+            if detected_institution:
+                # Update user's institution
+                await user_manager.update_user(user.id, {
+                    "institution": detected_institution["id"]
+                })
+                user.institution = detected_institution["id"]
+                
+                # Add user to institution members
+                try:
+                    from api.institution_routes import get_institution_members_collection
+                    members_collection = await get_institution_members_collection()
+                    institutions_collection = await get_institutions_collection()
+                    
+                    # Check if already a member
+                    existing_member = await members_collection.find_one({
+                        "user_id": user.id,
+                        "institution_id": detected_institution["id"]
+                    })
+                    
+                    if not existing_member:
+                        from bson import ObjectId
+                        member_doc = {
+                            "user_id": user.id,
+                            "institution_id": detected_institution["id"],
+                            "role": user.role.value,
+                            "status": "active",
+                            "joined_at": datetime.utcnow()
+                        }
+                        await members_collection.insert_one(member_doc)
+                        
+                        # Update institution statistics
+                        role_field = f"total_{user.role.value}s" if user.role.value != "admin" else "total_users"
+                        await institutions_collection.update_one(
+                            {"_id": ObjectId(detected_institution["id"])},
+                            {"$inc": {"total_users": 1, role_field: 1}}
+                        )
+                        logger.info(f"Auto-added user {user.email} to institution {detected_institution['name']}")
+                except Exception as e:
+                    logger.warning(f"Could not add user to institution members: {e}")
+                    # Don't fail login if this fails
         
         # Debug: Print user object details
         print(f"User object: {user}")

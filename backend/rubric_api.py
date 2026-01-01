@@ -1,6 +1,7 @@
 """
 Rubric API for ScorePAL
 Handles rubric creation, management, and application
+Only accessible to teachers and graders
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
@@ -9,18 +10,26 @@ from pydantic import BaseModel
 import logging
 import json
 from pathlib import Path
+from datetime import datetime
 
-from auth.auth_config import current_active_user
+from auth.auth_config import current_active_user, require_roles
+from models.user import User, UserRole
 
 router = APIRouter(prefix="/rubrics", tags=["rubrics"])
 logger = logging.getLogger(__name__)
 
 # Pydantic models
+class GradingLevel(BaseModel):
+    level: str
+    points: float
+    description: str
+
 class GradingCriteria(BaseModel):
     name: str
     description: str
     max_points: float
     weight: float = 1.0
+    levels: Optional[List[GradingLevel]] = None
 
 class Rubric(BaseModel):
     id: Optional[str] = None
@@ -28,6 +37,7 @@ class Rubric(BaseModel):
     description: Optional[str] = None
     criteria: List[GradingCriteria]
     total_points: float
+    strictness: Optional[float] = 0.5
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -35,11 +45,13 @@ class RubricCreate(BaseModel):
     name: str
     description: Optional[str] = None
     criteria: List[GradingCriteria]
+    strictness: Optional[float] = 0.5
 
 class RubricUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     criteria: Optional[List[GradingCriteria]] = None
+    strictness: Optional[float] = None
 
 # In-memory storage for rubrics (replace with database in production)
 RUBRICS: Dict[str, Rubric] = {}
@@ -52,6 +64,11 @@ def load_rubrics_from_disk():
             with open(rubric_file, 'r') as f:
                 data = json.load(f)
                 for rubric_data in data:
+                    # Handle both old and new formats
+                    if 'criteria' in rubric_data:
+                        for criterion in rubric_data['criteria']:
+                            if 'levels' not in criterion:
+                                criterion['levels'] = None
                     rubric = Rubric(**rubric_data)
                     RUBRICS[rubric.id] = rubric
             logger.info(f"Loaded {len(RUBRICS)} rubrics from disk")
@@ -74,29 +91,33 @@ def save_rubrics_to_disk():
 load_rubrics_from_disk()
 
 @router.get("/", response_model=List[Rubric])
-async def get_rubrics():
-    """Get all available rubrics"""
+async def get_rubrics(user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Get all available rubrics (teachers and graders only)"""
     return list(RUBRICS.values())
 
 @router.get("/{rubric_id}", response_model=Rubric)
-async def get_rubric(rubric_id: str):
-    """Get a specific rubric by ID"""
+async def get_rubric(rubric_id: str, user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Get a specific rubric by ID (teachers and graders only)"""
     if rubric_id not in RUBRICS:
         raise HTTPException(status_code=404, detail="Rubric not found")
     return RUBRICS[rubric_id]
 
 @router.post("/", response_model=Rubric, status_code=201)
-async def create_rubric(rubric: RubricCreate):
-    """Create a new rubric"""
+async def create_rubric(rubric: RubricCreate, user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Create a new rubric (teachers and graders only)"""
     try:
         # Calculate total points
         total_points = sum(criterion.max_points for criterion in rubric.criteria)
         
         # Create rubric with ID and timestamps
+        rubric_dict = rubric.dict()
         new_rubric = Rubric(
             id=f"rubric_{len(RUBRICS) + 1}",
-            **rubric.dict(),
+            name=rubric_dict.get("name"),
+            description=rubric_dict.get("description"),
+            criteria=rubric_dict.get("criteria", []),
             total_points=total_points,
+            strictness=rubric_dict.get("strictness", 0.5),
             created_at=datetime.now().isoformat(),
             updated_at=datetime.now().isoformat()
         )
@@ -112,8 +133,8 @@ async def create_rubric(rubric: RubricCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{rubric_id}", response_model=Rubric)
-async def update_rubric(rubric_id: str, rubric_update: RubricUpdate):
-    """Update an existing rubric"""
+async def update_rubric(rubric_id: str, rubric_update: RubricUpdate, user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Update an existing rubric (teachers and graders only)"""
     if rubric_id not in RUBRICS:
         raise HTTPException(status_code=404, detail="Rubric not found")
     
@@ -141,8 +162,8 @@ async def update_rubric(rubric_id: str, rubric_update: RubricUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{rubric_id}")
-async def delete_rubric(rubric_id: str):
-    """Delete a rubric"""
+async def delete_rubric(rubric_id: str, user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Delete a rubric (teachers and graders only)"""
     if rubric_id not in RUBRICS:
         raise HTTPException(status_code=404, detail="Rubric not found")
     
@@ -159,8 +180,8 @@ async def delete_rubric(rubric_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{rubric_id}/apply")
-async def apply_rubric(rubric_id: str, submission_data: Dict[str, Any]):
-    """Apply a rubric to grade a submission"""
+async def apply_rubric(rubric_id: str, submission_data: Dict[str, Any], user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))):
+    """Apply a rubric to grade a submission (teachers and graders only)"""
     if rubric_id not in RUBRICS:
         raise HTTPException(status_code=404, detail="Rubric not found")
     
@@ -200,6 +221,3 @@ async def apply_rubric(rubric_id: str, submission_data: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error applying rubric: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# Import datetime for timestamps
-from datetime import datetime 

@@ -45,6 +45,11 @@ class User(BaseModel):
     free_gradings_used: int = 0
     premium_active: bool = False
     
+    # Credits system
+    credits: int = 0  # Total credits available
+    credits_earned: int = 0  # Total credits earned (lifetime)
+    credits_spent: int = 0  # Total credits spent (lifetime)
+    
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -116,6 +121,9 @@ class UserRead(BaseModel):
     grading_count: int = 0
     free_gradings_used: int = 0
     premium_active: bool = False
+    credits: int = 0
+    credits_earned: int = 0
+    credits_spent: int = 0
     is_active: bool = True
     is_verified: bool = False
     created_at: Optional[datetime] = None

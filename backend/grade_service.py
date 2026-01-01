@@ -5,20 +5,43 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Union
+from pathlib import Path
 
 import requests
 from requests.exceptions import RequestException, ConnectionError
 from prompts.grading_prompt import get_grading_prompt
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from multiple locations to ensure we find it
+_current_dir = Path(__file__).resolve().parent
+_root_dir = _current_dir.parent
+
+# Try backend/.env first, then root/.env
+_backend_env = _current_dir / ".env"
+_root_env = _root_dir / ".env"
+
+if _backend_env.exists():
+    load_dotenv(dotenv_path=_backend_env, override=True)
+    print(f"[GradeService] Loaded .env from: {_backend_env}")
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env, override=True)
+    print(f"[GradeService] Loaded .env from: {_root_env}")
+
 logger = logging.getLogger(__name__)
 
 # Configure API keys from environment
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-logger.info(f"Environment variables loaded. {GEMINI_API_KEY}")
+
+# Model preference - set GRADING_MODEL to "mistral" to prefer Mistral over Gemini
+PREFERRED_MODEL = os.environ.get("GRADING_MODEL", "gemini").lower()
+
+# Print debug info on module load
+print(f"[GradeService] GRADING_MODEL={PREFERRED_MODEL}")
+print(f"[GradeService] HF_TOKEN={'SET' if HF_TOKEN else 'NOT SET'}")
+print(f"[GradeService] GEMINI_API_KEY={'SET' if GEMINI_API_KEY else 'NOT SET'}")
+logger.info(f"Grading model preference: {PREFERRED_MODEL}")
 # Add this at the top of the file with other imports
 from threading import Lock
 import time
@@ -30,17 +53,22 @@ GEMINI_CALL_INTERVAL = 4  # seconds between Gemini API calls
 GEMINI_LOCK = Lock()  # Thread safety for multi-threaded access
 
 # API endpoints - updated endpoints for our three models
-# Mistral endpoint (instruction-tuned)
-HF_MISTRAL_URL = "https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3/v1/chat/completions"
+# Mistral endpoint (instruction-tuned) - using HF Inference API
+HF_MISTRAL_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
 # BLOOM endpoint (using a smaller variant for faster inference)
 HF_BLOOM_URL = "https://api-inference.huggingface.co/models/bigscience/bloom-560m"
 # Flan-T5 endpoint
 HF_FLAN_T5_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
 
-# Configure headers for different APIs
-HEADERS_MISTRAL = {"Authorization": f"Bearer {HF_MISTRAL_URL}"}
-HEADERS_BLOOM = {"Authorization": f"Bearer {HF_BLOOM_URL}"}
-HEADERS_FLAN_T5 = {"Authorization": f"Bearer {HF_FLAN_T5_URL}"}
+# Configure headers for Hugging Face APIs (use HF_TOKEN for all)
+HF_HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
+}
+# Legacy headers for backwards compatibility
+HEADERS_MISTRAL = HF_HEADERS
+HEADERS_BLOOM = HF_HEADERS
+HEADERS_FLAN_T5 = HF_HEADERS
 
 # Global flag to track network availability
 NETWORK_AVAILABLE = True
@@ -100,8 +128,22 @@ def grade_submission(
         Grading results as dictionary
     """
     global NETWORK_AVAILABLE
-    logger.info("Grading submission...")
-    logger.info(f"Network available: {NETWORK_AVAILABLE}")
+    
+    # Re-read environment variables at runtime (supports hot-reload)
+    # Also reload .env files to pick up any changes
+    _backend_env = Path(__file__).resolve().parent / ".env"
+    _root_env = Path(__file__).resolve().parent.parent / ".env"
+    if _backend_env.exists():
+        load_dotenv(dotenv_path=_backend_env, override=True)
+    if _root_env.exists():
+        load_dotenv(dotenv_path=_root_env, override=True)
+    
+    hf_token = os.environ.get("HF_TOKEN")
+    grading_model = os.environ.get("GRADING_MODEL", "gemini").lower()
+    
+    print(f"[Grading] Model={grading_model}, HF_TOKEN={'yes' if hf_token else 'no'}, Network={NETWORK_AVAILABLE}")
+    logger.info(f"Grading submission with model preference: {grading_model}")
+    
     # First check if we have network connectivity
     if not NETWORK_AVAILABLE:
         logger.warning("Network appears to be down, using offline grading")
@@ -109,12 +151,20 @@ def grade_submission(
     
     # Try different models in order of preference
     try:
-        logger.info("Starting grading process")
-        # First try Gemini if available (most reliable)
-        logger.info(f"Gemini API key: {GEMINI_API_KEY}")
-        logger.info(f"Network available: {NETWORK_AVAILABLE}")
+        # MISTRAL FIRST: Use Mistral if HF_TOKEN is available and model is "mistral"
+        if hf_token and grading_model == "mistral" and NETWORK_AVAILABLE:
+            print(f"[Grading] >>> Using MISTRAL as primary model <<<")
+            logger.info("Mistral is preferred model, attempting Mistral grading")
+            try:
+                result = grade_with_mistral(question_text, submission_text, answer_key, rubric, strictness_level)
+                print(f"[Grading] >>> MISTRAL SUCCESS <<<")
+                logger.info("Successfully graded with Mistral")
+                return result
+            except Exception as e:
+                print(f"[Grading] Mistral failed: {e}, falling back to Gemini")
+                logger.warning(f"Mistral grading failed: {e}. Falling back to Gemini.")
         
-        # Replace the Gemini part of grade_submission with this improved version
+        # Try Gemini (default or fallback)
         if GEMINI_API_KEY and NETWORK_AVAILABLE:
             logger.info("Gemini API key found, attempting to use Gemini model")
             try:
@@ -238,51 +288,95 @@ def grade_with_mistral(
     rubric: Dict[str, Any], 
     strictness_level: int = 3
 ) -> Dict[str, Any]:
-    """Grade with Mistral model via Hugging Face."""
+    """
+    Grade with Mistral model via Hugging Face Inference API.
+    Uses Mistral-7B-Instruct for instruction-following grading tasks.
+    """
+    if not HF_TOKEN:
+        raise ValueError("HF_TOKEN environment variable not set. Please set your Hugging Face token.")
+    
     prompt = get_grading_prompt(question_text, answer_key, submission_text, rubric, strictness_level)
     
-    # Structure for inference API (chat format for Mistral)
+    # Build the instruction prompt for Mistral
+    system_instruction = (
+        "You are a grading assistant. Evaluate the student submission based on the rubric provided. "
+        "Respond ONLY with a valid JSON object containing exactly these keys:\n"
+        '- "score": numeric score earned\n'
+        '- "total": total possible points\n'
+        '- "mistakes": object with criterion names as keys and deduction details as values\n'
+        '- "grading_feedback": detailed feedback string\n'
+        "Do not include any text before or after the JSON."
+    )
+    
+    full_prompt = f"<s>[INST] {system_instruction}\n\n{prompt} [/INST]"
+    
+    # Hugging Face Inference API payload for text generation
     payload = {
-        "inputs": [
-            {"role": "system", "content": (
-                "You are a grading assistant. Respond only with a JSON object "
-                "containing exactly these keys: \"score\", \"total\", \"mistakes\", \"grading_feedback\"."
-            )},
-            {"role": "user", "content": prompt},
-        ],
+        "inputs": full_prompt,
         "parameters": {
-            "max_new_tokens": 1024,
+            "max_new_tokens": 1500,
             "temperature": 0.2,
+            "top_p": 0.9,
+            "do_sample": True,
             "return_full_text": False
         }
     }
 
     try:
-        response = requests.post(HF_MISTRAL_URL, headers=HEADERS_MISTRAL, json=payload, timeout=30)
-        response.raise_for_status()
+        logger.info("Sending request to Mistral via Hugging Face Inference API")
+        response = requests.post(
+            HF_MISTRAL_URL, 
+            headers=HF_HEADERS, 
+            json=payload, 
+            timeout=60
+        )
         
-        try:
-            # Handle different response formats
-            if isinstance(response.json(), dict) and "generated_text" in response.json():
-                response_text = response.json()["generated_text"]
-            else:
-                response_text = response.json()[0]["generated_text"]
-        except Exception as e:
-            logger.error(f"Error parsing response: {e}, raw response: {response.text[:200]}...")
+        # Check for model loading status
+        if response.status_code == 503:
+            error_data = response.json()
+            if "estimated_time" in error_data:
+                wait_time = min(error_data.get("estimated_time", 30), 60)
+                logger.info(f"Model is loading, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                # Retry once
+                response = requests.post(
+                    HF_MISTRAL_URL, 
+                    headers=HF_HEADERS, 
+                    json=payload, 
+                    timeout=90
+                )
+        
+        response.raise_for_status()
+        result = response.json()
+        
+        # Extract generated text from response
+        response_text = ""
+        if isinstance(result, list) and len(result) > 0:
+            response_text = result[0].get("generated_text", "")
+        elif isinstance(result, dict):
+            response_text = result.get("generated_text", "")
+        
+        if not response_text:
+            logger.error(f"Empty response from Mistral: {result}")
             return _create_error_result()
+        
+        logger.info(f"Mistral response received, length: {len(response_text)}")
             
+        # Extract JSON from response
         snippet = _extract_json_snippet(response_text)
         if not snippet:
-            logger.error(f"No JSON found in response: {response_text[:100]}...")
+            logger.error(f"No JSON found in Mistral response: {response_text[:200]}...")
             return _create_error_result()
 
         try:
             parsed = json.loads(snippet)
         except json.JSONDecodeError:
+            # Try fixing common JSON issues
             try:
-                parsed = json.loads(snippet.replace("'", '"'))
+                fixed_snippet = snippet.replace("'", '"').replace('\n', ' ')
+                parsed = json.loads(fixed_snippet)
             except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON snippet: {snippet[:100]}...")
+                logger.error(f"Failed to parse JSON from Mistral: {snippet[:200]}...")
                 return _create_error_result()
 
         return {
@@ -290,11 +384,16 @@ def grade_with_mistral(
             "total": float(parsed.get("total", rubric.get("total_points", 100))),
             "mistakes": parsed.get("mistakes", {}),
             "grading_feedback": parsed.get("grading_feedback", "No feedback provided."),
+            "model_used": "mistral-7b-instruct"
         }
+        
     except ConnectionError as e:
         logger.error(f"Connection error with Hugging Face API: {e}")
         global NETWORK_AVAILABLE
         NETWORK_AVAILABLE = False
+        raise
+    except requests.exceptions.Timeout:
+        logger.error("Timeout waiting for Mistral response")
         raise
     except Exception as e:
         logger.error(f"Error with Mistral grading: {e}")

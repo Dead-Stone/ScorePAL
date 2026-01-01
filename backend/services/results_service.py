@@ -99,9 +99,28 @@ async def save_grading_result(
             "metadata": result_data.get("metadata", {})
         }
         
-        # Insert into MongoDB
-        result = await collection.insert_one(result_doc)
-        result_id = str(result.inserted_id)
+        # Upsert by submission_id so the same submission can be regraded infinitely
+        # without hitting unique index errors on submission_id.
+        existing_doc = None
+        submission_key = result_doc.get("submission_id")
+
+        if submission_key:
+            existing_doc = await collection.find_one({"submission_id": submission_key})
+
+        if existing_doc:
+            # Treat this as a regrade: update existing document with new result data
+            result_id = str(existing_doc["_id"])
+            # Preserve original _id
+            await collection.update_one(
+                {"_id": existing_doc["_id"]},
+                {"$set": result_doc},
+            )
+            logger.info(f"Updated existing grading result {result_id} for submission {submission_key}")
+        else:
+            # First grading for this submission – insert new document
+            result = await collection.insert_one(result_doc)
+            result_id = str(result.inserted_id)
+            logger.info(f"Inserted new grading result {result_id} for submission {submission_key}")
         
         # Update submission with grading_result_id if submission_id exists
         if submission_id:
@@ -114,7 +133,6 @@ async def save_grading_result(
             except Exception as e:
                 logger.warning(f"Could not update submission with result ID: {e}")
         
-        logger.info(f"Saved grading result {result_id} to MongoDB")
         return result_id
         
     except Exception as e:

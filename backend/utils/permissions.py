@@ -126,9 +126,8 @@ async def filter_results_by_role(
         return base_query
     
     elif user.role == UserRole.GRADER:
-        # Graders can see results for assignments they're assigned to
-        # This requires a grader_assignments collection (to be implemented)
-        return base_query
+        # Graders can see results for assignments they graded (filter by grader_id)
+        return {**base_query, "grader_id": user.id}
     
     return base_query
 
@@ -154,10 +153,11 @@ async def filter_assignments_by_role(
         return {**base_query, "teacher_id": user.id}
     
     elif user.role == UserRole.GRADER:
-        # Graders can see assignments they're assigned to
-        # This requires a grader_assignments collection (to be implemented)
-        # For now, return empty query (no assignments visible)
-        return {**base_query, "_id": None}  # Return no results until implemented
+        # Graders can see assignments they've graded
+        # We need to find assignments where grader_id matches in results
+        # This is handled at the application layer by checking results collection
+        # For now, return base_query and filter in application layer
+        return base_query
     
     elif user.role == UserRole.STUDENT:
         # Students can see published assignments for courses they're enrolled in
@@ -191,9 +191,10 @@ async def can_access_assignment(user: User, assignment: Dict[str, Any]) -> bool:
         return assignment_status == "published"
     
     elif user.role == UserRole.GRADER:
-        # Check if grader is assigned to this assignment
-        # This requires grader_assignments collection (to be implemented)
-        return False  # For now, graders can't access assignments
+        # Check if grader has graded any submissions for this assignment
+        # This is checked by looking for results with grader_id and assignment_id
+        # For now, allow access (will be filtered by results in queries)
+        return True
     
     return False
 
@@ -224,4 +225,60 @@ def anonymize_student_data(results: List[Dict[str, Any]], current_user_id: Optio
         anonymized.append(anonymized_result)
     
     return anonymized
+
+
+async def filter_by_canvas_course(
+    user: User,
+    collection: AsyncIOMotorCollection,
+    course_id: str,
+    base_query: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Filter assignments or results by Canvas course ID.
+    
+    For teachers, ensures they own assignments in the course.
+    For graders, filters results for assignments in the course they've graded.
+    
+    Args:
+        user: Current user
+        collection: MongoDB collection (assignments or results)
+        course_id: Canvas course ID
+        base_query: Base query to extend
+    
+    Returns:
+        Filtered query dictionary
+    """
+    if base_query is None:
+        base_query = {}
+    
+    if user.is_superuser:
+        # Admins can see all
+        return {
+            **base_query,
+            "$or": [
+                {"canvas_course_id": course_id},
+                {"course_id": course_id}
+            ]
+        }
+    
+    if user.role == UserRole.TEACHER:
+        # Teachers can see their own assignments in the course
+        return {
+            **base_query,
+            "teacher_id": user.id,
+            "$or": [
+                {"canvas_course_id": course_id},
+                {"course_id": course_id}
+            ]
+        }
+    
+    elif user.role == UserRole.GRADER:
+        # For results collection, filter by grader_id and course via assignment lookup
+        # This requires joining with assignments, handled in application layer
+        return {
+            **base_query,
+            "grader_id": user.id
+        }
+    
+    return base_query
 

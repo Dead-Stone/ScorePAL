@@ -4,10 +4,21 @@ Centralized MongoDB connection management and collection access.
 """
 
 import os
+from dotenv import load_dotenv
+from pathlib import Path
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorCollection
 from pymongo import IndexModel, ASCENDING, DESCENDING, TEXT
 import logging
+
+# Load environment variables from .env file
+# Try root .env first, then backend/.env
+root_env = Path(__file__).parent.parent.parent / ".env"
+backend_env = Path(__file__).parent.parent / ".env"
+if root_env.exists():
+    load_dotenv(root_env)
+if backend_env.exists():
+    load_dotenv(backend_env, override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +142,20 @@ async def get_rubrics_collection() -> AsyncIOMotorCollection:
     return collection
 
 
+async def get_user_settings_collection() -> AsyncIOMotorCollection:
+    """Get user settings collection with indexes."""
+    db = get_database()
+    collection = db["user_settings"]
+    
+    # Create indexes if they don't exist
+    await collection.create_indexes([
+        IndexModel([("user_id", ASCENDING)], unique=True),
+        IndexModel([("canvas_key_configured", ASCENDING)]),
+    ])
+    
+    return collection
+
+
 async def initialize_indexes():
     """Initialize all collection indexes."""
     try:
@@ -140,6 +165,7 @@ async def initialize_indexes():
         await get_results_collection()
         await get_analytics_collection()
         await get_rubrics_collection()
+        await get_user_settings_collection()
         logger.info("MongoDB indexes initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing MongoDB indexes: {e}", exc_info=True)

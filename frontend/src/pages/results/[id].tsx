@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { useRouter } from 'next/router';
+import { GetStaticProps, GetStaticPaths } from 'next';
 import {
   Box,
   Container,
@@ -32,41 +33,33 @@ import {
   InputAdornment,
 } from '@mui/material';
 import { styled } from '@mui/material/styles';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import ErrorIcon from '@mui/icons-material/Error';
-import WarningIcon from '@mui/icons-material/Warning';
-import DownloadIcon from '@mui/icons-material/Download';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import SearchIcon from '@mui/icons-material/Search';
-import PersonIcon from '@mui/icons-material/Person';
-import GradeIcon from '@mui/icons-material/Grade';
-import FeedbackIcon from '@mui/icons-material/Feedback';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import SummarizeIcon from '@mui/icons-material/Summarize';
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
-import ChatIcon from '@mui/icons-material/Chat';
-import ArticleIcon from '@mui/icons-material/Article';
+import { TopNavBar } from '@/components/layout/TopNavBar';
+// Optimize icon imports - tree-shakeable
+import {
+  Assignment as AssignmentIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Download as DownloadIcon,
+  ArrowBack as ArrowBackIcon,
+  Search as SearchIcon,
+  Person as PersonIcon,
+  Grade as GradeIcon,
+  Feedback as FeedbackIcon,
+  BarChart as BarChartIcon,
+  Summarize as SummarizeIcon,
+  FormatListBulleted as FormatListBulletedIcon,
+  Chat as ChatIcon,
+  Article as ArticleIcon,
+} from '@mui/icons-material';
 
 import Link from 'next/link';
-import axios from 'axios';
-import ChatInterface from '../../components/ChatInterface';
-import FileBrowser from '../../components/FileBrowser';
+import apiClient from '@/utils/apiClient';
+// Lazy load heavy components
+import dynamic from 'next/dynamic';
+const ChatInterface = dynamic(() => import('../../components/ChatInterface'), { ssr: false });
+const FileBrowser = dynamic(() => import('../../components/FileBrowser'), { ssr: false });
 import SaveIcon from '@mui/icons-material/Save';
-import { API_BASE_URL } from '@/config/api';
-
-// Configure axios
-axios.defaults.baseURL = API_BASE_URL;
-axios.defaults.headers.common['Accept'] = 'application/json';
-
-// Add auth token to requests
-axios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
 
 // Define types for the data
 interface CriterionScore {
@@ -92,6 +85,20 @@ interface StudentResult {
   criteria_scores: CriterionScore[];
   mistakes: Record<string, Mistake>;
   timestamp?: string;
+  canvas_comparison?: {
+    canvas_posted_grade?: string;
+    canvas_posted_score?: number;
+    canvas_posted_percentage?: number;
+    ai_score: number;
+    ai_total: number;
+    ai_percentage: number;
+    score_difference?: number;
+    percentage_difference?: number;
+    comparison_status: string;
+    canvas_submission_url?: string;
+    last_updated?: string;
+  } | null;
+  ai_model_used?: string;
 }
 
 interface FileInfo {
@@ -136,6 +143,21 @@ interface GradingResults {
   answer_key?: string;
   submission_text?: string;
   files?: FilesList;
+  canvas_comparison?: {
+    canvas_posted_grade?: string;
+    canvas_posted_score?: number;
+    canvas_posted_percentage?: number;
+    ai_score: number;
+    ai_total: number;
+    ai_percentage: number;
+    score_difference?: number;
+    percentage_difference?: number;
+    comparison_status: string;
+    canvas_submission_url?: string;
+    last_updated?: string;
+  } | null;
+  ai_model_used?: string;
+  rubric?: any;
 }
 
 // Styled components
@@ -208,6 +230,22 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+// Static generation for dynamic routes - compile at build time
+export const getStaticPaths: GetStaticPaths = async () => {
+  // Return empty paths array - pages will be generated on-demand
+  return {
+    paths: [],
+    fallback: 'blocking', // Generate page on-demand but cache it
+  };
+};
+
+export const getStaticProps: GetStaticProps = async (context) => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
+
 export default function ResultsPage() {
   const router = useRouter();
   const { id } = router.query;
@@ -229,14 +267,14 @@ export default function ResultsPage() {
         // Try new MongoDB API first, fall back to old endpoint
         let response;
         try {
-          response = await axios.get(`/api/results/${id}`);
+          response = await apiClient.get(`/api/results/${id}?include_canvas_comparison=true`);
           // Transform MongoDB result to expected format
           const result = response.data;
-          const transformedData = {
+          const transformedData: GradingResults = {
+            id: result.id || id as string,
             assignment_id: result.assignment_id,
             assignment_name: result.assignment_id,
             student_name: result.student_name,
-            graded_at: result.graded_at,
             score: result.score,
             total: result.total_points,
             percentage: result.percentage,
@@ -247,7 +285,10 @@ export default function ResultsPage() {
             submission_text: result.submission_text,
             question_text: result.question_text,
             answer_key: result.answer_key_text,
-            timestamp: result.graded_at,
+            timestamp: result.graded_at || new Date().toISOString(),
+            canvas_comparison: result.canvas_comparison || null,
+            ai_model_used: result.ai_model_used || 'Unknown',
+            rubric: result.rubric_used || result.rubric,
           };
           setResults(transformedData);
           if (result.student_name) {
@@ -255,7 +296,7 @@ export default function ResultsPage() {
           }
         } catch (newApiError) {
           // Fall back to old endpoint
-          response = await axios.get(`/grading-results/${id}`);
+          response = await apiClient.get(`/grading-results/${id}`);
           setResults(response.data);
           
           // Select the first student by default if available
@@ -269,7 +310,7 @@ export default function ResultsPage() {
           }
         }
       } catch (err) {
-        console.error('Error fetching results:', err);
+        // Error handled by UI state
         setError('Failed to load results. Please try again later.');
       } finally {
         setIsLoading(false);
@@ -289,10 +330,40 @@ export default function ResultsPage() {
     setSelectedStudent(studentName);
     setTabValue(1); // Switch to student details tab
   };
+
+  // Memoize filtered students calculation - MUST be before conditional returns
+  const filteredStudents = useMemo<[string, StudentResult][]>(() => {
+    if (!results) return [];
+    
+    // For single student submissions
+    if (!results.student_results && results.student_name && results.score !== undefined) {
+      const singleStudentResult: StudentResult = {
+        score: results.score,
+        total: results.total || 100,
+        percentage: results.percentage || 0,
+        grade_letter: results.grade_letter || 'N/A',
+        grading_feedback: results.grading_feedback || '',
+        criteria_scores: results.criteria_scores || [],
+        mistakes: results.mistakes || {}
+      };
+      
+      if (!searchQuery || results.student_name.toLowerCase().includes(searchQuery.toLowerCase())) {
+        return [[results.student_name, singleStudentResult]];
+      }
+      return [];
+    }
+    // For multiple students
+    if (results.student_results) {
+      return Object.entries(results.student_results)
+        .filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
+        .sort((a, b) => b[1].percentage - a[1].percentage);
+    }
+    return [];
+  }, [results, searchQuery]);
   
   const handleDownloadResults = async () => {
     try {
-      const response = await axios.get(`/grading-results/${id}/download`, {
+      const response = await apiClient.get(`/grading-results/${id}/download`, {
         responseType: 'blob'
       });
       
@@ -304,7 +375,7 @@ export default function ResultsPage() {
       link.click();
       link.remove();
     } catch (err) {
-      console.error('Error downloading results:', err);
+      // Download error handled by UI
       setError('Failed to download results');
     }
   };
@@ -332,88 +403,84 @@ export default function ResultsPage() {
   // Render loading state
   if (isLoading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 6 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8 }}>
-          <CircularProgress size={60} thickness={4} />
-          <Typography variant="h6" sx={{ mt: 3 }}>
-            Loading grading results...
-          </Typography>
-        </Box>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8 }}>
+            <CircularProgress size={60} thickness={4} />
+            <Typography variant="h6" sx={{ mt: 3 }}>
+              Loading grading results...
+            </Typography>
+          </Box>
+        </Container>
+      </div>
     );
   }
   
   // Render error state
   if (error) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-        <Button
-          variant="contained"
-          startIcon={<ArrowBackIcon />}
-          component={Link}
-          href="/results"
-        >
-          Back to Results
-        </Button>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+          <Button
+            variant="contained"
+            startIcon={<ArrowBackIcon />}
+            component={Link}
+            href="/results"
+          >
+            Back to Results
+          </Button>
+        </Container>
+      </div>
     );
   }
   
   // Render empty state
   if (!results) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="info" sx={{ mb: 3 }}>
-          No results found for this assignment.
-        </Alert>
-        <Button
-          variant="contained"
-          startIcon={<ArrowBackIcon />}
-          component={Link}
-          href="/results"
-        >
-          Back to Results
-        </Button>
-      </Container>
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <TopNavBar />
+        <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+          <Alert severity="info" sx={{ mb: 3 }}>
+            No results found for this assignment.
+          </Alert>
+          <Button
+            variant="contained"
+            startIcon={<ArrowBackIcon />}
+            component={Link}
+            href="/results"
+          >
+            Back to Results
+          </Button>
+        </Container>
+      </div>
     );
   }
   
-  // Calculate filtered students
-  let filteredStudents: [string, StudentResult][] = [];
-  
-  // For single student submissions
-  if (!results.student_results && results.student_name && results.score !== undefined) {
-    const singleStudentResult: StudentResult = {
-      score: results.score,
-      total: results.total || 100,
-      percentage: results.percentage || 0,
-      grade_letter: results.grade_letter || 'N/A',
-      grading_feedback: results.grading_feedback || '',
-      criteria_scores: results.criteria_scores || [],
-      mistakes: results.mistakes || {}
-    };
-    
-    if (!searchQuery || results.student_name.toLowerCase().includes(searchQuery.toLowerCase())) {
-      filteredStudents = [[results.student_name, singleStudentResult]];
-    }
-  }
-  // For multiple students
-  else if (results.student_results) {
-    filteredStudents = Object.entries(results.student_results)
-      .filter(([name]) => name.toLowerCase().includes(searchQuery.toLowerCase()))
-      .sort((a, b) => b[1].percentage - a[1].percentage);
-  }
-  
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      {/* Header */}
-      <Box mb={4}>
-        <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
-          {results.assignment_name || "Assignment Results"}
-        </Typography>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+      <TopNavBar />
+      <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+        {/* Header */}
+        <Box mb={4}>
+          <Typography 
+            variant="h3" 
+            component="h1" 
+            gutterBottom 
+            fontWeight="bold"
+            sx={{ 
+              background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              mb: 1
+            }}
+          >
+            {results.assignment_name || "Assignment Results"}
+          </Typography>
         <Typography variant="subtitle1" color="text.secondary" gutterBottom>
           {new Date(results.timestamp).toLocaleDateString(undefined, { 
             year: 'numeric', 
@@ -504,6 +571,9 @@ export default function ResultsPage() {
         <Tabs value={tabValue} onChange={handleTabChange} aria-label="results tabs">
           <Tab icon={<SummarizeIcon />} label="Summary" iconPosition="start" />
           <Tab icon={<PersonIcon />} label="Student Details" iconPosition="start" />
+          {results?.canvas_comparison && (
+            <Tab icon={<GradeIcon />} label="Grade Comparison" iconPosition="start" />
+          )}
           <Tab icon={<BarChartIcon />} label="Analytics" iconPosition="start" />
           <Tab icon={<ArticleIcon />} label="Files" iconPosition="start" />
         </Tabs>
@@ -797,8 +867,11 @@ export default function ResultsPage() {
                       Performance by Criterion
                     </Typography>
                     <Box display="flex" gap={1} flexWrap="wrap">
-                      {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
-                        results.criteria_scores || []).map((criterion: CriterionScore, index: number) => {
+                      {(() => {
+                        const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                             results.criteria_scores;
+                        return Array.isArray(criteriaScores) ? criteriaScores : [];
+                      })().map((criterion: CriterionScore, index: number) => {
                         const percentage = (criterion.points / criterion.max_points) * 100;
                         return (
                           <Chip
@@ -825,8 +898,11 @@ export default function ResultsPage() {
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {((selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
-                          results.criteria_scores || []).map((criterion: CriterionScore, index: number) => {
+                        {(() => {
+                          const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
+                                               results.criteria_scores;
+                          return Array.isArray(criteriaScores) ? criteriaScores : [];
+                        })().map((criterion: CriterionScore, index: number) => {
                           const percentage = (criterion.points / criterion.max_points) * 100;
                           return (
                             <TableRow key={index}>
@@ -876,17 +952,18 @@ export default function ResultsPage() {
                     <Box display="flex" gap={2} flexWrap="wrap">
                       {(() => {
                         const criteriaScores = (selectedStudent && results.student_results && results.student_results[selectedStudent]?.criteria_scores) || 
-                                             results.criteria_scores || [];
-                        const totalPoints = criteriaScores.reduce((sum, c) => sum + c.points, 0);
-                        const totalMaxPoints = criteriaScores.reduce((sum, c) => sum + c.max_points, 0);
+                                             results.criteria_scores;
+                        const safeCriteriaScores = Array.isArray(criteriaScores) ? criteriaScores : [];
+                        const totalPoints = safeCriteriaScores.reduce((sum, c) => sum + c.points, 0);
+                        const totalMaxPoints = safeCriteriaScores.reduce((sum, c) => sum + c.max_points, 0);
                         const overallPercentage = totalMaxPoints > 0 ? (totalPoints / totalMaxPoints) * 100 : 0;
                         
-                        const excellentCriteria = criteriaScores.filter(c => (c.points / c.max_points) * 100 >= 80).length;
-                        const goodCriteria = criteriaScores.filter(c => {
+                        const excellentCriteria = safeCriteriaScores.filter(c => (c.points / c.max_points) * 100 >= 80).length;
+                        const goodCriteria = safeCriteriaScores.filter(c => {
                           const pct = (c.points / c.max_points) * 100;
                           return pct >= 60 && pct < 80;
                         }).length;
-                        const needsImprovementCriteria = criteriaScores.filter(c => (c.points / c.max_points) * 100 < 60).length;
+                        const needsImprovementCriteria = safeCriteriaScores.filter(c => (c.points / c.max_points) * 100 < 60).length;
                         
                         return (
                           <>
@@ -1112,8 +1189,150 @@ export default function ResultsPage() {
         )}
       </TabPanel>
       
+      {/* Grade Comparison Tab */}
+      {results?.canvas_comparison && (
+        <TabPanel value={tabValue} index={2}>
+          <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    AI Grade vs Canvas Posted Grade
+                  </Typography>
+                  <Divider sx={{ mb: 3 }} />
+                  
+                  <Grid container spacing={3}>
+                    {/* AI Grade Card */}
+                    <Grid item xs={12} md={6}>
+                      <Card variant="outlined" sx={{ bgcolor: 'primary.50' }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            AI Grade ({results.ai_model_used || 'Unknown Model'})
+                          </Typography>
+                          <Typography variant="h4" fontWeight="bold" color="primary.main">
+                            {results.score?.toFixed(1)} / {results.total?.toFixed(1)}
+                          </Typography>
+                          <Typography variant="h6" color="text.secondary">
+                            {results.percentage?.toFixed(1)}% ({results.grade_letter})
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Canvas Grade Card */}
+                    <Grid item xs={12} md={6}>
+                      <Card variant="outlined" sx={{ bgcolor: 'info.50' }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Canvas Posted Grade
+                          </Typography>
+                          {results.canvas_comparison?.canvas_posted_score !== null && results.canvas_comparison?.canvas_posted_score !== undefined ? (
+                            <>
+                              <Typography variant="h4" fontWeight="bold" color="info.main">
+                                {results.canvas_comparison.canvas_posted_score.toFixed(1)} / {results.total?.toFixed(1)}
+                              </Typography>
+                              <Typography variant="h6" color="text.secondary">
+                                {results.canvas_comparison.canvas_posted_percentage?.toFixed(1)}%
+                              </Typography>
+                            </>
+                          ) : (
+                            <Typography variant="body1" color="text.secondary">
+                              No grade posted yet
+                            </Typography>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                    
+                    {/* Comparison Stats */}
+                    {results.canvas_comparison?.score_difference !== null && results.canvas_comparison?.score_difference !== undefined && (
+                      <Grid item xs={12}>
+                        <Card variant="outlined">
+                          <CardContent>
+                            <Typography variant="subtitle1" gutterBottom>
+                              Comparison Analysis
+                            </Typography>
+                            <Grid container spacing={2} sx={{ mt: 1 }}>
+                              <Grid item xs={12} sm={6}>
+                                <Box>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Score Difference
+                                  </Typography>
+                                  <Typography 
+                                    variant="h6" 
+                                    color={
+                                      Math.abs(results.canvas_comparison.score_difference) <= 1 ? 'success.main' :
+                                      Math.abs(results.canvas_comparison.score_difference) <= 5 ? 'warning.main' : 'error.main'
+                                    }
+                                  >
+                                    {results.canvas_comparison.score_difference > 0 ? '+' : ''}
+                                    {results.canvas_comparison.score_difference.toFixed(2)} points
+                                  </Typography>
+                                </Box>
+                              </Grid>
+                              <Grid item xs={12} sm={6}>
+                                <Box>
+                                  <Typography variant="body2" color="text.secondary">
+                                    Percentage Difference
+                                  </Typography>
+                                  <Typography 
+                                    variant="h6"
+                                    color={
+                                      Math.abs(results.canvas_comparison.percentage_difference || 0) <= 1 ? 'success.main' :
+                                      Math.abs(results.canvas_comparison.percentage_difference || 0) <= 5 ? 'warning.main' : 'error.main'
+                                    }
+                                  >
+                                    {results.canvas_comparison.percentage_difference && results.canvas_comparison.percentage_difference > 0 ? '+' : ''}
+                                    {results.canvas_comparison.percentage_difference?.toFixed(2)}%
+                                  </Typography>
+                                </Box>
+                              </Grid>
+                              <Grid item xs={12}>
+                                <Chip
+                                  label={
+                                    results.canvas_comparison.comparison_status === 'exact_match' ? 'Exact Match' :
+                                    results.canvas_comparison.comparison_status === 'close_match' ? 'Close Match' :
+                                    results.canvas_comparison.comparison_status === 'moderate_difference' ? 'Moderate Difference' :
+                                    results.canvas_comparison.comparison_status === 'significant_difference' ? 'Significant Difference' :
+                                    'No Comparison Available'
+                                  }
+                                  color={
+                                    results.canvas_comparison.comparison_status === 'exact_match' ? 'success' :
+                                    results.canvas_comparison.comparison_status === 'close_match' ? 'info' :
+                                    results.canvas_comparison.comparison_status === 'moderate_difference' ? 'warning' :
+                                    'error'
+                                  }
+                                  sx={{ mt: 1 }}
+                                />
+                              </Grid>
+                            </Grid>
+                            {results.canvas_comparison.canvas_submission_url && (
+                              <Box sx={{ mt: 2 }}>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  href={results.canvas_comparison.canvas_submission_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  View Canvas Submission
+                                </Button>
+                              </Box>
+                            )}
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    )}
+                  </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </TabPanel>
+      )}
+      
       {/* Analytics Tab */}
-      <TabPanel value={tabValue} index={2}>
+      <TabPanel value={tabValue} index={results?.canvas_comparison ? 3 : 2}>
         <Card>
           <CardContent>
             <Typography variant="h6" gutterBottom>
@@ -1134,13 +1353,14 @@ export default function ResultsPage() {
       </TabPanel>
       
       {/* Files Tab */}
-      <TabPanel value={tabValue} index={3}>
+      <TabPanel value={tabValue} index={results?.canvas_comparison ? 4 : 3}>
         <FileBrowser 
           assignmentId={id as string}
           title="Assignment Files"
           showCategories={true}
         />
       </TabPanel>
-    </Container>
+      </Container>
+    </div>
   );
 } 

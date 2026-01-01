@@ -194,8 +194,17 @@ def start_backend():
     
     uvicorn_app = "backend.app:app"
     
+    # Use virtual environment Python if available
+    venv_python = ROOT_DIR / ".venv" / "Scripts" / "python.exe"
+    if venv_python.exists():
+        python_executable = str(venv_python)
+        print(f"Using virtual environment: {python_executable}")
+    else:
+        python_executable = sys.executable
+        print(f"Using system Python: {python_executable}")
+    
     cmd = [
-        sys.executable,
+        python_executable,
         "-m",
         "uvicorn",
         uvicorn_app,

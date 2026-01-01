@@ -16,13 +16,19 @@ from pydantic import BaseModel, Field, root_validator, validator
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-GEMINI_GRADING_MODEL = os.getenv("GEMINI_GRADING_MODEL", "gemini-2.0-flash")
+GEMINI_GRADING_MODEL = os.getenv("GEMINI_GRADING_MODEL", "gemini-2.5-flash")
 
 from canvas_service import CanvasGradingService
 from config import get_settings
 from utils.canvas_connector import CanvasConnector
-from grading_v2 import GradingService
-from preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
+from services.grading_service import GradingService
+from services.file_preprocessor import FilePreprocessor
+
+# Helper function for PDF text extraction
+def extract_text_from_pdf(file_path: str) -> str:
+    """Extract text from a PDF file."""
+    preprocessor = FilePreprocessor()
+    return preprocessor.extract_text_from_file(file_path)
 
 # Import rubric functionality directly
 from rubric_api import RUBRICS, load_rubrics_from_disk
@@ -620,6 +626,16 @@ async def grade_selected_submissions(request: Request):
             sync_summary = json.load(f)
         
         sync_output_dir = sync_summary["sync_directory"]
+        
+        # Extract course_id and assignment_id from sync_summary
+        course_id = sync_summary.get("course_id")
+        assignment_id = sync_summary.get("assignment_id")
+        
+        if not course_id or not assignment_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Sync summary missing course_id or assignment_id"
+            )
         
         # Load rubric if specified
         rubric = None
@@ -1340,8 +1356,18 @@ async def grade_selected_submissions(request: Request):
         logger.info(f"Grading completed for {len(selected_user_ids)} selected submissions")
         logger.info(f"Results saved to top-level folder: {attempt_folder_name}")
         
+        # Extract course_id and assignment_id from sync_summary
+        course_id = sync_summary.get("course_id")
+        canvas_assignment_id = sync_summary.get("assignment_id")
+        
+        if not course_id or not canvas_assignment_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Sync summary missing course_id or assignment_id"
+            )
+        
         # Save results to MongoDB for analytics and persistence
-        assignment_id = f"canvas_{sync_summary['course_id']}_{sync_summary['assignment_id']}"
+        assignment_id = f"canvas_{course_id}_{canvas_assignment_id}"
         saved_result_ids = []
         
         try:
@@ -1361,11 +1387,17 @@ async def grade_selected_submissions(request: Request):
                             submission_id = str(existing_submission["_id"])
                         else:
                             # Create new submission record
+                            # Generate a unique canvas_submission_id if not available to avoid duplicate key errors
+                            canvas_sub_id = result.get("canvas_submission_id")
+                            if not canvas_sub_id:
+                                # Use a combination of assignment_id and user_id to create a unique ID
+                                canvas_sub_id = f"{assignment_id}_{result.get('user_id', 'unknown')}"
+                            
                             submission_doc = {
                                 "assignment_id": assignment_id,
                                 "student_name": result.get("user_name", ""),
                                 "student_id": None,  # Canvas users may not be in our system
-                                "canvas_submission_id": None,
+                                "canvas_submission_id": canvas_sub_id,
                                 "canvas_user_id": str(result.get("user_id", "")),
                                 "files": [],
                                 "submission_text": result.get("submission_content", ""),
@@ -1437,6 +1469,12 @@ async def grade_selected_submissions(request: Request):
                                 "mistakes": [],
                                 "submission_text": result.get("submission_content", ""),
                                 "ai_model_used": GEMINI_GRADING_MODEL,
+                                "metadata": {
+                                    "canvas_course_id": course_id,
+                                    "canvas_assignment_id": canvas_assignment_id,
+                                    "canvas_student_id": str(result.get("user_id", "")),
+                                    "canvas_submission_id": result.get("canvas_submission_id", "")
+                                },
                                 "strictness": strictness
                             },
                             submission_id=submission_id,
@@ -1966,19 +2004,18 @@ async def process_submission_chunk(
                     "total_points": 100
                 }
                 
-                # Grade using the grading service
-                grade_result = grading_service.grade_submission(
+                # Grade using the rubric-based grading function
+                grade_result = await grade_submission_with_strict_rubric(
                     submission_text=combined_content,
-                    question_text="Networking homework assignment - Please analyze and solve the given networking problems",
-                    answer_key="Evaluate based on correct application of networking concepts, protocols, and problem-solving approach",
-                    student_name=user_name,
+                    submission_files=[],
                     rubric=rubric,
+                    student_name=user_name,
                     strictness=0.5
                 )
                 
                 # Parse the grading result to extract detailed information
-                total_score = grade_result.get("score", 0)
-                feedback = grade_result.get("feedback", "No feedback provided")
+                total_score = grade_result.get("total_score", 0)
+                feedback = grade_result.get("overall_feedback", "No feedback provided")
                 
                 # Extract deductions from feedback (simple parsing)
                 deductions = []
@@ -2070,9 +2107,10 @@ async def sync_submissions(request: Request):
     Enhanced sync submissions from Canvas - download and store submission data with comprehensive assignment analysis.
     
     Expected request body: {
-        "api_key": "...", 
+        "api_key": "..." (optional - will use saved settings if not provided), 
         "course_id": "...", 
         "assignment_id": "...",
+        "canvas_url": "..." (optional),
         "force_sync": false (optional - set to true to overwrite existing data)
     }
     """
@@ -2083,11 +2121,37 @@ async def sync_submissions(request: Request):
         course_id = body.get("course_id")
         assignment_id = body.get("assignment_id")
         force_sync = body.get("force_sync", False)
+        canvas_url_from_request = body.get("canvas_url")
+        
+        # If API key not provided, try to get from user settings via auth header
+        if not api_key:
+            try:
+                from auth.auth_config import verify_token
+                from services.mongodb_service import get_user_settings_collection
+                
+                # Try to get user from auth header
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    token = auth_header.replace("Bearer ", "")
+                    payload = verify_token(token)
+                    if payload:
+                        user_id = payload.get("sub")
+                        if user_id:
+                            # Get user's Canvas settings directly from collection
+                            collection = await get_user_settings_collection()
+                            settings = await collection.find_one({"user_id": str(user_id)})
+                            if settings and settings.get("canvas_api_key"):
+                                api_key = settings.get("canvas_api_key")
+                                if not canvas_url_from_request:
+                                    canvas_url_from_request = settings.get("canvas_url", "https://canvas.instructure.com")
+                                logger.info("Using Canvas API key from user settings")
+            except Exception as e:
+                logger.warning(f"Could not get API key from user settings: {e}")
         
         if not all([api_key, course_id, assignment_id]):
             raise HTTPException(
                 status_code=400, 
-                detail="API key, course ID, and assignment ID are required"
+                detail="API key, course ID, and assignment ID are required. Configure your Canvas API key in Settings."
             )
         
         # Check for existing sync data unless force_sync is true
@@ -2112,11 +2176,31 @@ async def sync_submissions(request: Request):
         
         # If we found existing data and force_sync is False, return the existing data
         if existing_sync and not force_sync:
+            # Format existing submissions for frontend compatibility
+            existing_submissions = existing_sync.get("submissions", [])
+            formatted_existing = []
+            for sub in existing_submissions:
+                formatted_existing.append({
+                    "user_id": sub.get("user_id"),
+                    "user_name": sub.get("user_name", f"User {sub.get('user_id')}"),
+                    "submission_id": sub.get("submission_id"),
+                    "submitted_at": sub.get("submitted_at"),
+                    "late": sub.get("late", False),
+                    "missing": sub.get("missing", False),
+                    "score": sub.get("score"),
+                    "grade": sub.get("grade"),
+                    "has_files": sub.get("files_count", 0) > 0,
+                    "files_count": sub.get("files_count", 0),
+                    "submission_type": sub.get("workflow_state"),
+                    "sync_status": sub.get("sync_status", "synced")
+                })
+            
             return {
                 "status": "success",
                 "message": f"Using existing sync data from {existing_sync.get('synced_at')}. Use force_sync=true to refresh.",
                 "sync_job_id": existing_sync.get("sync_job_id"),
                 "sync_directory": existing_sync.get("sync_directory"),
+                "submissions": formatted_existing,
                 "summary": existing_sync,
                 "is_existing_data": True
             }
@@ -2144,7 +2228,8 @@ async def sync_submissions(request: Request):
         os.makedirs(downloads_dir, exist_ok=True)
         os.makedirs(assignment_analysis_dir, exist_ok=True)
         
-        canvas_url = "https://sjsu.instructure.com"
+        # Use canvas_url from request, settings, or default
+        canvas_url = canvas_url_from_request or "https://sjsu.instructure.com"
         clean_api_key = api_key.replace("Bearer ", "").strip()
         
         # Create Canvas connector
@@ -2363,11 +2448,30 @@ async def sync_submissions(request: Request):
         sync_type = "Force synced" if (existing_sync and force_sync) else "Synced"
         message = f"{sync_type} {sync_summary['successful_syncs']} of {sync_summary['total_submissions']} submissions with comprehensive assignment analysis"
         
+        # Format submissions for frontend compatibility
+        formatted_submissions = []
+        for sub in synced_submissions:
+            formatted_submissions.append({
+                "user_id": sub.get("user_id"),
+                "user_name": sub.get("user_name", f"User {sub.get('user_id')}"),
+                "submission_id": sub.get("submission_id"),
+                "submitted_at": sub.get("submitted_at"),
+                "late": sub.get("late", False),
+                "missing": sub.get("missing", False),
+                "score": sub.get("score"),
+                "grade": sub.get("grade"),
+                "has_files": sub.get("files_count", 0) > 0,
+                "files_count": sub.get("files_count", 0),
+                "submission_type": sub.get("workflow_state"),
+                "sync_status": sub.get("sync_status", "synced")
+            })
+        
         return {
             "status": "success",
             "message": message,
             "sync_job_id": sync_job_id,
             "sync_directory": sync_output_dir,
+            "submissions": formatted_submissions,
             "summary": sync_summary,
             "is_existing_data": False,
             "was_forced": force_sync and existing_sync is not None
@@ -2394,10 +2498,9 @@ async def analyze_assignment_content(assignment_details: dict) -> dict:
         if not full_content:
             return {"questions": [], "main_topics": [], "question_types": [], "difficulty_level": "medium"}
         
-        # Initialize Gemini model
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        # Initialize Gemini client with new pattern
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         
         analysis_prompt = f"""
         Analyze the following assignment content and extract key information:
@@ -2416,7 +2519,10 @@ async def analyze_assignment_content(assignment_details: dict) -> dict:
         Output only valid JSON.
         """
         
-        response = model.generate_content(analysis_prompt)
+        response = client.models.generate_content(
+            model=GEMINI_GRADING_MODEL,
+            contents=analysis_prompt
+        )
         
         # Parse JSON response
         import json
@@ -2496,10 +2602,9 @@ async def generate_assignment_rubric(assignment_details: dict, assignment_analys
 async def generate_answer_key_and_tests(assignment_details: dict, assignment_analysis: dict) -> dict:
     """Generate answer key and test cases for the assignment"""
     try:
-        # Initialize Gemini model for answer key generation
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        # Initialize Gemini client for answer key generation
+        from google import genai
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         
         # Create comprehensive prompt for answer key generation
         description = assignment_details.get("description", "")
@@ -2536,7 +2641,10 @@ async def generate_answer_key_and_tests(assignment_details: dict, assignment_ana
         """
         
         # Generate answer key
-        response = model.generate_content(answer_key_prompt)
+        response = client.models.generate_content(
+            model=GEMINI_GRADING_MODEL,
+            contents=answer_key_prompt
+        )
         answer_key = response.text.strip()
         
         # Generate test cases and grading guidelines
@@ -2575,6 +2683,674 @@ async def generate_answer_key_and_tests(assignment_details: dict, assignment_ana
         }
 
 
+# Global model and tokenizer cache (API-based, no local download)
+_mistral_model_cache = None
+_mistral_tokenizer_cache = None
+_mistral_client_lock = None
+
+def _get_mistral_client_lock():
+    """Get or create a lock for client initialization"""
+    global _mistral_client_lock
+    if _mistral_client_lock is None:
+        import threading
+        _mistral_client_lock = threading.Lock()
+    return _mistral_client_lock
+
+def _get_mistral_model_and_tokenizer(model_name: str = "mistralai/Mistral-7B-Instruct-v0.1"):
+    """
+    Get Mistral model and tokenizer using transformers library with API inference.
+    Uses transformers interface but calls Hugging Face Inference API (no local download).
+    """
+    global _mistral_model_cache, _mistral_tokenizer_cache
+    
+    with _get_mistral_client_lock():
+        if _mistral_model_cache is not None and _mistral_tokenizer_cache is not None:
+            return _mistral_model_cache, _mistral_tokenizer_cache
+        
+        try:
+            # Try to import transformers - make it optional
+            try:
+                from transformers import AutoTokenizer, AutoModelForCausalLM
+                transformers_available = True
+            except ImportError:
+                logger.warning("transformers library not installed. Install with: pip install transformers")
+                transformers_available = False
+                raise ImportError("transformers library is required. Install with: pip install transformers")
+            
+            from huggingface_hub import InferenceClient
+            
+            hf_token = os.environ.get("HF_TOKEN")
+            if not hf_token:
+                raise ValueError("HF_TOKEN environment variable is required for inference API")
+            
+            logger.info(f"Setting up Mistral API inference for {model_name} (no local model download)")
+            
+            # Create InferenceClient first (fast, no download)
+            inference_client = InferenceClient(
+                model=model_name,
+                token=hf_token
+            )
+            logger.info(f"InferenceClient initialized for {model_name}")
+            
+            # Load tokenizer with timeout and local_files_only optimization
+            # Tokenizer is only needed for encoding prompts, not for API calls
+            tokenizer = None
+            try:
+                # Try to use cached tokenizer first (much faster)
+                from transformers import AutoTokenizer
+                try:
+                    # Try fast tokenizer from cache first
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        token=hf_token,
+                        trust_remote_code=True,
+                        use_fast=True,
+                        local_files_only=True  # Use cache if available
+                    )
+                    logger.debug("Loaded fast tokenizer from cache")
+                except (OSError, ValueError):
+                    # Cache miss, download fast tokenizer (small files only, ~2MB)
+                    logger.info("Tokenizer not in cache. Downloading tokenizer files (one-time, ~2MB, usually <10s)...")
+                    import time
+                    start_time = time.time()
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        token=hf_token,
+                        trust_remote_code=True,
+                        use_fast=True,
+                        resume_download=True  # Resume if interrupted
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info(f"Tokenizer downloaded in {elapsed:.1f}s")
+            except (ValueError, OSError) as e:
+                # Fast tokenizer failed, try slow tokenizer (requires sentencepiece)
+                logger.info("Fast tokenizer not available, trying slow tokenizer")
+                try:
+                    import sentencepiece
+                except ImportError:
+                    error_msg = "sentencepiece is required. Install with: pip install sentencepiece"
+                    logger.error(error_msg)
+                    raise ImportError(error_msg)
+                
+                try:
+                    # Try cached slow tokenizer first
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        token=hf_token,
+                        trust_remote_code=True,
+                        use_fast=False,
+                        local_files_only=True
+                    )
+                    logger.debug("Loaded slow tokenizer from cache")
+                except (OSError, ValueError):
+                    # Download slow tokenizer
+                    logger.info("Slow tokenizer not in cache. Downloading (one-time, ~2MB, usually <10s)...")
+                    import time
+                    start_time = time.time()
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        token=hf_token,
+                        trust_remote_code=True,
+                        use_fast=False,
+                        resume_download=True
+                    )
+                    elapsed = time.time() - start_time
+                    logger.info(f"Slow tokenizer downloaded in {elapsed:.1f}s")
+            
+            if tokenizer is None:
+                raise ValueError("Failed to load tokenizer")
+            
+            # Set pad token if not set
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            # Skip test call - it's unnecessary and slows down initialization
+            # The InferenceClient will work when we actually call it
+            
+            # Create a wrapper class that mimics AutoModelForCausalLM interface
+            class APIModelWrapper:
+                """Wrapper to make InferenceClient work like a model"""
+                def __init__(self, client, tokenizer, model_name):
+                    self.client = client
+                    self.tokenizer = tokenizer
+                    self.model_name = model_name  # Store model name for router fallback
+                    self.device = "cpu"  # API inference doesn't use local device
+                
+                def generate(self, input_ids=None, max_new_tokens=150, temperature=0.7, **kwargs):
+                    """Generate text using API - matches transformers interface exactly"""
+                    import torch
+                    
+                    # Handle input_ids - when called with **inputs, input_ids is a keyword arg
+                    if input_ids is None:
+                        # Check if it's in kwargs (shouldn't happen but be safe)
+                        input_ids = kwargs.get("input_ids", None)
+                        if input_ids is None:
+                            raise ValueError("input_ids is required")
+                    
+                    # input_ids should be a tensor when passed from tokenizer
+                    if not isinstance(input_ids, torch.Tensor):
+                        if isinstance(input_ids, (list, tuple)):
+                            input_ids = torch.tensor(input_ids)
+                        else:
+                            raise ValueError(f"Unexpected input_ids type: {type(input_ids)}")
+                    
+                    # Decode input_ids to text (exactly like transformers)
+                    prompt = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+                    
+                    # Call API with proper parameters
+                    # Handle deprecated endpoint error (410) or StopIteration by using router directly
+                    response = None
+                    try:
+                        logger.debug(f"Calling InferenceClient.text_generation with prompt length: {len(prompt)}")
+                        # Use InferenceClient's built-in endpoint handling
+                        # It will automatically route to the correct endpoint
+                        result = self.client.text_generation(
+                            prompt=prompt,
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=kwargs.get("top_p", 0.9),
+                            do_sample=kwargs.get("do_sample", True),
+                            return_full_text=False,
+                            details=False  # Get complete response, not streaming
+                        )
+                        logger.debug(f"InferenceClient.text_generation returned type: {type(result)}")
+                        
+                        # text_generation should return a string when details=False
+                        if isinstance(result, str) and len(result) > 0:
+                            response = result
+                            logger.info(f"Successfully got response from InferenceClient: length {len(response)}")
+                        elif result is None:
+                            logger.warning("InferenceClient returned None, using direct API call")
+                            response = None
+                        elif isinstance(result, str) and len(result) == 0:
+                            logger.warning("InferenceClient returned empty string, using direct API call")
+                            response = None
+                        else:
+                            # Try to convert to string
+                            response = str(result)
+                            if len(response) > 0:
+                                logger.info(f"Converted result to string: length {len(response)}")
+                            else:
+                                logger.warning("Converted result is empty, using direct API call")
+                                response = None
+                            
+                    except StopIteration:
+                        # StopIteration shouldn't be raised as exception in Python 3.7+
+                        # But if it is, handle it gracefully
+                        logger.warning("StopIteration from InferenceClient (generator exhausted), using direct API call")
+                        response = None
+                    except Exception as api_error:
+                        import traceback
+                        error_str = str(api_error) if api_error else "Unknown error"
+                        error_type = type(api_error).__name__
+                        error_traceback = traceback.format_exc()
+                        # Log the full error to understand what's happening
+                        logger.error(f"InferenceClient error ({error_type}): {error_str}")
+                        logger.debug(f"InferenceClient error traceback: {error_traceback}")
+                        response = None
+                    
+                    # If InferenceClient failed or returned None, use direct router API call
+                    if response is None:
+                        logger.info("Using direct router API call instead of InferenceClient")
+                        import requests
+                        # Use stored model name
+                        model_name_for_router = self.model_name
+                        
+                        # Try different endpoint formats - use new inference.huggingface.co endpoint
+                        router_urls = [
+                            f"https://inference.huggingface.co/models/{model_name_for_router}",
+                            f"https://api-inference.huggingface.co/models/{model_name_for_router}",
+                        ]
+                        
+                        client_token = getattr(self.client, 'token', None)
+                        hf_token = client_token if client_token else os.environ.get("HF_TOKEN")
+                        if not hf_token:
+                            raise ValueError("HF_TOKEN is required for router endpoint")
+                        
+                        headers = {
+                            "Authorization": f"Bearer {hf_token}",
+                            "Content-Type": "application/json"
+                        }
+                        payload = {
+                            "inputs": prompt,
+                            "parameters": {
+                                "max_new_tokens": max_new_tokens,
+                                "temperature": temperature,
+                                "top_p": kwargs.get("top_p", 0.9),
+                                "do_sample": kwargs.get("do_sample", True),
+                                "return_full_text": False
+                            }
+                        }
+                        
+                        # Try each URL format
+                        for router_url in router_urls:
+                            try:
+                                logger.info(f"Trying router endpoint: {router_url}")
+                                router_response = requests.post(router_url, headers=headers, json=payload, timeout=90)
+                                
+                                # Handle 503 (model loading)
+                                if router_response.status_code == 503:
+                                    try:
+                                        data = router_response.json()
+                                        wait_time = min(data.get("estimated_time", 30), 60)
+                                        logger.info(f"Model loading, waiting {wait_time}s...")
+                                        import time as _time
+                                        _time.sleep(wait_time)
+                                        router_response = requests.post(router_url, headers=headers, json=payload, timeout=90)
+                                    except:
+                                        pass
+                                
+                                if router_response.status_code == 200:
+                                    result = router_response.json()
+                                    # Extract generated text
+                                    if isinstance(result, list) and result:
+                                        response = result[0].get("generated_text", "")
+                                    elif isinstance(result, dict):
+                                        response = result.get("generated_text", "")
+                                    else:
+                                        response = str(result)
+                                    logger.info(f"Successfully got response from {router_url}")
+                                    break
+                                elif router_response.status_code == 404:
+                                    error_text = router_response.text[:500] if router_response.text else "No error details"
+                                    logger.warning(f"404 from {router_url}: {error_text}")
+                                    # Try to parse error JSON if available
+                                    try:
+                                        error_json = router_response.json()
+                                        logger.warning(f"404 error details: {error_json}")
+                                        # Check if error message suggests model not available
+                                        if isinstance(error_json, dict):
+                                            error_msg = error_json.get("error", "")
+                                            if "not found" in error_msg.lower() or "not available" in error_msg.lower():
+                                                logger.error(f"Model {model_name_for_router} may not be available on Hugging Face Inference API")
+                                    except:
+                                        pass
+                                    continue
+                                elif router_response.status_code == 410:
+                                    logger.debug(f"410 (deprecated) from {router_url}, skipping...")
+                                    continue
+                                else:
+                                    error_text = router_response.text[:200] if router_response.text else "No error details"
+                                    logger.warning(f"Error {router_response.status_code} from {router_url}: {error_text}")
+                                    continue
+                            except requests.exceptions.RequestException as e:
+                                logger.debug(f"Error with {router_url}: {e}, trying next...")
+                                continue
+                        
+                        if response is None:
+                            error_msg = (
+                                f"Failed to get response from any router endpoint for model {model_name_for_router}. "
+                                f"Tried URLs: {router_urls}. "
+                                f"This model may not be available on Hugging Face's free Inference API. "
+                                f"Please check: 1) Model name is correct, 2) Model is available on HF Hub, "
+                                f"3) HF_TOKEN has proper permissions, 4) Consider using a different model."
+                            )
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                    
+                    # Encode response back to token IDs
+                    # Combine original input with new tokens (like transformers does)
+                    full_text = prompt + response
+                    encoded = self.tokenizer.encode(full_text, return_tensors="pt")
+                    
+                    return encoded
+            
+            model = APIModelWrapper(inference_client, tokenizer, model_name)
+            
+            # Cache the model and tokenizer
+            _mistral_model_cache = model
+            _mistral_tokenizer_cache = tokenizer
+            
+            logger.info(f"Successfully initialized Mistral API inference (model: {model_name})")
+            return model, tokenizer
+            
+        except ImportError as e:
+            logger.error(f"Required libraries not available: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to initialize Mistral model/tokenizer: {e}")
+            raise
+
+def create_default_rubric_result(rubric: Dict, error_message: str) -> Dict:
+    """Create a default result when grading fails"""
+    rubric_breakdown = []
+    total_points = 0
+    
+    for criterion in rubric.get("criteria", []):
+        max_points = criterion.get("max_points", 0)
+        total_points += max_points
+        rubric_breakdown.append({
+            "criterion_name": criterion.get("name", "Criterion"),
+            "points_awarded": 0,
+            "max_points": max_points,
+            "percentage": 0.0,
+            "feedback": "Unable to grade due to error",
+            "evidence_found": "Error occurred during grading"
+        })
+    
+    return {
+        "rubric_breakdown": rubric_breakdown,
+        "total_score": 0,
+        "max_possible": total_points,
+        "overall_percentage": 0.0,
+        "overall_feedback": f"Grading failed: {error_message}",
+        "rubric_adherence": "Unable to evaluate"
+    }
+
+def _validate_and_fix_grading_result(grading_result: Dict, rubric: Dict) -> Dict:
+    """
+    Validate and fix grading result to ensure it has all required fields
+    and all rubric criteria are included.
+    """
+    if not isinstance(grading_result, dict):
+        return create_default_rubric_result(rubric, "Invalid grading result format")
+    
+    # Get rubric breakdown from result
+    rubric_breakdown = grading_result.get("rubric_breakdown", [])
+    if not isinstance(rubric_breakdown, list):
+        rubric_breakdown = []
+    
+    # Ensure we have entries for all rubric criteria
+    criteria_names = [c.get("name", "") for c in rubric.get("criteria", [])]
+    breakdown_names = [b.get("criterion_name", "") for b in rubric_breakdown]
+    
+    for criterion in rubric.get("criteria", []):
+        criterion_name = criterion.get("name", "")
+        if criterion_name not in breakdown_names:
+            # Add missing criterion with 0 points
+            rubric_breakdown.append({
+                "criterion_name": criterion_name,
+                "points_awarded": 0,
+                "max_points": criterion.get("max_points", 0),
+                "percentage": 0.0,
+                "feedback": "No evidence found for this criterion in the submission",
+                "evidence_found": "None identified"
+            })
+    
+    # Recalculate totals to ensure accuracy
+    total_awarded = sum(item.get("points_awarded", 0) for item in rubric_breakdown)
+    total_possible = sum(item.get("max_points", 0) for item in rubric_breakdown)
+    overall_percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0
+    
+    # Update result with validated data
+    grading_result.update({
+        "rubric_breakdown": rubric_breakdown,
+        "total_score": total_awarded,
+        "max_possible": total_possible,
+        "overall_percentage": round(overall_percentage, 1)
+    })
+    
+    # Ensure required fields exist
+    if "overall_feedback" not in grading_result:
+        grading_result["overall_feedback"] = "Grading completed"
+    if "rubric_adherence" not in grading_result:
+        grading_result["rubric_adherence"] = "Submission evaluated against rubric criteria"
+    
+    return grading_result
+
+async def _grade_with_transformers_inference(
+    submission_text: str,
+    submission_files: List[Dict],
+    rubric: Dict,
+    student_name: str,
+    strictness: float,
+    model_name: str
+) -> Dict:
+    """
+    Grade using Mistral model with transformers-style interface.
+    Uses API inference (no model download) but with transformers-like code.
+    """
+    import json
+    import re
+    
+    # Validate model name - use v0.1 if v0.2 is specified (v0.2 doesn't exist)
+    if "v0.2" in model_name:
+        logger.warning(f"Model version v0.2 not available, using v0.1")
+        model_name = model_name.replace("v0.2", "v0.1")
+    
+    # Build rubric criteria description
+    criteria_descriptions = []
+    total_possible_points = 0
+    
+    for criterion in rubric.get("criteria", []):
+        name = criterion.get("name", "Criterion")
+        max_points = criterion.get("max_points", 0)
+        description = criterion.get("description", "")
+        total_possible_points += max_points
+        
+        criteria_descriptions.append(f"""
+Criterion: {name}
+Max Points: {max_points}
+Description: {description}
+""")
+    
+    criteria_text = "\n".join(criteria_descriptions)
+    
+    # Create strict rubric-based grading prompt
+    strictness_level = "strict" if strictness > 0.7 else "moderate" if strictness > 0.3 else "lenient"
+    
+    grading_prompt = f"""
+You are an expert academic grader. Grade this submission STRICTLY based ONLY on the provided rubric criteria. Do not use any external knowledge or assumptions beyond what is explicitly stated in the rubric.
+
+RUBRIC CRITERIA:
+{criteria_text}
+
+TOTAL POSSIBLE POINTS: {total_possible_points}
+
+STUDENT SUBMISSION:
+{submission_text}
+
+GRADING INSTRUCTIONS:
+1. Evaluate ONLY based on the rubric criteria provided above
+2. For each criterion, assign points from 0 to the maximum points for that criterion
+3. Use {strictness_level} grading standards
+4. Provide specific feedback for each criterion explaining the score
+5. Do not award points for content not explicitly covered by the rubric criteria
+
+Please respond with a JSON object in this exact format:
+{{
+    "rubric_breakdown": [
+        {{
+            "criterion_name": "Criterion Name",
+            "points_awarded": 0,
+            "max_points": 0,
+            "percentage": 0.0,
+            "feedback": "Specific feedback for this criterion",
+            "evidence_found": "Quote or describe specific evidence from submission"
+        }}
+    ],
+    "total_score": 0,
+    "max_possible": {total_possible_points},
+    "overall_percentage": 0.0,
+    "overall_feedback": "Overall summary of the grading",
+    "rubric_adherence": "How well the submission addresses the rubric criteria"
+}}
+
+IMPORTANT: Only award points for content that directly addresses the rubric criteria. Be specific about what evidence you found in the submission for each criterion.
+"""
+
+    # Build instruction + user prompt for Mistral (transformers-style format)
+    system_instruction = (
+        "You are a strict grading assistant. Evaluate ONLY based on the rubric "
+        "and respond with a single valid JSON object matching the requested schema. "
+        "Do not include any explanation outside of JSON."
+    )
+    prompt = f"<s>[INST] {system_instruction}\n\n{grading_prompt} [/INST]"
+    
+    try:
+        # Use transformers-style interface with API inference
+        logger.info(f"Using Mistral {model_name} via API (fast, no local model)")
+        
+        # Get model and tokenizer (cached, fast after first load)
+        model, tokenizer = _get_mistral_model_and_tokenizer(model_name)
+        
+        # Tokenize prompt (fast, local operation)
+        inputs = tokenizer(prompt, return_tensors="pt")
+        # No need for .to(device) since API model doesn't use GPU
+        
+        # Generate using API (no local model inference)
+        outputs = model.generate(
+            input_ids=inputs["input_ids"],
+            max_new_tokens=1500,
+            temperature=0.2,
+            top_p=0.9,
+            do_sample=True
+        )
+        
+        # Decode the response
+        response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Extract just the generated part (remove the prompt)
+        # The prompt format is: <s>[INST]...[/INST]
+        # We want everything after [/INST]
+        if "[/INST]" in response_text:
+            response_text = response_text.split("[/INST]", 1)[-1].strip()
+        elif prompt in response_text:
+            response_text = response_text.split(prompt, 1)[-1].strip()
+        
+        if not response_text:
+            logger.error("Empty response from Mistral model")
+            return create_default_rubric_result(
+                rubric, "Empty response from AI model"
+            )
+        
+        # Parse JSON response
+        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if json_match:
+            try:
+                grading_result = json.loads(json_match.group())
+                # Validate and fix the result to ensure all criteria are included
+                grading_result = _validate_and_fix_grading_result(grading_result, rubric)
+                return grading_result
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from response: {e}")
+                logger.error(f"Response text: {response_text[:500]}")
+                return create_default_rubric_result(
+                    rubric, f"Failed to parse AI response as JSON: {str(e)}"
+                )
+        else:
+            logger.error(f"No JSON found in response: {response_text[:500]}")
+            return create_default_rubric_result(
+                rubric, "AI response did not contain valid JSON"
+            )
+            
+    except Exception as e:
+        import traceback
+        error_type = type(e).__name__
+        error_msg = str(e) if e else "Unknown error"
+        error_traceback = traceback.format_exc()
+        logger.error(f"Error using Mistral with transformers interface ({error_type}): {error_msg}")
+        logger.debug(f"Full error traceback: {error_traceback}")
+        # Re-raise to allow fallback in calling function
+        raise
+
+async def _grade_with_gemini_fallback(
+    submission_text: str,
+    submission_files: List[Dict],
+    rubric: Dict,
+    student_name: str = "Student",
+    strictness: float = 0.5
+) -> Dict:
+    """Primary grading using Gemini 2.5 Flash (with Mistral as fallback)"""
+    import json
+    import re
+    from google import genai
+    
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    if not gemini_api_key:
+        raise ValueError("GEMINI_API_KEY not configured")
+    
+    client = genai.Client(api_key=gemini_api_key)
+    
+    # Build the same grading prompt as Mistral
+    criteria_descriptions = []
+    total_possible_points = 0
+    
+    for criterion in rubric.get("criteria", []):
+        name = criterion.get("name", "Criterion")
+        max_points = criterion.get("max_points", 0)
+        description = criterion.get("description", "")
+        total_possible_points += max_points
+        
+        criteria_descriptions.append(f"""
+Criterion: {name}
+Max Points: {max_points}
+Description: {description}
+""")
+    
+    criteria_text = "\n".join(criteria_descriptions)
+    strictness_level = "strict" if strictness > 0.7 else "moderate" if strictness > 0.3 else "lenient"
+    
+    grading_prompt = f"""
+You are an expert academic grader. Grade this submission STRICTLY based ONLY on the provided rubric criteria. Do not use any external knowledge or assumptions beyond what is explicitly stated in the rubric.
+
+RUBRIC CRITERIA:
+{criteria_text}
+
+TOTAL POSSIBLE POINTS: {total_possible_points}
+
+STUDENT SUBMISSION:
+{submission_text}
+
+GRADING INSTRUCTIONS:
+1. Evaluate ONLY based on the rubric criteria provided above
+2. For each criterion, assign points from 0 to the maximum points for that criterion
+3. Use {strictness_level} grading standards
+4. Provide specific feedback for each criterion explaining the score
+5. Do not award points for content not explicitly covered by the rubric criteria
+
+Please respond with a JSON object in this exact format:
+{{
+    "rubric_breakdown": [
+        {{
+            "criterion_name": "Criterion Name",
+            "points_awarded": 0,
+            "max_points": 0,
+            "percentage": 0.0,
+            "feedback": "Specific feedback for this criterion",
+            "evidence_found": "Quote or describe specific evidence from submission"
+        }}
+    ],
+    "total_score": 0,
+    "max_possible": {total_possible_points},
+    "overall_percentage": 0.0,
+    "overall_feedback": "Overall summary of the grading",
+    "rubric_adherence": "How well the submission addresses the rubric criteria"
+}}
+
+IMPORTANT: Only award points for content that directly addresses the rubric criteria. Be specific about what evidence you found in the submission for each criterion.
+"""
+    
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_GRADING_MODEL,
+            contents=grading_prompt
+        )
+        response_text = response.text
+        
+        # Extract JSON from response
+        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+        if json_match:
+            try:
+                grading_result = json.loads(json_match.group())
+                # Validate and fix the result to ensure all criteria are included
+                grading_result = _validate_and_fix_grading_result(grading_result, rubric)
+                logger.info("Successfully graded with Gemini 2.5 Flash (primary model)")
+                return grading_result
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from Gemini response: {e}")
+                return create_default_rubric_result(
+                    rubric, f"Failed to parse Gemini response as JSON: {str(e)}"
+                )
+        else:
+            logger.error(f"No JSON found in Gemini response: {response_text[:500]}")
+            return create_default_rubric_result(
+                rubric, "Gemini response did not contain valid JSON"
+            )
+    except Exception as e:
+        logger.error(f"Error using Gemini fallback: {e}")
+        raise
+
 async def grade_submission_with_strict_rubric(
     submission_text: str,
     submission_files: List[Dict],
@@ -2585,12 +3361,78 @@ async def grade_submission_with_strict_rubric(
     """
     Grade a submission strictly based on rubric criteria only.
     Returns detailed breakdown by each rubric criterion.
+    Uses transformers library for local inference if available, falls back to API.
     """
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(GEMINI_GRADING_MODEL)
+        import json
+        import re
+        import requests
+        import asyncio
+
+        # Get model name - use Mistral v0.3 as fallback
+        hf_mistral_model = os.environ.get(
+            "HF_MISTRAL_MODEL", "mistralai/Mistral-7B-Instruct-v0.3"
+        )
         
+        # Ensure we're using v0.3
+        if "v0.3" not in hf_mistral_model:
+            if "Mistral-7B-Instruct" in hf_mistral_model:
+                hf_mistral_model = "mistralai/Mistral-7B-Instruct-v0.3"
+            else:
+                logger.warning(f"Model {hf_mistral_model} not v0.3, using Mistral v0.3")
+                hf_mistral_model = "mistralai/Mistral-7B-Instruct-v0.3"
+        
+        # Try Gemini 2.5 Flash FIRST (primary model)
+        gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        if gemini_api_key:
+            try:
+                logger.info("Attempting to use Gemini 2.5 Flash as primary model for grading")
+                return await _grade_with_gemini_fallback(
+                    submission_text, submission_files, rubric, student_name, strictness
+                )
+            except Exception as gemini_error:
+                import traceback
+                error_type = type(gemini_error).__name__
+                error_msg = str(gemini_error) if gemini_error else "Unknown error"
+                error_traceback = traceback.format_exc()
+                logger.warning(f"Gemini 2.5 Flash grading failed ({error_type}): {error_msg}. Falling back to Mistral v0.3.")
+                logger.debug(f"Full error traceback: {error_traceback}")
+        
+        # Fallback to Mistral v0.3 if Gemini fails or is not available
+        use_hf_inference = os.environ.get("USE_HF_INFERENCE_API", "true").lower() == "true"
+        
+        if use_hf_inference:
+            try:
+                logger.info(f"Attempting to use Mistral v0.3 ({hf_mistral_model}) as fallback for grading")
+                return await _grade_with_transformers_inference(
+                    submission_text, submission_files, rubric, student_name, strictness, hf_mistral_model
+                )
+            except Exception as e:
+                import traceback
+                error_type = type(e).__name__
+                error_msg = str(e) if e else "Unknown error"
+                error_traceback = traceback.format_exc()
+                logger.error(f"Mistral v0.3 fallback also failed ({error_type}): {error_msg}")
+                logger.debug(f"Full error traceback: {error_traceback}")
+                raise ValueError("Both Gemini 2.5 Flash and Mistral v0.3 failed")
+        
+        # Fallback to API method - use new inference.huggingface.co endpoint
+        hf_token = os.environ.get("HF_TOKEN")
+        # Try new inference endpoint first, then fallback to deprecated api-inference
+        hf_mistral_url = os.environ.get(
+            "HF_MISTRAL_URL",
+            f"https://inference.huggingface.co/models/{hf_mistral_model}",
+        )
+
+        if not hf_token:
+            logger.warning(
+                "HF_TOKEN not configured – falling back to default rubric result without AI grading"
+            )
+            return create_default_rubric_result(
+                rubric,
+                "AI grading disabled: Hugging Face token (HF_TOKEN) not configured.",
+            )
+
         # Build rubric criteria description
         criteria_descriptions = []
         total_possible_points = 0
@@ -2652,47 +3494,284 @@ Please respond with a JSON object in this exact format:
 IMPORTANT: Only award points for content that directly addresses the rubric criteria. Be specific about what evidence you found in the submission for each criterion.
 """
 
-        # Generate grading response
-        response = model.generate_content(grading_prompt)
+        # Build instruction + user prompt based on model type
+        # This will be updated if we switch to an alternative model
+        def build_prompt_for_model(model_name: str, prompt_text: str) -> str:
+            """Build prompt in the correct format for the model"""
+            model_lower = model_name.lower()
+            
+            if "mistral" in model_lower:
+                # Mistral format
+                system_instruction = (
+                    "You are a strict grading assistant. Evaluate ONLY based on the rubric "
+                    "and respond with a single valid JSON object matching the requested schema. "
+                    "Do not include any explanation outside of JSON."
+                )
+                return f"<s>[INST] {system_instruction}\n\n{prompt_text} [/INST]"
+            elif "llama" in model_lower:
+                # Llama 3.2 format
+                return f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+You are a strict grading assistant. Evaluate ONLY based on the rubric and respond with a single valid JSON object matching the requested schema. Do not include any explanation outside of JSON.<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+{prompt_text}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""
+            elif "gemma" in model_lower:
+                # Gemma format
+                return f"""<start_of_turn>user
+You are a strict grading assistant. Evaluate ONLY based on the rubric and respond with a single valid JSON object matching the requested schema. Do not include any explanation outside of JSON.
+
+{prompt_text}<end_of_turn>
+<start_of_turn>model
+"""
+            elif "phi" in model_lower:
+                # Phi-3 format
+                return f"""<|user|>
+You are a strict grading assistant. Evaluate ONLY based on the rubric and respond with a single valid JSON object matching the requested schema. Do not include any explanation outside of JSON.
+
+{prompt_text}<|end|>
+<|assistant|>
+"""
+            else:
+                # Generic format for other models
+                return f"""You are a strict grading assistant. Evaluate ONLY based on the rubric and respond with a single valid JSON object matching the requested schema. Do not include any explanation outside of JSON.
+
+{prompt_text}"""
         
+        full_prompt = build_prompt_for_model(hf_mistral_model, grading_prompt)
+
+        payload = {
+            "inputs": full_prompt,
+            "parameters": {
+                "max_new_tokens": 1500,
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "do_sample": True,
+                "return_full_text": False,
+            },
+        }
+
+        headers = {
+            "Authorization": f"Bearer {hf_token}",
+            "Content-Type": "application/json",
+        }
+
+        logger.info(
+            f"Calling Mistral strict rubric grading via Hugging Face Inference API "
+            f"({hf_mistral_model})"
+        )
+        try:
+            response = requests.post(
+                hf_mistral_url,
+                headers=headers,
+                json=payload,
+                timeout=90,
+            )
+
+            # Handle model loading 503 (cold start)
+            if response.status_code == 503:
+                try:
+                    data = response.json()
+                    wait_time = min(data.get("estimated_time", 30), 60)
+                    logger.info(f"Mistral model loading, retrying after {wait_time}s")
+                    import time as _time
+
+                    _time.sleep(wait_time)
+                    response = requests.post(
+                        hf_mistral_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=90,
+                    )
+                except Exception as e:
+                    logger.warning(f"Error handling Mistral loading response: {e}")
+
+            # If still not OK, try fallback or return error
+            if response.status_code >= 400:
+                error_text = response.text[:500] if response.text else "No error details"
+                logger.error(
+                    f"Mistral HF Inference error {response.status_code}: {error_text}"
+                )
+                
+                # Handle 410 (deprecated endpoint) - try new inference endpoint
+                if response.status_code == 410:
+                    logger.warning("api-inference endpoint deprecated, trying new inference.huggingface.co endpoint...")
+                    # Try new endpoint format
+                    new_url = f"https://inference.huggingface.co/models/{hf_mistral_model}"
+                    try:
+                        logger.info(f"Trying new inference endpoint: {new_url}")
+                        new_response = requests.post(
+                            new_url,
+                            headers=headers,
+                            json=payload,
+                            timeout=90,
+                        )
+                        if new_response.status_code == 200:
+                            response = new_response
+                            fallback_success = True
+                        elif new_response.status_code == 503:
+                            # Handle model loading
+                            try:
+                                data = new_response.json()
+                                wait_time = min(data.get("estimated_time", 30), 60)
+                                logger.info(f"Model loading, waiting {wait_time}s...")
+                                import time as _time
+                                _time.sleep(wait_time)
+                                new_response = requests.post(new_url, headers=headers, json=payload, timeout=90)
+                                if new_response.status_code == 200:
+                                    response = new_response
+                                    fallback_success = True
+                            except:
+                                pass
+                    except Exception as e:
+                        logger.warning(f"New inference endpoint also failed: {e}")
+                    # Fall through to fallback logic below if still not successful
+                
+                # Try fallback endpoints if 404 or 410
+                fallback_success = False
+                if response.status_code == 404 or response.status_code == 410:
+                    # The router endpoint might need a different format or the model might not be available
+                    # Try with different model versions
+                    alternative_models = []
+                    
+                    # If current model is v0.2 or v0.3, try v0.1
+                    if "v0.3" in hf_mistral_model or "v0.2" in hf_mistral_model:
+                        alternative_models.append("mistralai/Mistral-7B-Instruct-v0.1")
+                    
+                    # Also try the current model in case it's a temporary issue
+                    alternative_models.append(hf_mistral_model)
+                    
+                    # Try alternative free models that are known to work on HF Inference API
+                    alternative_models.extend([
+                        "mistralai/Mistral-7B-v0.1",  # Base model (not instruct, but might work)
+                        "meta-llama/Llama-3.2-3B-Instruct",  # Free Llama model
+                        "google/gemma-2-2b-it",  # Free Gemma model
+                        "microsoft/Phi-3-mini-4k-instruct",  # Free Phi-3 model
+                    ])
+                    
+                    # Try each model with different URL formats
+                    for alt_model in alternative_models:
+                        # Try new inference endpoint first, then fallback to deprecated api-inference
+                        alt_urls = [
+                            f"https://inference.huggingface.co/models/{alt_model}",
+                            f"https://api-inference.huggingface.co/models/{alt_model}",
+                        ]
+                        
+                        for alt_url in alt_urls:
+                            try:
+                                logger.warning(f"Trying alternative model endpoint: {alt_url}")
+                                
+                                # Update prompt format if we're trying a different model
+                                if alt_model != hf_mistral_model:
+                                    alt_prompt = build_prompt_for_model(alt_model, grading_prompt)
+                                    alt_payload = {
+                                        "inputs": alt_prompt,
+                                        "parameters": payload["parameters"]
+                                    }
+                                else:
+                                    alt_payload = payload
+                                
+                                fallback_response = requests.post(
+                                    alt_url,
+                                    headers=headers,
+                                    json=alt_payload,
+                                    timeout=90,
+                                )
+                                
+                                # Handle 503 (model loading)
+                                if fallback_response.status_code == 503:
+                                    try:
+                                        data = fallback_response.json()
+                                        wait_time = min(data.get("estimated_time", 30), 60)
+                                        logger.info(f"Model loading, waiting {wait_time}s...")
+                                        import time as _time
+                                        _time.sleep(wait_time)
+                                        fallback_response = requests.post(alt_url, headers=headers, json=payload, timeout=90)
+                                    except:
+                                        pass
+                                
+                                if fallback_response.status_code == 200:
+                                    response = fallback_response
+                                    logger.info(f"Successfully used alternative model: {alt_model} at {alt_url}")
+                                    fallback_success = True
+                                    break
+                                elif fallback_response.status_code == 404:
+                                    error_text = fallback_response.text[:500] if fallback_response.text else "No error details"
+                                    logger.warning(f"Model {alt_model} at {alt_url} returned 404: {error_text}")
+                                    # Try to parse error JSON if available
+                                    try:
+                                        error_json = fallback_response.json()
+                                        logger.warning(f"404 error details: {error_json}")
+                                    except:
+                                        pass
+                                    continue
+                                elif fallback_response.status_code == 410:
+                                    logger.debug(f"Model {alt_model} at {alt_url} returned 410 (deprecated), skipping...")
+                                    continue
+                                else:
+                                    # Other error, log and continue
+                                    error_text = fallback_response.text[:200] if fallback_response.text else "No error details"
+                                    logger.warning(f"Model {alt_model} at {alt_url} returned {fallback_response.status_code}: {error_text}")
+                                    continue
+                            except Exception as e:
+                                logger.debug(f"Error trying model {alt_model} at {alt_url}: {e}")
+                                continue
+                        
+                        if fallback_success:
+                            break
+                    
+                    # If no alternative model worked, provide helpful error
+                    if not fallback_success:
+                        error_msg = f"Mistral model '{hf_mistral_model}' not found on router endpoint. Please verify the model name and HF_TOKEN. Try using 'mistralai/Mistral-7B-Instruct-v0.1'."
+                        return create_default_rubric_result(rubric, error_msg)
+                
+                # Handle other error codes (only if fallback didn't succeed)
+                if not fallback_success:
+                    if response.status_code == 401:
+                        error_msg = "Invalid Hugging Face token. Please check your HF_TOKEN environment variable."
+                        return create_default_rubric_result(rubric, error_msg)
+                    elif response.status_code >= 400:
+                        error_msg = f"Mistral HF error {response.status_code}: {response.reason or 'request failed'}"
+                        return create_default_rubric_result(rubric, error_msg)
+
+            result = response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error calling Mistral HF Inference: {e}")
+            return create_default_rubric_result(
+                rubric, f"Network error calling Mistral: {str(e)}"
+            )
+
+        # Extract generated text
+        if isinstance(result, list) and result:
+            response_text = result[0].get("generated_text", "")
+        elif isinstance(result, dict):
+            response_text = result.get("generated_text", "")
+        else:
+            response_text = ""
+
+        if not response_text:
+            logger.error(f"Empty response from Mistral strict rubric grading: {result}")
+            return create_default_rubric_result(
+                rubric, "Mistral returned empty response during strict rubric grading"
+            )
+
         # Parse JSON response
-        import json
-        import re
-        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
         if json_match:
-            grading_result = json.loads(json_match.group(0))
+            try:
+                grading_result = json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                # Try to fix common issues
+                fixed = (
+                    json_match.group(0)
+                    .replace("'", '"')
+                    .replace("\n", " ")
+                )
+                grading_result = json.loads(fixed)
             
-            # Validate and ensure all criteria are included
-            rubric_breakdown = grading_result.get("rubric_breakdown", [])
-            
-            # Ensure we have entries for all rubric criteria
-            criteria_names = [c.get("name", "") for c in rubric.get("criteria", [])]
-            breakdown_names = [b.get("criterion_name", "") for b in rubric_breakdown]
-            
-            for criterion in rubric.get("criteria", []):
-                criterion_name = criterion.get("name", "")
-                if criterion_name not in breakdown_names:
-                    # Add missing criterion with 0 points
-                    rubric_breakdown.append({
-                        "criterion_name": criterion_name,
-                        "points_awarded": 0,
-                        "max_points": criterion.get("max_points", 0),
-                        "percentage": 0.0,
-                        "feedback": "No evidence found for this criterion in the submission",
-                        "evidence_found": "None identified"
-                    })
-            
-            # Recalculate totals to ensure accuracy
-            total_awarded = sum(item.get("points_awarded", 0) for item in rubric_breakdown)
-            total_possible = sum(item.get("max_points", 0) for item in rubric_breakdown)
-            overall_percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0
-            
-            grading_result.update({
-                "rubric_breakdown": rubric_breakdown,
-                "total_score": total_awarded,
-                "max_possible": total_possible,
-                "overall_percentage": round(overall_percentage, 1)
-            })
+            # Validate and fix the result to ensure all criteria are included
+            grading_result = _validate_and_fix_grading_result(grading_result, rubric)
             
             return grading_result
         else:
@@ -2715,30 +3794,4 @@ def _calculate_grade_letter(percentage: float) -> str:
     elif percentage >= 60:
         return "D"
     else:
-        return "F"
-
-def create_default_rubric_result(rubric: Dict, error_message: str) -> Dict:
-    """Create a default result when grading fails"""
-    rubric_breakdown = []
-    total_points = 0
-    
-    for criterion in rubric.get("criteria", []):
-        max_points = criterion.get("max_points", 0)
-        total_points += max_points
-        rubric_breakdown.append({
-            "criterion_name": criterion.get("name", "Criterion"),
-            "points_awarded": 0,
-            "max_points": max_points,
-            "percentage": 0.0,
-            "feedback": "Unable to grade due to error",
-            "evidence_found": "Error occurred during grading"
-        })
-    
-    return {
-        "rubric_breakdown": rubric_breakdown,
-        "total_score": 0,
-        "max_possible": total_points,
-        "overall_percentage": 0.0,
-        "overall_feedback": f"Grading failed: {error_message}",
-        "rubric_adherence": "Unable to evaluate"
-    } 
+        return "F" 

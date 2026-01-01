@@ -11,7 +11,6 @@ import time
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Body
 from pydantic import BaseModel
-import google.generativeai as genai
 from datetime import datetime
 
 # Configure logging
@@ -23,9 +22,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Configure Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
+if not GEMINI_API_KEY:
     logger.warning("GEMINI_API_KEY not found in environment variables. Chat functionality will be limited.")
 
 # Models for request and response
@@ -103,6 +100,8 @@ async def chat(request: ChatRequest = Body(...)):
 async def generate_gemini_response(message: str, context: ChatContext, message_history: List[ChatMessage]) -> str:
     """Generate response using Gemini AI"""
     try:
+        from google import genai
+        
         # Build context prompt
         context_prompt = build_context_prompt(context, message_history)
         
@@ -116,9 +115,12 @@ Please provide a helpful, educational response that addresses the student's ques
 Be encouraging and constructive in your feedback.
 """
         
-        # Generate response using Gemini
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = await model.generate_content_async(full_prompt)
+        # Use new Client pattern with free model
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=full_prompt
+        )
         
         return response.text
         

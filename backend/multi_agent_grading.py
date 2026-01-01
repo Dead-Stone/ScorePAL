@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
 
-from grading_v2 import GradingService
+from services.grading_service import GradingService
 from utils.knowledge_graph import KnowledgeGraph
 
 # Configure logging
@@ -79,18 +79,103 @@ class GradingWorker:
                     logger.warning(f"Image enhancement failed for {student_name}: {img_error}")
                     # Continue with original submission if image enhancement fails
             
-            # Use the grading service to grade the enhanced submission
-            result = self.grading_service.grade_submission(
-                submission_text=enhanced_submission,
-                question_text=question_text,
-                answer_key=answer_key,
-                student_name=student_name,
-                rubric=rubric,
-                strictness=strictness
-            )
+            # Import the rubric-based grading function
+            from api.canvas_routes import grade_submission_with_strict_rubric
+            import asyncio
             
-            if not result:
+            # Use the rubric-based grading function
+            # Convert submission_files if needed (empty list for now)
+            submission_files = []
+            if file_path:
+                submission_files = [{"path": file_path}]
+            
+            # Handle async function call - check if event loop is running
+            # Use nest_asyncio to allow nested event loops
+            try:
+                import nest_asyncio
+                nest_asyncio.apply()
+            except ImportError:
+                logger.warning("nest_asyncio not installed. Install it with: pip install nest-asyncio")
+            
+            try:
+                # Try to get the current event loop
+                loop = asyncio.get_running_loop()
+                # If we're here, loop is already running - use nest_asyncio
+                try:
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    raw_result = loop.run_until_complete(
+                        grade_submission_with_strict_rubric(
+                            submission_text=enhanced_submission,
+                            submission_files=submission_files,
+                            rubric=rubric,
+                            student_name=student_name,
+                            strictness=strictness
+                        )
+                    )
+                except (ImportError, RuntimeError):
+                    # nest_asyncio not available or still fails - use thread pool
+                    import concurrent.futures
+                    def run_async():
+                        return asyncio.run(
+                            grade_submission_with_strict_rubric(
+                                submission_text=enhanced_submission,
+                                submission_files=submission_files,
+                                rubric=rubric,
+                                student_name=student_name,
+                                strictness=strictness
+                            )
+                        )
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_async)
+                        raw_result = future.result()
+            except RuntimeError:
+                # No event loop running - create new one
+                raw_result = asyncio.run(
+                    grade_submission_with_strict_rubric(
+                        submission_text=enhanced_submission,
+                        submission_files=submission_files,
+                        rubric=rubric,
+                        student_name=student_name,
+                        strictness=strictness
+                    )
+                )
+            
+            if not raw_result:
                 raise ValueError("Grading service returned empty result")
+            
+            # Transform result to expected format
+            total_score = raw_result.get("total_score", 0)
+            max_possible = raw_result.get("max_possible", 100)
+            overall_percentage = raw_result.get("overall_percentage", 0.0)
+            overall_feedback = raw_result.get("overall_feedback", "")
+            rubric_breakdown = raw_result.get("rubric_breakdown", [])
+            
+            # Convert rubric_breakdown to criteria_scores format
+            criteria_scores = {}
+            for criterion in rubric_breakdown:
+                criterion_name = criterion.get("criterion_name", "Unknown")
+                criteria_scores[criterion_name] = {
+                    "points": criterion.get("points_awarded", 0),
+                    "max_points": criterion.get("max_points", 0),
+                    "feedback": criterion.get("feedback", "")
+                }
+            
+            # Create normalized result
+            result = {
+                "score": total_score,
+                "max_score": max_possible,
+                "total_score": total_score,
+                "total_points": max_possible,
+                "percentage": overall_percentage,
+                "feedback": overall_feedback,
+                "overall_feedback": overall_feedback,
+                "criteria_scores": criteria_scores,
+                "rubric_breakdown": rubric_breakdown,
+                "student_name": student_name,
+                "timestamp": datetime.now().isoformat(),
+                "image_enhanced": image_enhanced
+            }
                 
             # Generate a unique submission ID
             submission_id = f"{assignment_id}_{student_name.replace(' ', '_').lower()}_{uuid.uuid4().hex[:8]}"
@@ -115,9 +200,6 @@ class GradingWorker:
                 student_name=student_name,
                 result_data=result
             )
-            
-            # Add image enhancement info to result
-            result['image_enhanced'] = image_enhanced
             
             return result
         except Exception as e:

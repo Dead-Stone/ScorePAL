@@ -7,63 +7,36 @@
  * @repository https://github.com/Dead-Stone/ScorePAL
  */
 
-import React, { useState } from 'react';
+import React, { Suspense } from 'react';
 import Head from 'next/head';
 import { AppProps } from 'next/app';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import dynamic from 'next/dynamic';
 import '../styles/globals.css';
 import { AuthProvider } from '../contexts/AuthContext';
 import {
   Box,
-  Drawer,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  ListItemButton,
-  Divider,
-  IconButton,
-  useMediaQuery,
-  Paper,
-  ListSubheader,
-  Tooltip,
-  Chip,
   Button,
-  Avatar,
-  Typography,
 } from '@mui/material';
 import Link from 'next/link';
-import MenuIcon from '@mui/icons-material/Menu';
-import HomeIcon from '@mui/icons-material/Home';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CreateIcon from '@mui/icons-material/Create';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import HelpIcon from '@mui/icons-material/Help';
 import GitHubIcon from '@mui/icons-material/GitHub';
-import BusinessIcon from '@mui/icons-material/Business';
-import GradingIcon from '@mui/icons-material/Grading';
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
-import PersonIcon from '@mui/icons-material/Person';
-import LogoutIcon from '@mui/icons-material/Logout';
 import { useRouter } from 'next/router';
-import BackendStatus from '../components/BackendStatus';
 import { useAuth } from '../contexts/AuthContext';
 
-// Create a theme instance
+// Create a theme instance with brand colors
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#1976d2', // blue
-      light: '#63a4ff',
-      dark: '#004ba0',
+      main: '#1D80C3', // ScorePAL brand blue
+      light: '#4F9DD6',
+      dark: '#1565A0',
       contrastText: '#fff',
     },
     secondary: {
-      main: '#ff4081', // pink accent
-      light: '#ff79b0',
-      dark: '#c60055',
+      main: '#4F46E5', // ScorePAL brand indigo
+      light: '#6366F1',
+      dark: '#4338CA',
       contrastText: '#fff',
     },
     background: {
@@ -146,138 +119,36 @@ const theme = createTheme({
   },
 });
 
-const drawerWidth = 150;
 
-// User Profile Section Component
-function UserProfileSection() {
-  const { user, logout, isAuthenticated } = useAuth();
-  
-  if (!isAuthenticated || !user) {
-    return (
-      <Box sx={{ p: 2 }}>
-        <Button
-          component={Link}
-          href="/auth/login"
-          variant="contained"
-          size="small"
-          fullWidth
-          sx={{ mb: 1, fontSize: 10 }}
-        >
-          Sign In
-        </Button>
-        <Button
-          component={Link}
-          href="/auth/register"
-          variant="outlined"
-          size="small"
-          fullWidth
-          sx={{ fontSize: 10 }}
-        >
-          Sign Up
-        </Button>
-      </Box>
-    );
-  }
-
-  const getInitials = () => {
-    if (user.first_name && user.last_name) {
-      return `${user.first_name[0]}${user.last_name[0]}`.toUpperCase();
-    }
-    return user.email[0].toUpperCase();
-  };
-
-  return (
-    <Box sx={{ p: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-        <Avatar sx={{ width: 32, height: 32, fontSize: 12, mr: 1 }}>
-          {getInitials()}
-        </Avatar>
-        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block', lineHeight: 1 }}>
-            {user.first_name && user.last_name 
-              ? `${user.first_name} ${user.last_name}` 
-              : user.email}
-          </Typography>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: 9 }}>
-            {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-          </Typography>
-        </Box>
-      </Box>
-      <Box sx={{ display: 'flex', gap: 0.5 }}>
-        <Tooltip title="Profile" placement="top">
-          <IconButton
-            component={Link}
-            href="/profile"
-            size="small"
-            sx={{ flex: 1 }}
-          >
-            <PersonIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Logout" placement="top">
-          <IconButton
-            onClick={logout}
-            size="small"
-            sx={{ flex: 1 }}
-          >
-            <LogoutIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-    </Box>
-  );
-}
-
-type NavigationItem =
-  | {
-      text: string;
-      path: string;
-      iconType: 'image';
-      iconSrc: string;
-      iconAlt: string;
-    }
-  | {
-      text: string;
-      path: string;
-      iconType: 'component';
-      IconComponent: typeof GradingIcon;
-    };
-
-// Navigation items with role restrictions
-const allNavigationItems: (NavigationItem & { allowedRoles?: string[] })[] = [
-  { text: 'Grade', path: '/grade', iconType: 'image', iconSrc: '/grade-logo.png', iconAlt: 'Grade Logo', allowedRoles: ['teacher', 'admin', 'grader'] },
-  { text: 'Canvas', path: '/canvas', iconType: 'image', iconSrc: '/canvas-logo.jpg', iconAlt: 'Canvas Logo', allowedRoles: ['teacher', 'admin', 'grader'] },
-  { text: 'Rubrics', path: '/rubric', iconType: 'image', iconSrc: '/rubric-logo.png', iconAlt: 'Rubric Logo', allowedRoles: ['teacher', 'admin'] },
-  { text: 'Results', path: '/results', iconType: 'component', IconComponent: GradingIcon }, // All roles can see results
-  { text: 'Analytics', path: '/analytics', iconType: 'component', IconComponent: GradingIcon }, // All roles can see analytics
-  { text: 'Moodle', path: '/moodle-integration', iconType: 'image', iconSrc: '/moodle-logo.png', iconAlt: 'Moodle Logo', allowedRoles: ['teacher', 'admin'] },
-];
-
-// Helper function to filter navigation items by role
-const getNavigationItems = (userRole?: string): NavigationItem[] => {
-  if (!userRole) return allNavigationItems.filter(item => !item.allowedRoles);
-  
-  return allNavigationItems.filter(item => {
-    if (!item.allowedRoles) return true; // No restrictions
-    return item.allowedRoles.includes(userRole);
-  }) as NavigationItem[];
-};
 
 function AppContent({ Component, pageProps }: AppProps) {
   const router = useRouter();
-  const { user } = useAuth();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const [mobileOpen, setMobileOpen] = useState(false);
+  
+  // Enable instant prefetching for smooth transitions
+  React.useEffect(() => {
+    // Prefetch all routes on mount for instant navigation
+    const prefetchRoutes = [
+      '/dashboard',
+      '/grade',
+      '/settings',
+      '/profile',
+      '/results',
+      '/help',
+      '/auth/login',
+      '/auth/register',
+    ];
+    
+    prefetchRoutes.forEach((route) => {
+      router.prefetch(route).catch(() => {
+        // Silently fail - prefetching is optional
+      });
+    });
+  }, [router]);
 
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen);
-  };
 
-  // Get filtered navigation items based on user role
-  const navigationItems = getNavigationItems(user?.role);
 
   // Pages that should not use the layout (like auth pages and landing)
-  const noLayoutPaths = ['/landing', '/auth/login', '/auth/register', '/auth/forgot-password'];
+  const noLayoutPaths = ['/landing', '/auth/login', '/auth/register', '/auth/forgot-password', '/', '/demo'];
   const shouldUseLayout = !noLayoutPaths.includes(router.pathname);
 
   const FloatingButtons = () => (
@@ -285,28 +156,10 @@ function AppContent({ Component, pageProps }: AppProps) {
       position: 'fixed',
       top: 16,
       right: 16,
-      zIndex: 1200,
+      zIndex: 9998, // Below nav but above other content
       display: 'flex',
       gap: 1,
     }}>
-      <BackendStatus />
-      <Button
-        variant="contained"
-        sx={{
-          bgcolor: 'rgba(255, 255, 255, 0.8)',
-          color: 'primary.main',
-          minWidth: 40,
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          p: 0,
-          '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
-        }}
-        component={Link}
-        href="/help"
-      >
-        <HelpIcon />
-      </Button>
       <Button
         variant="contained"
         sx={{
@@ -328,146 +181,36 @@ function AppContent({ Component, pageProps }: AppProps) {
     </Box>
   );
 
-  const drawer = (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default', borderRight: '1px solid #e0e0e0', boxShadow: 2, width: 0, minWidth: drawerWidth }}>
-      <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'fill', minHeight: 8 }}>
-        <img
-          src="/scorePAL-logo.png"
-          alt="ScorePAL Logo"
-          style={{
-            height: 128,
-            width: 128,
-            objectFit: 'contain',
-            display: 'block',
-            background: 'transparent',
-          }}
-        />
-      </Box>
-      <Divider sx={{ my: 1 }} />
-      <List
-        sx={{ pr: 0.5 }}
-      >
-        {navigationItems.map((item) => (
-          <ListItem key={item.text} disablePadding sx={{ minHeight: 32 }}>
-            <Tooltip title={item.text} placement="right" arrow disableInteractive={false}>
-              <Box sx={{ flexGrow: 1, display: 'flex' }}>
-            <ListItemButton 
-              component={Link} 
-              href={item.path}
-              selected={router.pathname === item.path || router.pathname.startsWith(`${item.path}/`)}
-              sx={{
-                    borderRadius: 2,
-                    mx: 1,
-                    my: 0.5,
-                    ...(item.text === 'Results' || item.text === 'Moodle' ? { color: 'text.disabled' } : {}),
-                '&.Mui-selected': {
-                      backgroundColor: 'primary.100',
-                      color: 'primary.main',
-                      fontWeight: 'bold',
-                      '& .MuiListItemIcon-root': { color: 'primary.main' },
-                    },
-                  '&:hover': {
-                      bgcolor: 'action.hover',
-                },
-              }}
-            >
-                  <ListItemIcon sx={{ minWidth: 40, color: (item.text === 'Results' || item.text === 'Moodle') ? 'text.disabled' : 'text.secondary' }}>
-                {item.iconType === 'image' ? (
-                  <Box
-                    component="img"
-                    src={item.iconSrc}
-                    alt={item.iconAlt}
-                    sx={{ height: 24, width: 24, objectFit: 'contain' }}
-                  />
-                ) : (
-                  <item.IconComponent />
-                )}
-              </ListItemIcon>
-                  <ListItemText primary={item.text} sx={{ '& .MuiListItemText-primary': { fontSize: 12, fontWeight: 'bold' } }} />
-            </ListItemButton>
-              </Box>
-            </Tooltip>
-          </ListItem>
-        ))}
-      </List>
-      <Box sx={{ flexGrow: 1 }} />
-      <Divider sx={{ my: 1 }} />
-      <UserProfileSection />
-    </Box>
-  );
 
   return (
     <>
       <Head>
         <title>ScorePAL - AI-Powered Grading</title>
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
+        <link rel="icon" type="image/svg+xml" href="/scorepal-logo-icon-only.svg" />
+        <link rel="alternate icon" href="/scorepal-logo-icon-only.svg" />
       </Head>
       <ThemeProvider theme={theme}>
         <CssBaseline />
         {shouldUseLayout ? (
-          <Box sx={{ display: 'flex' }}>
-            <Box
-              component="nav"
-              sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
-            >
-              {/* Mobile drawer */}
-              <Drawer
-                variant="temporary"
-                open={mobileOpen}
-                onClose={handleDrawerToggle}
-                ModalProps={{
-                  keepMounted: true, // Better open performance on mobile
-                }}
-                sx={{
-                  display: { xs: 'block', md: 'none' },
-                  '& .MuiDrawer-paper': { 
-                    boxSizing: 'border-box', 
-                    width: drawerWidth 
-                  },
-                }}
-              >
-                {drawer}
-              </Drawer>
-              
-              {/* Desktop drawer */}
-              <Drawer
-                variant="permanent"
-                sx={{
-                  display: { xs: 'none', md: 'block' },
-                  '& .MuiDrawer-paper': { 
-                    boxSizing: 'border-box', 
-                    width: drawerWidth,
-                    borderRight: 'none',
-                    boxShadow: 'none',
-                  },
-                }}
-                open
-              >
-                {drawer}
-              </Drawer>
-            </Box>
-            <Box
-              component="main"
-              sx={{
-                flexGrow: 1,
-                width: { md: `calc(100% - ${drawerWidth}px)` },
-                minHeight: '100vh',
-                backgroundColor: 'background.default',
-                marginTop: 0,
-                borderRadius: theme.shape.borderRadius * 4,
-                boxShadow: theme.shadows[1],
-                ml: { md: 4 },
-                mr: { md: 4 },
-                mt: 4,
-                mb: 4,
-                p: 4,
-              }}
-            >
+          <Box
+            component="main"
+            sx={{
+              width: '100%',
+              minHeight: '100vh',
+              backgroundColor: 'background.default',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <Suspense fallback={null}>
               <Component {...pageProps} />
-            </Box>
+            </Suspense>
           </Box>
         ) : (
-          <Component {...pageProps} />
+          <Suspense fallback={null}>
+            <Component {...pageProps} />
+          </Suspense>
         )}
         <FloatingButtons />
       </ThemeProvider>

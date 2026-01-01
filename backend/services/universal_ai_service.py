@@ -28,7 +28,7 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
 
 try:
-    import google.generativeai as genai
+    from google import genai
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
@@ -169,32 +169,22 @@ class GoogleProvider(AIProviderInterface):
         if not GOOGLE_AVAILABLE:
             raise ImportError("Google AI package not installed")
         
-        genai.configure(api_key=self.api_key)
+        # Use new Client pattern
+        from google import genai
+        self.client = genai.Client(api_key=self.api_key)
         
-        generation_config = {
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "top_k": self.extra_config.get('top_k', 40),
-            "max_output_tokens": self.max_tokens,
-        }
-        
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
-        ]
-        
-        self.model = genai.GenerativeModel(
-            model_name=self.model_name,
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
+        # Default to free model if not specified
+        if not self.model_name or self.model_name == "":
+            self.model_name = "gemini-2.5-flash"
     
     async def generate_text(self, prompt: str, **kwargs) -> Dict[str, Any]:
         """Generate text using Google Gemini"""
         try:
-            response = self.model.generate_content(prompt)
+            # Use new Client pattern with free model
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
             
             # Extract token usage if available
             prompt_tokens = self.count_tokens(prompt)
@@ -242,11 +232,11 @@ class HuggingFaceProvider(AIProviderInterface):
                 "Content-Type": "application/json"
             }
             
-            # Determine API endpoint
+            # Determine API endpoint - use router.huggingface.co (required as of 2024)
             if self.api_endpoint:
                 url = self.api_endpoint
             else:
-                url = f"https://api-inference.huggingface.co/models/{self.model_name}"
+                url = f"https://router.huggingface.co/models/{self.model_name}"
             
             payload = {
                 "inputs": prompt,

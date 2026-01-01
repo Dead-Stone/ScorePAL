@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import { GetStaticProps, GetStaticPaths } from 'next';
 import {
   Box,
   Container,
@@ -27,6 +28,7 @@ import axios from 'axios';
 import Link from 'next/link';
 import { API_BASE_URL } from '@/config/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { TopNavBar } from '@/components/layout/TopNavBar';
 
 axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
@@ -50,6 +52,21 @@ interface Result {
   graded_at: string;
   overall_feedback?: string;
 }
+
+// Static generation for dynamic routes - compile at build time
+export const getStaticPaths: GetStaticPaths = async () => {
+  return {
+    paths: [],
+    fallback: 'blocking', // Generate page on-demand but cache it
+  };
+};
+
+export const getStaticProps: GetStaticProps = async (context) => {
+  return {
+    props: {},
+    revalidate: 3600, // Revalidate every hour
+  };
+};
 
 export default function AssignmentResults() {
   const router = useRouter();
@@ -116,14 +133,25 @@ export default function AssignmentResults() {
     : results;
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Box mb={3} display="flex" alignItems="center" gap={2}>
-        <IconButton component={Link} href="/results">
-          <ArrowBackIcon />
-        </IconButton>
-        <Typography variant="h4" component="h1" fontWeight="bold">
-          Assignment Results: {assignmentId}
-        </Typography>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+      <TopNavBar />
+      <Container maxWidth="lg" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+        <Box mb={3} display="flex" alignItems="center" gap={2}>
+          <IconButton component={Link} href="/results">
+            <ArrowBackIcon />
+          </IconButton>
+          <Typography 
+            variant="h3" 
+            component="h1" 
+            fontWeight="bold"
+            sx={{ 
+              background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            Assignment Results: {assignmentId}
+          </Typography>
         {(user?.role === 'teacher' || user?.role === 'admin') && (
           <Button
             startIcon={<DownloadIcon />}
@@ -222,7 +250,7 @@ export default function AssignmentResults() {
                       <Tooltip title="View Details">
                         <IconButton
                           size="small"
-                          onClick={() => router.push(`/results/${result.id}`)}
+                          onClick={() => router.replace(`/results/${result.id}`)}
                         >
                           <VisibilityIcon fontSize="small" />
                         </IconButton>
@@ -235,7 +263,8 @@ export default function AssignmentResults() {
           </TableContainer>
         </>
       )}
-    </Container>
+      </Container>
+    </div>
   );
 }
 

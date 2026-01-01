@@ -14,6 +14,7 @@ This module defines the FastAPI routes for the application.
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query, APIRouter, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 import os
 import json
@@ -33,24 +34,33 @@ import time
 import psutil
 from pydantic import BaseModel
 
-# Import our existing services
-from .preprocessing_v2 import FilePreprocessor, extract_text_from_pdf
-from .grading_v2 import GradingService
-from .utils.neo4j_connector import Neo4jConnector
-from .utils.directory_utils import ensure_directory_structure
-from .rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
-from .canvas_service import CanvasGradingService
-from .config import get_settings  # Use absolute import
-from .multi_agent_grading import MultiAgentGradingSystem
-from .chat_api import router as chat_router
+"""
+Main FastAPI API module for ScorePAL.
 
-from .ai_extraction_service import ai_extraction_service, ExtractionResult
-from .rubric_generation import get_rubric_from_text
+Note: This file was refactored to use the new services in `backend/services`
+instead of the legacy `preprocessing_v2` / `grading_v2` modules.
+"""
+
+# Import our existing services
+from services.file_preprocessor import FilePreprocessor
+from services.grading_service import GradingService
+from utils.neo4j_connector import Neo4jConnector
+from utils.directory_utils import ensure_directory_structure
+from rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
+from canvas_service import CanvasGradingService
+from config import get_settings  # Use absolute import
+from multi_agent_grading import MultiAgentGradingSystem
+from chat_api import router as chat_router
+
+from ai_extraction_service import ai_extraction_service, ExtractionResult
+from rubric_generation import get_rubric_from_text
+from auth.auth_config import require_roles
+from models.user import User, UserRole
 
 # Import MongoDB services
-from .services.results_service import save_grading_result
-from .services.mongodb_service import get_submissions_collection, get_assignments_collection
-from .models.submission import Submission, SubmissionCreate
+from services.results_service import save_grading_result
+from services.mongodb_service import get_submissions_collection, get_assignments_collection
+from models.submission import Submission, SubmissionCreate
 
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
@@ -92,6 +102,9 @@ app = FastAPI(
     description="API for the ScorePAL grading system",
     version="1.0.0",
 )
+
+# Add compression middleware for faster responses
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure CORS - Allow all origins for development
 app.add_middleware(
@@ -140,19 +153,60 @@ except ImportError as e:
 
 # Include analytics routes
 try:
-    from .api.analytics_routes import router as analytics_router
+    from api.analytics_routes import router as analytics_router
     app.include_router(analytics_router)
     logger.info("Analytics routes included successfully")
 except ImportError as e:
     logger.warning(f"Could not import analytics routes: {e}")
 
+# Include settings routes (Canvas/API key configuration)
+try:
+    from api.settings_routes import router as settings_router
+    # settings_router already has prefix="/api/settings"
+    app.include_router(settings_router)
+    logger.info("Settings routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import settings routes: {e}")
+
+# Include credits routes
+try:
+    from api.credits_routes import router as credits_router
+    app.include_router(credits_router)
+    logger.info("Credits routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import credits routes: {e}")
+
+# Include public grading routes (no authentication required)
+try:
+    from api.grade_public_routes import router as public_grade_router
+    app.include_router(public_grade_router)
+    
+    # Institution management routes
+    try:
+        from .api.institution_routes import router as institution_router
+        app.include_router(institution_router, prefix="/api", tags=["Institutions"])
+        logger.info("Institution management routes imported successfully")
+    except ImportError as e:
+        logger.warning(f"Could not import institution routes: {e}")
+    logger.info("Public grading routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import public grading routes: {e}")
+
 # Include AI configuration routes
 try:
-    from .api.ai_config_routes import router as ai_config_router
+    from api.ai_config_routes import router as ai_config_router
     app.include_router(ai_config_router, prefix="/api/ai-config", tags=["AI Configuration"])
     logger.info("AI configuration routes included successfully")
 except ImportError as e:
     logger.warning(f"Could not import AI configuration routes: {e}")
+
+# Include LTI routes
+try:
+    from .api.lti_routes import router as lti_router
+    app.include_router(lti_router, tags=["LTI"])
+    logger.info("LTI routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import LTI routes: {e}")
 
 # Initialize services
 try:
@@ -231,9 +285,13 @@ class RubricGenerationRequest(BaseModel):
 # Rubric generation endpoint
 # ---------------------------------------------------------------------------
 @app.post("/generate-rubric")
-async def generate_rubric(payload: RubricGenerationRequest):
+async def generate_rubric(
+    payload: RubricGenerationRequest,
+    user: User = Depends(require_roles(UserRole.TEACHER, UserRole.GRADER, UserRole.ADMIN))
+):
     """
     Generate a rubric using Gemini and store it for reuse.
+    Only accessible to teachers and graders.
     """
     try:
         logger.info("Received rubric generation request")

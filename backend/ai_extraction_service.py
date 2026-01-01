@@ -8,7 +8,6 @@ import logging
 import asyncio
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-import google.generativeai as genai
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -32,14 +31,16 @@ class AIExtractionService:
         
         if self.gemini_available:
             try:
-                genai.configure(api_key=self.gemini_api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
-                logger.info("Gemini AI model initialized successfully")
+                from google import genai
+                self.client = genai.Client(api_key=self.gemini_api_key)
+                logger.info("Gemini AI client initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini: {e}")
                 self.gemini_available = False
+                self.client = None
         else:
             logger.warning("GEMINI_API_KEY not found - AI extraction unavailable")
+            self.client = None
     
     async def extract_with_confidence(self, file_path: str, file_type: str = "general") -> ExtractionResult:
         """Extract text from file using AI with confidence scoring"""
@@ -127,9 +128,15 @@ class AIExtractionService:
     async def _generate_ai_response(self, prompt: str, file_content: bytes) -> str:
         """Generate AI response for text extraction"""
         try:
-            # For now, return a simple response
-            # In a real implementation, you would send the file content to the AI model
-            return f"Extracted text from document: {len(file_content)} bytes processed. {prompt}"
+            if not self.gemini_available or not self.client:
+                raise Exception("Gemini client not available")
+            
+            # Use new Client pattern with free model
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            return response.text
         except Exception as e:
             logger.error(f"AI generation failed: {e}")
             raise

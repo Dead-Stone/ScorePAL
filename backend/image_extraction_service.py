@@ -17,8 +17,8 @@ class ImageExtractionService:
     """Service for extracting and analyzing images from documents"""
     
     def __init__(self):
-        self.available_models = ["gemini-1.5-flash", "gpt-4-vision", "claude-3-sonnet"]
-        self.default_model = "gemini-1.5-flash"
+        self.available_models = ["gemini-2.5-flash", "gpt-4-vision", "claude-3-sonnet"]
+        self.default_model = "gemini-2.5-flash"
         self.rate_limits = {}
         self.last_requests = {}
         
