@@ -57,22 +57,22 @@ export const ClassIssuesInsights: React.FC<ClassIssuesInsightsProps> = ({ studen
 
     // Students by performance level
     const struggling = students.filter(
-      (s) => s.overall_percentage !== null && s.overall_percentage < 70
+      (s) => s.overall_percentage !== undefined && s.overall_percentage < 70
     );
     const atRisk = students.filter(
-      (s) => s.overall_percentage !== null && s.overall_percentage >= 70 && s.overall_percentage < 80
+      (s) => s.overall_percentage !== undefined && s.overall_percentage >= 70 && s.overall_percentage < 80
     );
     const excelling = students.filter(
-      (s) => s.overall_percentage !== null && s.overall_percentage >= 90
+      (s) => s.overall_percentage !== undefined && s.overall_percentage >= 90
     );
 
     // Calculate average performance
     const studentsWithGrades = students.filter(
-      (s) => s.overall_percentage !== null && typeof s.overall_percentage === 'number'
+      (s) => s.overall_percentage !== undefined && typeof s.overall_percentage === 'number'
     );
     const averageGrade =
       studentsWithGrades.length > 0
-        ? studentsWithGrades.reduce((sum, s) => sum + (s.overall_percentage || 0), 0) /
+        ? studentsWithGrades.reduce((sum, s) => sum + (s.overall_percentage ?? 0), 0) /
           studentsWithGrades.length
         : null;
 
@@ -107,13 +107,13 @@ export const ClassIssuesInsights: React.FC<ClassIssuesInsightsProps> = ({ studen
     // Submission issues
     const missingSubmissions = students.filter(
       (s) =>
-        s.submissions_count !== null &&
-        s.graded_count !== null &&
+        s.submissions_count !== undefined &&
+        s.graded_count !== undefined &&
         s.submissions_count > s.graded_count
     );
 
     // Students with no grades
-    const ungraded = students.filter((s) => s.overall_percentage === null);
+    const ungraded = students.filter((s) => s.overall_percentage === undefined);
 
     return {
       totalStudents,
@@ -197,7 +197,7 @@ export const ClassIssuesInsights: React.FC<ClassIssuesInsightsProps> = ({ studen
                       <ListItemText
                         primary={student.name}
                         secondary={
-                          student.overall_percentage !== null
+                          student.overall_percentage !== undefined
                             ? `${student.overall_percentage.toFixed(1)}%`
                             : 'No grade'
                         }
@@ -233,7 +233,7 @@ export const ClassIssuesInsights: React.FC<ClassIssuesInsightsProps> = ({ studen
                       <ListItemText
                         primary={student.name}
                         secondary={
-                          student.overall_percentage !== null
+                          student.overall_percentage !== undefined
                             ? `${student.overall_percentage.toFixed(1)}%`
                             : 'No grade'
                         }
