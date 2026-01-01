@@ -1,4 +1,3 @@
-<div align="center">
 
 <img src="frontend/public/scorePAL-logo.png" alt="ScorePAL Logo" width="400"/>
 
