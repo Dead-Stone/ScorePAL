@@ -42,7 +42,7 @@ axios.interceptors.request.use((config) => {
 
 interface GradingCriteria {
   name: string;
-  description: string;
+  description?: string;
   max_points: number;
   weight?: number;
   levels?: any[];

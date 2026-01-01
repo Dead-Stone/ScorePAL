@@ -129,7 +129,7 @@ export default function AssignmentResults() {
 
   // Filter results for students (only their own)
   const displayResults = user?.role === 'student'
-    ? results.filter(r => r.student_id === user.id)
+    ? results.filter(r => r.student_id === String(user.id))
     : results;
 
   return (

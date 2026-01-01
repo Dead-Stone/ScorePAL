@@ -26,7 +26,7 @@ import EditIcon from '@mui/icons-material/Edit';
 
 interface GradingCriteria {
   name: string;
-  description: string;
+  description?: string;
   max_points: number;
 }
 
@@ -87,7 +87,7 @@ export const RubricViewDialog: React.FC<RubricViewDialogProps> = ({
                   <TableCell align="right">{criterion.max_points}</TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {criterion.description}
+                      {criterion.description || 'No description'}
                     </Typography>
                   </TableCell>
                 </TableRow>

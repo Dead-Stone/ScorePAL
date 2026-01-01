@@ -157,7 +157,7 @@ export default function StudentDashboard() {
           <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 2 }}>
             My Courses
           </Typography>
-          <StudentCoursesView userId={user?.id || ''} />
+          <StudentCoursesView userId={user?.id ? String(user.id) : ''} />
         </Box>
 
         {/* Tabs */}

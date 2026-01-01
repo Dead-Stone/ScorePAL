@@ -780,7 +780,7 @@ export default function Home() {
         open={modelSelectionOpen}
         onClose={() => setModelSelectionOpen(false)}
         onSelect={handleModelSelect}
-        currentSelection={selectedModel}
+        currentSelection={selectedModel as any}
         estimatedTokens={estimatedTokens}
       />
       </PageLayout>
