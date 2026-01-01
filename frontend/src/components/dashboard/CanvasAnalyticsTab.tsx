@@ -73,6 +73,28 @@ interface CourseDetails {
   average_score: number | null;
 }
 
+interface Student {
+  id: number;
+  name: string;
+  sortable_name?: string;
+  email?: string;
+  avatar_url?: string;
+  total_points?: number;
+  total_possible?: number;
+  current_score?: number;
+  overall_percentage?: number;
+  submissions_count?: number;
+  graded_count?: number;
+  assignments?: Array<{
+    assignment_id: number;
+    assignment_name: string;
+    score: number;
+    points_possible: number;
+    percentage: number;
+    grade: string;
+  }>;
+}
+
 interface CanvasAnalyticsTabProps {
   canvasConfigured: boolean;
   courses: Array<{ id: number; name: string; course_code: string }>;
