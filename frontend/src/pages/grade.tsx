@@ -647,7 +647,7 @@ export default function Home() {
                 {selectedModel && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip
-                      label={`${selectedModel.provider} - ${selectedModel.model_name}`}
+                      label={`${selectedModel?.provider} - ${selectedModel?.model_name}`}
                       color="primary"
                       variant="outlined"
                     />
