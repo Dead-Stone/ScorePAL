@@ -95,6 +95,15 @@ interface GradingScale {
   description: string;
 }
 
+interface ModelSelection {
+  model_config_id: string;
+  provider: string;
+  model_name: string;
+  custom_temperature?: number | null;
+  custom_max_tokens?: number | null;
+  use_streaming?: boolean;
+}
+
 // Styled components
 const VisuallyHiddenInput = styled('input')({
   clip: 'rect(0 0 0 0)',
@@ -194,7 +203,7 @@ export default function Home() {
   const [loadingRubrics, setLoadingRubrics] = useState(false);
   
   // State for AI model selection
-  const [selectedModel, setSelectedModel] = useState(null);
+  const [selectedModel, setSelectedModel] = useState<ModelSelection | null>(null);
   const [modelSelectionOpen, setModelSelectionOpen] = useState(false);
   const [estimatedTokens, setEstimatedTokens] = useState(0);
   
@@ -253,7 +262,7 @@ export default function Home() {
   };
   
   // Handle model selection
-  const handleModelSelect = (modelSelection) => {
+  const handleModelSelect = (modelSelection: ModelSelection) => {
     setSelectedModel(modelSelection);
     setModelSelectionOpen(false);
   };
