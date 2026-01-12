@@ -75,9 +75,12 @@ export const StudentRubricBreakdown: React.FC<StudentRubricBreakdownProps> = ({ 
                 </Box>
               ))}
               <Divider sx={{ my: 2 }} />
-              <Link href={`/results/${result.id}`} prefetch={true}>
-                <Chip label="View Full Feedback" size="small" clickable />
-              </Link>
+              <Chip 
+                label="Full Feedback" 
+                size="small" 
+                sx={{ cursor: 'default' }}
+                title="Feedback is shown above"
+              />
             </CardContent>
           </Card>
         </Grid>

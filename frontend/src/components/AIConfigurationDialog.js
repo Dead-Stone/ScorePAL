@@ -24,7 +24,7 @@ import {
 import {
   Close as CloseIcon,
   Save as SaveIcon,
-  Test as TestIcon,
+  PlayArrow as TestIcon,
   CheckCircle as CheckIcon,
   Error as ErrorIcon
 } from '@mui/icons-material';
@@ -41,19 +41,49 @@ const PROVIDER_COLORS = {
 const PROVIDER_ICONS = {
   openai: '🤖',
   anthropic: '🧠',
-  google: '🔍',
+  google: '💎',
   perplexity: '🔮',
-  huggingface: '🤗',
+  huggingface: '🆓',
   cohere: '🌊'
 };
 
 const AI_PROVIDERS = [
-  { value: 'openai', label: 'OpenAI', description: 'GPT-4, GPT-3.5 Turbo' },
-  { value: 'anthropic', label: 'Anthropic', description: 'Claude models' },
-  { value: 'google', label: 'Google', description: 'Gemini models' },
-  { value: 'perplexity', label: 'Perplexity', description: 'Fast and accurate' },
-  { value: 'huggingface', label: 'Hugging Face', description: 'Open source models' },
-  { value: 'cohere', label: 'Cohere', description: 'Command models' }
+  { value: 'openai', label: 'OpenAI', description: 'GPT-4o, GPT-4 Turbo, GPT-3.5 Turbo (Latest models)' },
+  { value: 'google', label: 'Google Gemini', description: 'Gemini 2.0 Flash, Gemini 1.5 Pro (Free models)' },
+  { value: 'huggingface', label: 'Free Models', description: 'Llama 3.3, Mistral, Gemma, Phi-3 (Open source)' }
+];
+
+const OPENAI_MODELS = [
+  { value: 'gpt-4o', label: 'GPT-4o (Latest)', cost: 'Premium', description: 'Most capable model' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', cost: 'Standard', description: 'Fast and affordable' },
+  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', cost: 'Premium', description: 'High performance' },
+  { value: 'gpt-4-turbo-preview', label: 'GPT-4 Turbo Preview', cost: 'Premium', description: 'Latest preview' },
+  { value: 'gpt-4', label: 'GPT-4', cost: 'Premium', description: 'Original GPT-4' },
+  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', cost: 'Standard', description: 'Fast and reliable' },
+  { value: 'gpt-3.5-turbo-16k', label: 'GPT-3.5 Turbo 16K', cost: 'Standard', description: 'Extended context' }
+];
+
+const GEMINI_MODELS = [
+  { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash (Latest)', cost: 'Free', description: 'Fastest and latest' },
+  { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro Latest', cost: 'Free', description: 'Most capable' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro', cost: 'Free', description: 'High quality' },
+  { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash Latest', cost: 'Free', description: 'Fast and efficient' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', cost: 'Free', description: 'Balanced performance' },
+  { value: 'gemini-pro', label: 'Gemini Pro', cost: 'Free', description: 'Standard model' }
+];
+
+const FREE_MODELS = [
+  { value: 'meta-llama/Llama-3.3-70B-Instruct', label: 'Llama 3.3 70B Instruct (Latest)', cost: 'Free', description: 'Most capable Llama' },
+  { value: 'meta-llama/Llama-3.1-70B-Instruct', label: 'Llama 3.1 70B Instruct', cost: 'Free', description: 'High performance' },
+  { value: 'meta-llama/Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B Instruct', cost: 'Free', description: 'Fast and efficient' },
+  { value: 'mistralai/Mixtral-8x7B-Instruct-v0.1', label: 'Mixtral 8x7B Instruct (Latest)', cost: 'Free', description: 'Latest Mistral' },
+  { value: 'mistralai/Mistral-7B-Instruct-v0.3', label: 'Mistral 7B Instruct v0.3', cost: 'Free', description: 'Updated version' },
+  { value: 'mistralai/Mistral-7B-Instruct-v0.2', label: 'Mistral 7B Instruct v0.2', cost: 'Free', description: 'Standard version' },
+  { value: 'google/gemma-7b-it', label: 'Gemma 7B Instruct', cost: 'Free', description: 'Google\'s open model' },
+  { value: 'microsoft/Phi-3-medium-4k-instruct', label: 'Phi-3 Medium 4K (Latest)', cost: 'Free', description: 'Latest Phi model' },
+  { value: 'microsoft/Phi-3-mini-4k-instruct', label: 'Phi-3 Mini 4K', cost: 'Free', description: 'Lightweight' },
+  { value: 'Qwen/Qwen2.5-7B-Instruct', label: 'Qwen 2.5 7B Instruct', cost: 'Free', description: 'Multilingual model' },
+  { value: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', label: 'TinyLlama 1.1B Chat', cost: 'Free', description: 'Ultra lightweight' }
 ];
 
 export default function AIConfigurationDialog({ 
@@ -249,15 +279,108 @@ export default function AIConfigurationDialog({
               </FormControl>
             </Grid>
 
-            {/* Model Name */}
+            {/* Model Selection */}
             <Grid item xs={12} md={6}>
-              <TextField
-                fullWidth
-                label="Model Name *"
-                value={formData.model_name}
-                onChange={(e) => handleInputChange('model_name', e.target.value)}
-                placeholder="e.g., gpt-4, claude-3-sonnet"
-              />
+              {formData.provider === 'openai' ? (
+                <FormControl fullWidth>
+                  <InputLabel>Select Model *</InputLabel>
+                  <Select
+                    value={formData.model_name}
+                    onChange={(e) => handleInputChange('model_name', e.target.value)}
+                    label="Select Model *"
+                  >
+                    {OPENAI_MODELS.map((model) => (
+                      <MenuItem key={model.value} value={model.value}>
+                        <Box display="flex" flexDirection="column" width="100%">
+                          <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
+                            <Typography variant="body1">{model.label}</Typography>
+                            <Chip 
+                              label={model.cost} 
+                              size="small" 
+                              color={model.cost === 'Premium' ? 'primary' : 'default'}
+                              sx={{ ml: 1 }}
+                            />
+                          </Box>
+                          {model.description && (
+                            <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5 }}>
+                              {model.description}
+                            </Typography>
+                          )}
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : formData.provider === 'google' ? (
+                <FormControl fullWidth>
+                  <InputLabel>Select Model *</InputLabel>
+                  <Select
+                    value={formData.model_name}
+                    onChange={(e) => handleInputChange('model_name', e.target.value)}
+                    label="Select Model *"
+                  >
+                    {GEMINI_MODELS.map((model) => (
+                      <MenuItem key={model.value} value={model.value}>
+                        <Box display="flex" flexDirection="column" width="100%">
+                          <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
+                            <Typography variant="body1">{model.label}</Typography>
+                            <Chip 
+                              label={model.cost} 
+                              size="small" 
+                              color="success"
+                              sx={{ ml: 1 }}
+                            />
+                          </Box>
+                          {model.description && (
+                            <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5 }}>
+                              {model.description}
+                            </Typography>
+                          )}
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : formData.provider === 'huggingface' ? (
+                <FormControl fullWidth>
+                  <InputLabel>Select Model *</InputLabel>
+                  <Select
+                    value={formData.model_name}
+                    onChange={(e) => handleInputChange('model_name', e.target.value)}
+                    label="Select Model *"
+                  >
+                    {FREE_MODELS.map((model) => (
+                      <MenuItem key={model.value} value={model.value}>
+                        <Box display="flex" flexDirection="column" width="100%">
+                          <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
+                            <Typography variant="body1">{model.label}</Typography>
+                            <Chip 
+                              label={model.cost} 
+                              size="small" 
+                              color="success"
+                              sx={{ ml: 1 }}
+                            />
+                          </Box>
+                          {model.description && (
+                            <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5 }}>
+                              {model.description}
+                            </Typography>
+                          )}
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              ) : (
+                <TextField
+                  fullWidth
+                  label="Model Name *"
+                  value={formData.model_name}
+                  onChange={(e) => handleInputChange('model_name', e.target.value)}
+                  placeholder="Enter model name"
+                  disabled={!formData.provider}
+                />
+              )}
             </Grid>
 
             {/* API Key */}
@@ -268,7 +391,21 @@ export default function AIConfigurationDialog({
                 type="password"
                 value={formData.api_key}
                 onChange={(e) => handleInputChange('api_key', e.target.value)}
-                placeholder="Enter your API key"
+                placeholder={
+                  formData.provider === 'openai' ? 'sk-...' :
+                  formData.provider === 'google' ? 'Your Gemini API key' :
+                  formData.provider === 'huggingface' ? 'hf_... (Optional for free models)' :
+                  'Enter your API key'
+                }
+                helperText={
+                  formData.provider === 'huggingface' 
+                    ? 'API key is optional for free models, but recommended for better rate limits'
+                    : formData.provider === 'google'
+                    ? 'Get your API key from https://aistudio.google.com'
+                    : formData.provider === 'openai'
+                    ? 'Get your API key from https://platform.openai.com'
+                    : ''
+                }
               />
             </Grid>
 

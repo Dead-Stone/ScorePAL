@@ -30,7 +30,6 @@ import {
   X,
   Bell,
   Search,
-  ChevronDown,
   BarChart3,
   List,
   BookOpen,
@@ -48,19 +47,18 @@ export function TopNavBar({ className }: TopNavBarProps) {
   const { user, logout, isAuthenticated } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Main navigation items (always visible when logged in)
-  const mainNavigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Grade', href: '/grade', icon: FileText },
-  ];
-
-  // Additional navigation items (in dropdown)
-  const additionalNavigation = [
-    { name: 'Results', href: '/results', icon: BarChart3 },
-    { name: 'Rubrics', href: '/rubrics', icon: BookOpen },
-    { name: 'Students', href: '/student', icon: User },
-    { name: 'Settings', href: '/settings', icon: Settings },
-  ];
+  // Main navigation items as tabs (always visible when logged in)
+  // Students only see Dashboard, others see Dashboard, Grade, Rubrics, Settings
+  const mainNavigation = user?.role === 'student'
+    ? [
+        { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      ]
+    : [
+        { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'Grade', href: '/grade', icon: FileText },
+        { name: 'Rubrics', href: '/rubrics', icon: BookOpen },
+        { name: 'Settings', href: '/settings', icon: Settings },
+      ];
 
   // Landing page navigation (when logged out)
   const landingNavigation = [
@@ -89,147 +87,95 @@ export function TopNavBar({ className }: TopNavBarProps) {
   };
 
   return (
-    <nav className={cn(
-      "fixed top-0 left-0 right-0 z-[9999] w-full border-b bg-white/95 backdrop-blur-lg supports-[backdrop-filter]:bg-white/60 shadow-sm",
-      className
-    )}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex h-16 items-center justify-between">
-          {/* Logo */}
-          <div className="flex items-center">
-            <Link 
-              href={isAuthenticated ? "/dashboard" : "/"} 
-              prefetch={true} 
-              className="flex items-center hover:opacity-80 transition-opacity"
-            >
-              <img
-                src="/scorePAL-logo-2.svg"
-                alt="ScorePAL"
-                width={isAuthenticated ? 56 : 96}
-                height={isAuthenticated ? 56 : 96}
-                className="flex-shrink-0"
-                style={{ 
-                  width: isAuthenticated ? '56px' : '96px', 
-                  height: isAuthenticated ? '56px' : '96px', 
-                  objectFit: 'contain',
-                  display: 'block'
-                }}
-              />
-            </Link>
-          </div>
+    <>
+      <nav className={cn(
+        "fixed top-0 left-0 right-0 z-[9999] w-full border-b bg-white/95 backdrop-blur-lg supports-[backdrop-filter]:bg-white/60 shadow-sm",
+        className
+      )}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex h-16 items-center justify-between">
+            {/* Logo */}
+            <div className="flex items-center">
+              <Link 
+                href={isAuthenticated ? "/dashboard" : "/"} 
+                prefetch={true} 
+                className="flex items-center hover:opacity-80 transition-opacity"
+              >
+                <img
+                  src="/scorePAL-logo-2.svg"
+                  alt="ScorePAL"
+                  width={96}
+                  height={96}
+                  className="flex-shrink-0"
+                  style={{ 
+                    width: '96px', 
+                    height: '96px', 
+                    objectFit: 'contain',
+                    display: 'block'
+                  }}
+                />
+              </Link>
+            </div>
 
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex items-center space-x-6">
-            {isAuthenticated ? (
-              <>
-                {/* Main Navigation Items */}
-                {mainNavigation.map((item) => {
-                  const Icon = item.icon;
+            {/* Desktop Navigation - Landing Page Style */}
+            <div className="hidden md:flex items-center space-x-6">
+              {/* Navigation Links - Always visible */}
+              {landingNavigation.map((item) => {
+                if (item.isAnchor) {
                   return (
-                    <Link key={item.name} href={item.href} prefetch={true}>
-                      <Button
-                        variant={isActive(item.href) ? "default" : "ghost"}
-                        className={cn(
-                          "flex items-center space-x-2 font-medium text-sm",
-                          isActive(item.href) && "bg-blue-600 text-white hover:bg-blue-700"
-                        )}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{item.name}</span>
-                      </Button>
-                    </Link>
-                  );
-                })}
-
-                {/* More Menu Dropdown */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className={cn(
-                        "flex items-center space-x-1 font-medium text-sm",
-                        (router.pathname.startsWith('/results') || 
-                         router.pathname.startsWith('/rubrics') || 
-                         router.pathname.startsWith('/student') ||
-                         router.pathname.startsWith('/settings')) && "bg-blue-50 text-blue-600"
-                      )}
+                    <a
+                      key={item.name}
+                      href={item.href}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleAnchorClick(item.href);
+                      }}
+                      className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm"
                     >
-                      <span>More</span>
-                      <ChevronDown className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56 z-[10000]">
-                    {additionalNavigation.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <Link key={item.name} href={item.href} prefetch={true}>
-                          <DropdownMenuItem className={cn(
-                            isActive(item.href) && "bg-blue-50 text-blue-600"
-                          )}>
-                            <Icon className="w-4 h-4 mr-2" />
-                            {item.name}
-                          </DropdownMenuItem>
-                        </Link>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </>
-            ) : (
-              <>
-                {/* Landing Page Navigation */}
-                {landingNavigation.map((item) => {
-                  if (item.isAnchor) {
-                    return (
-                      <a
-                        key={item.name}
-                        href={item.href}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleAnchorClick(item.href);
-                        }}
-                        className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm"
-                      >
-                        {item.name}
-                      </a>
-                    );
-                  }
-                  return (
-                    <Link key={item.name} href={item.href} prefetch={true}>
-                      <span className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm cursor-pointer">
-                        {item.name}
-                      </span>
-                    </Link>
+                      {item.name}
+                    </a>
                   );
-                })}
-                <a
-                  href="https://github.com/Dead-Stone/ScorePAL"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm flex items-center space-x-1"
-                >
-                  <Github className="w-4 h-4" />
-                  <span>GitHub</span>
-                </a>
-                <Link href="/auth/login" prefetch={true}>
-                  <Button variant="outline" className="font-medium text-sm border border-gray-300 text-gray-700 hover:bg-gray-50">
-                    Login
-                  </Button>
-                </Link>
-                <Link href="/auth/register" prefetch={true}>
-                  <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md text-sm">
-                    Get Started
-                    <ArrowRight className="ml-2 w-4 h-4" />
-                  </Button>
-                </Link>
-              </>
-            )}
-          </div>
+                }
+                return (
+                  <Link key={item.name} href={item.href} prefetch={true}>
+                    <span className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm cursor-pointer">
+                      {item.name}
+                    </span>
+                  </Link>
+                );
+              })}
+              <a
+                href="https://github.com/Dead-Stone/ScorePAL"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-gray-700 hover:text-blue-600 transition-colors font-medium text-sm flex items-center space-x-1"
+              >
+                <Github className="w-4 h-4" />
+                <span>GitHub</span>
+              </a>
+              
+              {/* Show Login/Get Started when not authenticated */}
+              {!isAuthenticated && (
+                <>
+                  <Link href="/auth/login" prefetch={true}>
+                    <Button variant="outline" className="font-medium text-sm border border-gray-300 text-gray-700 hover:bg-gray-50">
+                      Login
+                    </Button>
+                  </Link>
+                  <Link href="/auth/register" prefetch={true}>
+                    <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md text-sm">
+                      Get Started
+                      <ArrowRight className="ml-2 w-4 h-4" />
+                    </Button>
+                  </Link>
+                </>
+              )}
+            </div>
 
-          {/* Right side - Search, Notifications, User Menu */}
-          <div className="flex items-center space-x-4">
-            {/* Search (Desktop only) - Only show when logged in */}
-            {isAuthenticated && (
+          {/* Right side - Search, Notifications, User Menu (when logged in) */}
+          {isAuthenticated && (
+            <div className="flex items-center space-x-4">
+              {/* Search (Desktop only) */}
               <div className="hidden lg:block">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -240,18 +186,14 @@ export function TopNavBar({ className }: TopNavBarProps) {
                   />
                 </div>
               </div>
-            )}
 
-            {/* Notifications - Only show when logged in */}
-            {isAuthenticated && (
+              {/* Notifications */}
               <Button variant="ghost" size="icon" className="relative">
                 <Bell className="w-5 h-5" />
                 <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
               </Button>
-            )}
 
-            {/* User Menu - Only show when logged in */}
-            {isAuthenticated && (
+              {/* User Menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="flex items-center space-x-2 h-10 px-3">
@@ -288,6 +230,14 @@ export function TopNavBar({ className }: TopNavBarProps) {
                       Profile
                     </DropdownMenuItem>
                   </Link>
+                  <Link href="/settings" prefetch={true}>
+                    <DropdownMenuItem className={cn(
+                      isActive('/settings') && "bg-blue-50 text-blue-600"
+                    )}>
+                      <Settings className="w-4 h-4 mr-2" />
+                      Settings
+                    </DropdownMenuItem>
+                  </Link>
                   <Link href="/help" prefetch={true}>
                     <DropdownMenuItem>
                       <HelpCircle className="w-4 h-4 mr-2" />
@@ -301,37 +251,38 @@ export function TopNavBar({ className }: TopNavBarProps) {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            )}
+            </div>
+          )}
 
-            {/* Mobile menu button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </Button>
-          </div>
+          {/* Mobile menu button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </Button>
         </div>
       </div>
 
-      {/* Mobile Navigation */}
-      {mobileMenuOpen && (
-        <div className="md:hidden border-t bg-white">
-          <div className="px-2 pt-2 pb-3 space-y-1">
-            {isAuthenticated ? (
-              <>
+      {/* Tab Bar Extension - Only visible when logged in */}
+      {isAuthenticated && (
+        <div className="border-t bg-gray-50/95 backdrop-blur-lg">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex h-12 items-center justify-center">
+              <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-2">
                 {mainNavigation.map((item) => {
                   const Icon = item.icon;
+                  const active = isActive(item.href);
                   return (
-                    <Link key={item.name} href={item.href} onClick={() => setMobileMenuOpen(false)}>
+                    <Link key={item.name} href={item.href} prefetch={true}>
                       <div
                         className={cn(
-                          "flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                          isActive(item.href)
-                            ? "bg-blue-600 text-white"
-                            : "text-gray-700 hover:bg-gray-100"
+                          "flex items-center space-x-2 px-5 py-2 rounded-md font-medium text-sm transition-all",
+                          active
+                            ? "bg-white text-blue-600 shadow-sm"
+                            : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
                         )}
                       >
                         <Icon className="w-4 h-4" />
@@ -340,7 +291,20 @@ export function TopNavBar({ className }: TopNavBarProps) {
                     </Link>
                   );
                 })}
-                {additionalNavigation.map((item) => {
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </nav>
+
+    {/* Mobile Navigation */}
+    {mobileMenuOpen && (
+      <div className={`fixed left-0 right-0 z-[9998] md:hidden border-t bg-white ${isAuthenticated ? 'top-28' : 'top-16'}`}>
+          <div className="px-2 pt-2 pb-3 space-y-1">
+            {isAuthenticated ? (
+              <>
+                {mainNavigation.map((item) => {
                   const Icon = item.icon;
                   return (
                     <Link key={item.name} href={item.href} onClick={() => setMobileMenuOpen(false)}>
@@ -401,6 +365,6 @@ export function TopNavBar({ className }: TopNavBarProps) {
           </div>
         </div>
       )}
-    </nav>
+    </>
   );
 }

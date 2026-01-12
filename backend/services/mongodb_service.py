@@ -156,16 +156,52 @@ async def get_user_settings_collection() -> AsyncIOMotorCollection:
     return collection
 
 
+async def get_ai_configs_collection() -> AsyncIOMotorCollection:
+    """Get AI configurations collection with indexes."""
+    db = get_database()
+    collection = db["ai_configs"]
+    
+    # Create indexes if they don't exist
+    await collection.create_indexes([
+        IndexModel([("user_id", ASCENDING)]),
+        IndexModel([("is_default", ASCENDING)]),
+        IndexModel([("provider", ASCENDING)]),
+        IndexModel([("created_at", DESCENDING)]),
+        IndexModel([("user_id", ASCENDING), ("is_default", ASCENDING)]),
+    ])
+    
+    return collection
+
+
+async def get_canvas_jobs_collection() -> AsyncIOMotorCollection:
+    """Get canvas grading jobs collection with indexes."""
+    db = get_database()
+    collection = db["canvas_grading_jobs"]
+    
+    # Create indexes if they don't exist
+    await collection.create_indexes([
+        IndexModel([("job_id", ASCENDING)], unique=True),
+        IndexModel([("status", ASCENDING)]),
+        IndexModel([("created_at", DESCENDING)]),
+        IndexModel([("course_id", ASCENDING)]),
+        IndexModel([("assignment_id", ASCENDING)]),
+    ])
+    
+    return collection
+
+
 async def initialize_indexes():
     """Initialize all collection indexes."""
     try:
         logger.info("Initializing MongoDB indexes...")
         await get_assignments_collection()
         await get_submissions_collection()
+        await get_ai_configs_collection()
         await get_results_collection()
         await get_analytics_collection()
         await get_rubrics_collection()
         await get_user_settings_collection()
+        await get_canvas_jobs_collection()
         logger.info("MongoDB indexes initialized successfully")
     except Exception as e:
         logger.error(f"Error initializing MongoDB indexes: {e}", exc_info=True)

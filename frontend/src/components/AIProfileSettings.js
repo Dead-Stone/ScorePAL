@@ -57,9 +57,9 @@ const PROVIDER_COLORS = {
 const PROVIDER_ICONS = {
   openai: '🤖',
   anthropic: '🧠',
-  google: '🔍',
+  google: '💎',
   perplexity: '🔮',
-  huggingface: '🤗',
+  huggingface: '🆓',
   cohere: '🌊'
 };
 

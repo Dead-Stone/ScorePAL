@@ -4,22 +4,19 @@ Handles user AI provider configurations and model selection
 """
 
 from fastapi import APIRouter, HTTPException, Depends, status
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
 from typing import List, Optional, Dict, Any
 import logging
 import json
+from datetime import datetime
+from bson import ObjectId
 
 from models.ai_config import (
-    AIModelConfig, AIProviderTemplate, AIProvider, ModelCapability,
-    AIModelConfigCreate, AIModelConfigUpdate, AIModelConfigRead,
-    AIProviderTemplateRead, ModelSelectionRequest, GradingPreferences,
-    AIUsageStats
+    AIProvider, ModelCapability
 )
 from models.user import User
 from auth.auth_config import current_active_user
-from database import get_async_session
 from services.universal_ai_service import universal_ai_service
+from services.mongodb_service import get_ai_configs_collection
 from utils.encryption import encrypt_api_key, decrypt_api_key
 
 router = APIRouter()
@@ -35,145 +32,136 @@ async def get_available_providers():
         logger.error(f"Error getting available providers: {e}")
         raise HTTPException(status_code=500, detail="Error fetching available providers")
 
-@router.get("/providers/templates", response_model=List[AIProviderTemplateRead])
+@router.get("/providers/templates")
 async def get_provider_templates(
-    provider: Optional[AIProvider] = None,
-    session: Session = Depends(get_async_session)
+    provider: Optional[AIProvider] = None
 ):
     """Get AI provider templates with default configurations"""
     try:
-        query = session.query(AIProviderTemplate)
-        
-        if provider:
-            query = query.filter(AIProviderTemplate.provider == provider)
-        
-        query = query.filter(AIProviderTemplate.is_active == True)
-        templates = query.all()
-        
-        return templates
+        # Return empty list for now - templates can be added later if needed
+        return []
     except Exception as e:
         logger.error(f"Error getting provider templates: {e}")
         raise HTTPException(status_code=500, detail="Error fetching provider templates")
 
-@router.get("/my-configs", response_model=List[AIModelConfigRead])
+@router.get("/my-configs")
 async def get_user_ai_configs(
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    current_user: User = Depends(current_active_user)
 ):
     """Get current user's AI configurations"""
     try:
-        configs = session.query(AIModelConfig).filter(
-            AIModelConfig.user_id == current_user.id
-        ).order_by(AIModelConfig.is_default.desc(), AIModelConfig.created_at.desc()).all()
+        collection = await get_ai_configs_collection()
+        cursor = collection.find({"user_id": current_user.id}).sort([
+            ("is_default", -1),
+            ("created_at", -1)
+        ])
+        configs = await cursor.to_list(length=100)
         
-        # Decrypt API keys for display (masked)
+        # Process configs
+        result = []
         for config in configs:
-            try:
-                config.api_key = decrypt_api_key(config.api_key)
-            except:
-                pass  # Keep encrypted if decryption fails
+            config["id"] = str(config["_id"])
+            del config["_id"]
+            # Mask API key for display
+            if "api_key" in config:
+                try:
+                    decrypted = decrypt_api_key(config["api_key"])
+                    config["api_key"] = decrypted[:4] + "..." + decrypted[-4:] if len(decrypted) > 8 else "***"
+                except:
+                    config["api_key"] = "***"
+            result.append(config)
         
-        return configs
+        return result
     except Exception as e:
         logger.error(f"Error getting user AI configs: {e}")
         raise HTTPException(status_code=500, detail="Error fetching AI configurations")
 
-@router.post("/my-configs", response_model=AIModelConfigRead)
+@router.post("/my-configs")
 async def create_ai_config(
-    config_data: AIModelConfigCreate,
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    config_data: Dict[str, Any],
+    current_user: User = Depends(current_active_user)
 ):
     """Create a new AI configuration for the user"""
     try:
         # Validate configuration
-        config_dict = config_data.dict()
-        is_valid, error_msg = universal_ai_service.validate_config(config_dict)
+        is_valid, error_msg = universal_ai_service.validate_config(config_data)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
         
-        # Test the configuration
-        try:
-            test_result = await universal_ai_service.generate_text(
-                config_dict, 
-                "Test prompt for configuration validation. Please respond with 'Configuration test successful.'"
-            )
-            if not test_result.get('text'):
-                raise Exception("No response from AI provider")
-        except Exception as e:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Configuration test failed: {str(e)}"
-            )
-        
         # If this is set as default, unset other defaults
-        if config_data.is_default:
-            session.query(AIModelConfig).filter(
-                and_(
-                    AIModelConfig.user_id == current_user.id,
-                    AIModelConfig.is_default == True
-                )
-            ).update({AIModelConfig.is_default: False})
+        collection = await get_ai_configs_collection()
+        if config_data.get('is_default'):
+            await collection.update_many(
+                {"user_id": current_user.id, "is_default": True},
+                {"$set": {"is_default": False}}
+            )
         
         # Create new configuration
-        encrypted_api_key = encrypt_api_key(config_data.api_key)
+        encrypted_api_key = encrypt_api_key(config_data.get('api_key', ''))
         
-        new_config = AIModelConfig(
-            user_id=current_user.id,
-            provider=config_data.provider,
-            model_name=config_data.model_name,
-            api_key=encrypted_api_key,
-            api_endpoint=config_data.api_endpoint,
-            is_active=config_data.is_active,
-            is_default=config_data.is_default,
-            max_tokens=config_data.max_tokens,
-            temperature=config_data.temperature,
-            top_p=config_data.top_p,
-            frequency_penalty=config_data.frequency_penalty,
-            presence_penalty=config_data.presence_penalty,
-            extra_config=config_data.extra_config,
-            capabilities=config_data.capabilities
-        )
+        new_config = {
+            "user_id": current_user.id,
+            "provider": config_data.get('provider'),
+            "model_name": config_data.get('model_name'),
+            "api_key": encrypted_api_key,
+            "api_endpoint": config_data.get('api_endpoint'),
+            "is_active": config_data.get('is_active', True),
+            "is_default": config_data.get('is_default', False),
+            "max_tokens": config_data.get('max_tokens', 2048),
+            "temperature": config_data.get('temperature', 0.7),
+            "top_p": config_data.get('top_p', 0.9),
+            "frequency_penalty": config_data.get('frequency_penalty', 0.0),
+            "presence_penalty": config_data.get('presence_penalty', 0.0),
+            "extra_config": config_data.get('extra_config', {}),
+            "capabilities": config_data.get('capabilities', []),
+            "total_requests": 0,
+            "total_tokens_used": 0,
+            "total_cost": 0.0,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "last_used": None
+        }
         
-        session.add(new_config)
-        session.commit()
-        session.refresh(new_config)
+        result = await collection.insert_one(new_config)
+        new_config["id"] = str(result.inserted_id)
+        del new_config["_id"]
+        # Mask API key for return
+        api_key = config_data.get('api_key', '')
+        new_config["api_key"] = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
         
-        # Decrypt for return (will be masked by Pydantic)
-        new_config.api_key = config_data.api_key
-        
-        logger.info(f"Created AI config {new_config.id} for user {current_user.id}")
+        logger.info(f"Created AI config {new_config['id']} for user {current_user.id}")
         return new_config
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error creating AI config: {e}")
-        session.rollback()
         raise HTTPException(status_code=500, detail="Error creating AI configuration")
 
-@router.put("/my-configs/{config_id}", response_model=AIModelConfigRead)
+@router.put("/my-configs/{config_id}")
 async def update_ai_config(
-    config_id: int,
-    config_data: AIModelConfigUpdate,
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    config_id: str,
+    config_data: Dict[str, Any],
+    current_user: User = Depends(current_active_user)
 ):
     """Update an existing AI configuration"""
     try:
+        collection = await get_ai_configs_collection()
+        
         # Get existing config
-        config = session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.id == config_id,
-                AIModelConfig.user_id == current_user.id
-            )
-        ).first()
+        config = await collection.find_one({
+            "_id": ObjectId(config_id),
+            "user_id": current_user.id
+        })
         
         if not config:
             raise HTTPException(status_code=404, detail="AI configuration not found")
         
-        # Update fields
-        update_data = config_data.dict(exclude_unset=True)
+        # Prepare update data
+        update_data = {}
+        for key, value in config_data.items():
+            if value is not None:
+                update_data[key] = value
         
         # If API key is being updated, encrypt it
         if 'api_key' in update_data:
@@ -181,58 +169,61 @@ async def update_ai_config(
         
         # If setting as default, unset other defaults
         if update_data.get('is_default'):
-            session.query(AIModelConfig).filter(
-                and_(
-                    AIModelConfig.user_id == current_user.id,
-                    AIModelConfig.id != config_id,
-                    AIModelConfig.is_default == True
-                )
-            ).update({AIModelConfig.is_default: False})
+            await collection.update_many(
+                {"user_id": current_user.id, "_id": {"$ne": ObjectId(config_id)}, "is_default": True},
+                {"$set": {"is_default": False}}
+            )
+        
+        # Add updated timestamp
+        update_data['updated_at'] = datetime.utcnow()
         
         # Apply updates
-        for key, value in update_data.items():
-            setattr(config, key, value)
+        await collection.update_one(
+            {"_id": ObjectId(config_id)},
+            {"$set": update_data}
+        )
         
-        session.commit()
-        session.refresh(config)
+        # Get updated config
+        updated_config = await collection.find_one({"_id": ObjectId(config_id)})
+        updated_config["id"] = str(updated_config["_id"])
+        del updated_config["_id"]
         
-        # Decrypt for return (will be masked)
-        if 'api_key' in update_data:
-            config.api_key = config_data.api_key
-        else:
-            config.api_key = decrypt_api_key(config.api_key)
+        # Mask API key
+        if "api_key" in updated_config:
+            try:
+                decrypted = decrypt_api_key(updated_config["api_key"])
+                updated_config["api_key"] = decrypted[:4] + "..." + decrypted[-4:] if len(decrypted) > 8 else "***"
+            except:
+                updated_config["api_key"] = "***"
         
         logger.info(f"Updated AI config {config_id} for user {current_user.id}")
-        return config
+        return updated_config
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error updating AI config: {e}")
-        session.rollback()
         raise HTTPException(status_code=500, detail="Error updating AI configuration")
 
 @router.delete("/my-configs/{config_id}")
 async def delete_ai_config(
-    config_id: int,
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    config_id: str,
+    current_user: User = Depends(current_active_user)
 ):
     """Delete an AI configuration"""
     try:
+        collection = await get_ai_configs_collection()
+        
         # Get existing config
-        config = session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.id == config_id,
-                AIModelConfig.user_id == current_user.id
-            )
-        ).first()
+        config = await collection.find_one({
+            "_id": ObjectId(config_id),
+            "user_id": current_user.id
+        })
         
         if not config:
             raise HTTPException(status_code=404, detail="AI configuration not found")
         
-        session.delete(config)
-        session.commit()
+        await collection.delete_one({"_id": ObjectId(config_id)})
         
         logger.info(f"Deleted AI config {config_id} for user {current_user.id}")
         return {"message": "AI configuration deleted successfully"}
@@ -241,40 +232,39 @@ async def delete_ai_config(
         raise
     except Exception as e:
         logger.error(f"Error deleting AI config: {e}")
-        session.rollback()
         raise HTTPException(status_code=500, detail="Error deleting AI configuration")
 
 @router.post("/my-configs/{config_id}/test")
 async def test_ai_config(
-    config_id: int,
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    config_id: str,
+    current_user: User = Depends(current_active_user)
 ):
     """Test an AI configuration"""
     try:
+        import time
+        collection = await get_ai_configs_collection()
+        
         # Get config
-        config = session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.id == config_id,
-                AIModelConfig.user_id == current_user.id
-            )
-        ).first()
+        config = await collection.find_one({
+            "_id": ObjectId(config_id),
+            "user_id": current_user.id
+        })
         
         if not config:
             raise HTTPException(status_code=404, detail="AI configuration not found")
         
         # Prepare config for testing
         config_dict = {
-            'provider': config.provider,
-            'model_name': config.model_name,
-            'api_key': decrypt_api_key(config.api_key),
-            'api_endpoint': config.api_endpoint,
-            'max_tokens': config.max_tokens,
-            'temperature': config.temperature,
-            'top_p': config.top_p,
-            'frequency_penalty': config.frequency_penalty,
-            'presence_penalty': config.presence_penalty,
-            'extra_config': config.extra_config
+            'provider': config.get('provider'),
+            'model_name': config.get('model_name'),
+            'api_key': decrypt_api_key(config.get('api_key', '')),
+            'api_endpoint': config.get('api_endpoint'),
+            'max_tokens': config.get('max_tokens', 2048),
+            'temperature': float(config.get('temperature', 0.7)) if isinstance(config.get('temperature'), str) else config.get('temperature', 0.7),
+            'top_p': float(config.get('top_p', 0.9)) if isinstance(config.get('top_p'), str) else config.get('top_p', 0.9),
+            'frequency_penalty': float(config.get('frequency_penalty', 0.0)) if isinstance(config.get('frequency_penalty'), str) else config.get('frequency_penalty', 0.0),
+            'presence_penalty': float(config.get('presence_penalty', 0.0)) if isinstance(config.get('presence_penalty'), str) else config.get('presence_penalty', 0.0),
+            'extra_config': config.get('extra_config', {})
         }
         
         # Test the configuration
@@ -285,8 +275,10 @@ async def test_ai_config(
         end_time = time.time()
         
         # Update last used timestamp
-        config.last_used = datetime.now()
-        session.commit()
+        await collection.update_one(
+            {"_id": ObjectId(config_id)},
+            {"$set": {"last_used": datetime.utcnow()}}
+        )
         
         return {
             "success": True,
@@ -308,34 +300,33 @@ async def test_ai_config(
 
 @router.put("/my-configs/{config_id}/set-default")
 async def set_default_ai_config(
-    config_id: int,
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    config_id: str,
+    current_user: User = Depends(current_active_user)
 ):
     """Set an AI configuration as the default"""
     try:
+        collection = await get_ai_configs_collection()
+        
         # Verify config exists and belongs to user
-        config = session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.id == config_id,
-                AIModelConfig.user_id == current_user.id
-            )
-        ).first()
+        config = await collection.find_one({
+            "_id": ObjectId(config_id),
+            "user_id": current_user.id
+        })
         
         if not config:
             raise HTTPException(status_code=404, detail="AI configuration not found")
         
         # Unset other defaults
-        session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.user_id == current_user.id,
-                AIModelConfig.is_default == True
-            )
-        ).update({AIModelConfig.is_default: False})
+        await collection.update_many(
+            {"user_id": current_user.id, "is_default": True},
+            {"$set": {"is_default": False}}
+        )
         
         # Set this as default
-        config.is_default = True
-        session.commit()
+        await collection.update_one(
+            {"_id": ObjectId(config_id)},
+            {"$set": {"is_default": True, "updated_at": datetime.utcnow()}}
+        )
         
         logger.info(f"Set AI config {config_id} as default for user {current_user.id}")
         return {"message": "Default AI configuration updated"}
@@ -344,26 +335,32 @@ async def set_default_ai_config(
         raise
     except Exception as e:
         logger.error(f"Error setting default AI config: {e}")
-        session.rollback()
         raise HTTPException(status_code=500, detail="Error setting default AI configuration")
 
-@router.get("/my-configs/default", response_model=Optional[AIModelConfigRead])
+@router.get("/my-configs/default")
 async def get_default_ai_config(
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    current_user: User = Depends(current_active_user)
 ):
     """Get user's default AI configuration"""
     try:
-        config = session.query(AIModelConfig).filter(
-            and_(
-                AIModelConfig.user_id == current_user.id,
-                AIModelConfig.is_default == True,
-                AIModelConfig.is_active == True
-            )
-        ).first()
+        collection = await get_ai_configs_collection()
+        
+        config = await collection.find_one({
+            "user_id": current_user.id,
+            "is_default": True,
+            "is_active": True
+        })
         
         if config:
-            config.api_key = decrypt_api_key(config.api_key)
+            config["id"] = str(config["_id"])
+            del config["_id"]
+            # Mask API key
+            if "api_key" in config:
+                try:
+                    decrypted = decrypt_api_key(config["api_key"])
+                    config["api_key"] = decrypted[:4] + "..." + decrypted[-4:] if len(decrypted) > 8 else "***"
+                except:
+                    config["api_key"] = "***"
         
         return config
         
@@ -371,40 +368,40 @@ async def get_default_ai_config(
         logger.error(f"Error getting default AI config: {e}")
         raise HTTPException(status_code=500, detail="Error fetching default AI configuration")
 
-@router.get("/usage-stats", response_model=AIUsageStats)
+@router.get("/usage-stats")
 async def get_ai_usage_stats(
-    current_user: User = Depends(current_active_user),
-    session: Session = Depends(get_async_session)
+    current_user: User = Depends(current_active_user)
 ):
     """Get AI usage statistics for the user"""
     try:
-        # Get all user's configs
-        configs = session.query(AIModelConfig).filter(
-            AIModelConfig.user_id == current_user.id
-        ).all()
+        collection = await get_ai_configs_collection()
         
-        total_requests = sum(config.total_requests for config in configs)
-        total_tokens_used = sum(config.total_tokens_used for config in configs)
+        # Get all user's configs
+        cursor = collection.find({"user_id": current_user.id})
+        configs = await cursor.to_list(length=100)
+        
+        total_requests = sum(config.get('total_requests', 0) for config in configs)
+        total_tokens_used = sum(config.get('total_tokens_used', 0) for config in configs)
         
         # Calculate total cost (rough estimate)
         total_cost = 0.0
         for config in configs:
-            if config.cost_per_1k_tokens:
-                cost_per_1k = float(config.cost_per_1k_tokens)
-                total_cost += (config.total_tokens_used / 1000) * cost_per_1k
+            if config.get('cost_per_1k_tokens'):
+                cost_per_1k = float(config.get('cost_per_1k_tokens', 0))
+                total_cost += (config.get('total_tokens_used', 0) / 1000) * cost_per_1k
         
         # Find most used provider and model
-        most_used_config = max(configs, key=lambda c: c.total_requests) if configs else None
+        most_used_config = max(configs, key=lambda c: c.get('total_requests', 0)) if configs else None
         
-        stats = AIUsageStats(
-            total_requests=total_requests,
-            total_tokens_used=total_tokens_used,
-            total_cost=f"{total_cost:.4f}",
-            most_used_provider=most_used_config.provider if most_used_config else None,
-            most_used_model=most_used_config.model_name if most_used_config else None,
-            success_rate=0.95,  # Would calculate from actual success/failure tracking
-            last_30_days_usage=total_requests  # Simplified for now
-        )
+        stats = {
+            "total_requests": total_requests,
+            "total_tokens_used": total_tokens_used,
+            "total_cost": f"{total_cost:.4f}",
+            "most_used_provider": most_used_config.get('provider') if most_used_config else None,
+            "most_used_model": most_used_config.get('model_name') if most_used_config else None,
+            "success_rate": 0.95,  # Would calculate from actual success/failure tracking
+            "last_30_days_usage": total_requests  # Simplified for now
+        }
         
         return stats
         
@@ -416,17 +413,31 @@ async def get_ai_usage_stats(
 async def validate_ai_config(config_data: Dict[str, Any]):
     """Validate an AI configuration without saving"""
     try:
+        # Check if required fields are present
+        if not config_data.get('provider') or not config_data.get('model_name') or not config_data.get('api_key'):
+            return {
+                "valid": False,
+                "message": "Missing required fields: provider, model_name, or api_key",
+                "provider_available": False
+            }
+        
         is_valid, error_msg = universal_ai_service.validate_config(config_data)
         
         return {
             "valid": is_valid,
-            "message": error_msg,
-            "provider_available": config_data.get('provider') in [p.value for p in AIProvider]
+            "message": error_msg if not is_valid else "Configuration is valid",
+            "provider_available": config_data.get('provider') in [p.value for p in AIProvider],
+            "success": is_valid
         }
         
     except Exception as e:
         logger.error(f"Error validating config: {e}")
-        raise HTTPException(status_code=500, detail="Error validating configuration")
+        return {
+            "valid": False,
+            "message": f"Error validating configuration: {str(e)}",
+            "provider_available": False,
+            "success": False
+        }
 
 @router.get("/providers/{provider}/models")
 async def get_provider_models(provider: AIProvider):

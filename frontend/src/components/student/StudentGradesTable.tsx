@@ -103,9 +103,12 @@ export const StudentGradesTable: React.FC<StudentGradesTableProps> = ({ results 
                 {new Date(result.graded_at).toLocaleDateString()}
               </TableCell>
               <TableCell align="center">
-                <Link href={`/results/${result.id}`} prefetch={true}>
-                  <Chip label="View Details" size="small" clickable />
-                </Link>
+                <Chip 
+                  label="View Details" 
+                  size="small" 
+                  sx={{ cursor: 'default' }}
+                  title="Details are shown in the dashboard"
+                />
               </TableCell>
             </TableRow>
           ))}

@@ -20,7 +20,6 @@ const Lottie = dynamic(() => import('lottie-react'), { ssr: false });
 import { 
   ArrowRight, 
   CheckCircle, 
-  Star, 
   Users, 
   Clock, 
   BookOpen,
@@ -430,68 +429,6 @@ function LandingPage() {
                 View on GitHub
               </Button>
             </a>
-          </div>
-        </div>
-      </section>
-
-      {/* Testimonials Section */}
-      <section className="py-12 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-8">
-            <Badge className="mb-2 px-3 py-1 bg-yellow-100 text-yellow-700 border-yellow-200 text-xs">
-              Testimonials
-            </Badge>
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-2 tracking-tight">
-              Loved by Educators
-            </h2>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-4">
-            {[
-              {
-                name: "Dr. Sarah Chen",
-                role: "Computer Science Professor",
-                content: "ScorePAL's analytics dashboard gives me insights I never had before. I can see which students are struggling early and track performance trends across my courses.",
-                rating: 5,
-                avatar: "SC"
-              },
-              {
-                name: "Prof. Michael Rodriguez",
-                role: "Mathematics Department",
-                content: "The Canvas integration is seamless. I can see all my course data in one place, and the optional AI grading saves me hours when I need it.",
-                rating: 5,
-                avatar: "MR"
-              },
-              {
-                name: "Dr. Emily Watson",
-                role: "English Literature",
-                content: "I love being able to compare performance across different courses and semesters. The analytics help me understand what's working and what needs improvement.",
-                rating: 5,
-                avatar: "EW"
-              }
-            ].map((testimonial, index) => (
-              <Card key={index} className="border-0 shadow-md hover:shadow-lg transition-shadow duration-300">
-                <CardContent className="p-5">
-                  <div className="flex items-center mb-3">
-                    {[...Array(testimonial.rating)].map((_, i) => (
-                      <Star key={i} className="w-4 h-4 text-yellow-400 fill-current" />
-                    ))}
-                  </div>
-                  <p className="text-sm text-gray-700 mb-4 leading-relaxed italic">
-                    "{testimonial.content}"
-                  </p>
-                  <div className="flex items-center space-x-3 border-t pt-4">
-                    <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 flex items-center justify-center text-white font-bold text-sm">
-                      {testimonial.avatar}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-sm text-gray-900">{testimonial.name}</p>
-                      <p className="text-xs text-gray-600">{testimonial.role}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
           </div>
         </div>
       </section>

@@ -28,7 +28,7 @@ export const PageLayout: React.FC<PageLayoutProps> = ({
         maxWidth={maxWidth}
         sx={{
           py: disablePadding ? 0 : DESIGN_CONSTANTS.spacing.pagePadding,
-          pt: disablePadding ? 0 : { xs: DESIGN_CONSTANTS.layout.navBarHeight / 4 + 3, sm: DESIGN_CONSTANTS.layout.navBarHeight / 4 + 3 },
+          pt: disablePadding ? 0 : { xs: 28, sm: 28 }, // Account for nav bar (64px) + tab bar (48px) = 112px = 28 * 4px
         }}
       >
         {children}

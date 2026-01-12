@@ -200,6 +200,22 @@ try:
 except ImportError as e:
     logger.warning(f"Could not import AI configuration routes: {e}")
 
+# Include Student AI Assistant routes
+try:
+    from api.student_ai_routes import router as student_ai_router
+    app.include_router(student_ai_router, tags=["Student AI"])
+    logger.info("Student AI assistant routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import student AI routes: {e}")
+
+# Include Student AI Assistant routes
+try:
+    from api.student_ai_routes import router as student_ai_router
+    app.include_router(student_ai_router, tags=["Student AI"])
+    logger.info("Student AI assistant routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import student AI routes: {e}")
+
 # Include LTI routes
 try:
     from .api.lti_routes import router as lti_router
@@ -207,6 +223,14 @@ try:
     logger.info("LTI routes included successfully")
 except ImportError as e:
     logger.warning(f"Could not import LTI routes: {e}")
+
+# Include Mock Test Generator routes
+try:
+    from .api.mock_test_routes import router as mock_test_router
+    app.include_router(mock_test_router, tags=["Mock Tests"])
+    logger.info("Mock test routes included successfully")
+except ImportError as e:
+    logger.warning(f"Could not import mock test routes: {e}")
 
 # Initialize services
 try:
@@ -1258,169 +1282,46 @@ def get_grade_letter(percentage: float) -> str:
 
 @app.get("/grading-results/{assignment_id}")
 async def get_grading_results(assignment_id: str):
-    """Get grading results for a specific assignment. Checks MongoDB first, then falls back to JSON files."""
+    """Get grading results for a specific assignment from MongoDB."""
     try:
         logger.info(f"Getting grading results for assignment/submission: {assignment_id}")
         
-        # First, try to get results from MongoDB
-        try:
-            from .services.results_service import get_results_by_assignment
-            mongo_results = await get_results_by_assignment(assignment_id)
-            if mongo_results:
-                logger.info(f"Found {len(mongo_results)} results in MongoDB for assignment {assignment_id}")
-                # Return the first result (for single submission) or all results (for batch)
-                if len(mongo_results) == 1:
-                    result = mongo_results[0]
-                    return {
-                        "assignment_id": assignment_id,
-                        "student_name": result.get("student_name"),
-                        "graded_at": result.get("graded_at", datetime.now().isoformat()),
-                        "score": result.get("score"),
-                        "total": result.get("total_points", 100),
-                        "percentage": result.get("percentage"),
-                        "grade_letter": result.get("grade_letter"),
-                        "grading_feedback": result.get("overall_feedback"),
-                        "criteria_scores": result.get("criteria_scores", []),
-                        "mistakes": result.get("mistakes", []),
-                        "submission_text": result.get("submission_text"),
-                        "question_text": result.get("question_text"),
-                        "answer_key": result.get("answer_key_text"),
-                        "timestamp": result.get("graded_at", datetime.now().isoformat())
-                    }
-                else:
-                    # Multiple results - return summary
-                    return {
-                        "assignment_id": assignment_id,
-                        "results": mongo_results,
-                        "count": len(mongo_results)
-                    }
-        except Exception as e:
-            logger.warning(f"Could not retrieve results from MongoDB: {e}, falling back to JSON files")
+        # Get results from MongoDB
+        from .services.results_service import get_results_by_assignment
+        mongo_results = await get_results_by_assignment(assignment_id)
         
-        # Fall back to JSON file-based retrieval (backward compatibility)
-        # First, retrieve the assignment info to determine if it's a single submission
-        try:
-            assignment_info = await get_assignment(assignment_id)
-            if not assignment_info:
-                logger.error(f"Assignment/submission not found: {assignment_id}")
-                raise HTTPException(status_code=404, detail=f"Assignment/submission {assignment_id} not found")
-                
-            is_single_submission = assignment_info.get("type") == "single_submission"
-            logger.info(f"Determined submission type: {'single' if is_single_submission else 'batch'}")
-            
-            # If it's a batch assignment, return coming soon message
-            if not is_single_submission:
-                return {
-                    "status": "coming_soon",
-                    "message": "Batch grading results are coming soon. Please use single submission grading for now.",
-                    "assignment_id": assignment_id
-                }
-        except Exception as e:
-            logger.error(f"Error retrieving assignment info: {e}")
-            is_single_submission = False  # Default to batch processing if we can't determine
-        
-        # Check in the grading_results directory
-        results_dir = directories["grading_results"] / assignment_id
-        logger.info(f"Looking for results in: {results_dir}")
-        
-        if is_single_submission:
-            logger.info("Processing single submission results")
-            
-            # Look for a result file pattern
-            result_files = list(results_dir.glob("*_results.json"))
-            if not result_files:
-                # Try different naming patterns
-                result_files = list(results_dir.glob("*_result.json"))
-            
-            if result_files:
-                result_file = result_files[0]  # Use the first result file
-                logger.info(f"Found result file: {result_file}")
-                
-                with open(result_file, "r", encoding="utf-8") as f:
-                    result_data = json.load(f)
-                
-                # Get submission text if available
-                submission_text = ""
-                try:
-                    submission_file = result_file.parent / "submission.txt"
-                    if submission_file.exists():
-                        with open(submission_file, "r", encoding="utf-8") as f:
-                            submission_text = f.read()
-                except Exception as e:
-                    logger.error(f"Error reading submission file: {e}")
-                
-                # Get question text if available
-                question_text = ""
-                try:
-                    question_file = result_file.parent / "question.txt"
-                    if question_file.exists():
-                        with open(question_file, "r", encoding="utf-8") as f:
-                            question_text = f.read()
-                except Exception as e:
-                    logger.error(f"Error reading question file: {e}")
-                
-                # Get answer key if available
-                answer_key_text = ""
-                try:
-                    answer_key_file = result_file.parent / "answer_key.txt"
-                    if answer_key_file.exists():
-                        with open(answer_key_file, "r", encoding="utf-8") as f:
-                            answer_key_text = f.read()
-                except Exception as e:
-                    logger.error(f"Error reading answer key file: {e}")
-                
-                # Check if result_data is in the expected format
-                if "student_name" in result_data and "score" in result_data:
-                    # The result file has the score directly at the top level
-                    return {
-                        "assignment_id": assignment_id,
-                        "assignment_name": assignment_info.get("assignment_name"),
-                        "student_name": result_data.get("student_name") or assignment_info.get("student_name"),
-                        "graded_at": assignment_info.get("graded_at", datetime.now().isoformat()),
-                        "score": result_data.get("score"),
-                        "total": result_data.get("max_score", 100),
-                        "percentage": result_data.get("percentage"),
-                        "grade_letter": result_data.get("grade_letter"),
-                        "grading_feedback": result_data.get("feedback"),
-                        "criteria_scores": result_data.get("criteria_scores", []),
-                        "mistakes": {f"mistake_{i+1}": {"deductions": 0, "reasons": m.get("description")} 
-                                   for i, m in enumerate(result_data.get("mistakes", []))},
-                        "submission_text": submission_text,
-                        "question_text": question_text,
-                        "answer_key": answer_key_text,
-                        "timestamp": result_data.get("timestamp", datetime.now().isoformat())
-                    }
-                
-                # Older format with nested structure
-                if "result" in result_data:
-                    result = result_data["result"]
-                    return {
-                        "assignment_id": assignment_id,
-                        "assignment_name": assignment_info.get("assignment_name"),
-                        "student_name": result.get("student_name") or assignment_info.get("student_name"),
-                        "graded_at": result_data.get("graded_at", datetime.now().isoformat()),
-                        "score": result.get("score"),
-                        "total": result.get("max_score", 100),
-                        "percentage": result.get("percentage"),
-                        "grade_letter": result.get("grade_letter"),
-                        "grading_feedback": result.get("feedback"),
-                        "criteria_scores": result.get("criteria_scores", []),
-                        "mistakes": result.get("mistakes", {}),
-                        "submission_text": submission_text,
-                        "question_text": question_text,
-                        "answer_key": answer_key_text,
-                        "timestamp": result.get("timestamp", datetime.now().isoformat())
-                    }
-                
-                # If we got here, return the raw result data
-                return result_data
-            
-            logger.error(f"No result files found in {results_dir}")
+        if not mongo_results:
+            logger.warning(f"No results found in MongoDB for assignment {assignment_id}")
             raise HTTPException(status_code=404, detail=f"No grading results found for {assignment_id}")
         
-        # If we reach here, no results were found
-        logger.error(f"No grading results found for {assignment_id}")
-        raise HTTPException(status_code=404, detail=f"No grading results found for {assignment_id}")
+        logger.info(f"Found {len(mongo_results)} results in MongoDB for assignment {assignment_id}")
+        
+        # Return the first result (for single submission) or all results (for batch)
+        if len(mongo_results) == 1:
+            result = mongo_results[0]
+            return {
+                "assignment_id": assignment_id,
+                "student_name": result.get("student_name"),
+                "graded_at": result.get("graded_at", datetime.now().isoformat()) if isinstance(result.get("graded_at"), str) else result.get("graded_at").isoformat() if result.get("graded_at") else datetime.now().isoformat(),
+                "score": result.get("score"),
+                "total": result.get("total_points", 100),
+                "percentage": result.get("percentage"),
+                "grade_letter": result.get("grade_letter"),
+                "grading_feedback": result.get("overall_feedback"),
+                "criteria_scores": result.get("criteria_scores", []),
+                "mistakes": result.get("mistakes", []),
+                "submission_text": result.get("submission_text"),
+                "question_text": result.get("question_text"),
+                "answer_key": result.get("answer_key_text"),
+                "timestamp": result.get("graded_at", datetime.now().isoformat()) if isinstance(result.get("graded_at"), str) else result.get("graded_at").isoformat() if result.get("graded_at") else datetime.now().isoformat()
+            }
+        else:
+            # Multiple results - return summary
+            return {
+                "assignment_id": assignment_id,
+                "results": mongo_results,
+                "count": len(mongo_results)
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -2259,36 +2160,30 @@ async def grade_canvas_assignment(
 @app.get("/canvas/jobs/{job_id}")
 async def get_canvas_job_status(job_id: str):
     """
-    Get the status of a Canvas grading job.
+    Get the status of a Canvas grading job from MongoDB.
     
     Args:
         job_id: Canvas grading job ID
     """
     try:
-        # Find the job directory
-        job_dir = directories["grading_results"] / job_id
+        from .services.results_service import get_canvas_job_metadata, get_canvas_job_results
         
-        if not job_dir.exists():
+        # Get job metadata from MongoDB
+        metadata = await get_canvas_job_metadata(job_id)
+        
+        if not metadata:
             raise HTTPException(status_code=404, detail=f"Canvas grading job {job_id} not found")
         
-        # Read the metadata file
-        metadata_path = job_dir / "metadata.json"
-        if not metadata_path.exists():
-            raise HTTPException(status_code=404, detail=f"Canvas grading job metadata not found")
-        
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-        
         # Check if results are available
-        results_path = job_dir / "grading_results.json"
-        results_available = results_path.exists()
+        results = await get_canvas_job_results(job_id)
+        results_available = len(results) > 0
         
         response = {
             "job_id": job_id,
             "status": metadata.get("status", "unknown"),
             "type": metadata.get("type", "canvas_assignment"),
-            "created_at": metadata.get("created_at", ""),
-            "completed_at": metadata.get("completed_at", ""),
+            "created_at": metadata.get("created_at", "").isoformat() if hasattr(metadata.get("created_at"), "isoformat") else metadata.get("created_at", ""),
+            "completed_at": metadata.get("completed_at", "").isoformat() if hasattr(metadata.get("completed_at"), "isoformat") else metadata.get("completed_at", ""),
             "results_available": results_available
         }
         
@@ -2308,27 +2203,47 @@ async def get_canvas_job_status(job_id: str):
 @app.get("/canvas/jobs/{job_id}/results")
 async def get_canvas_job_results(job_id: str):
     """
-    Get the results of a Canvas grading job.
+    Get the results of a Canvas grading job from MongoDB.
     
     Args:
         job_id: Canvas grading job ID
     """
     try:
-        # Find the job directory
-        job_dir = directories["grading_results"] / job_id
+        from .services.results_service import get_canvas_job_metadata, get_canvas_job_results
         
-        if not job_dir.exists():
+        # Check if job exists
+        metadata = await get_canvas_job_metadata(job_id)
+        if not metadata:
             raise HTTPException(status_code=404, detail=f"Canvas grading job {job_id} not found")
         
-        # Read the results file
-        results_path = job_dir / "grading_results.json"
-        if not results_path.exists():
-            raise HTTPException(status_code=404, detail=f"Canvas grading results not found")
+        # Get results from MongoDB
+        results = await get_canvas_job_results(job_id)
         
-        with open(results_path, "r", encoding="utf-8") as f:
-            results = json.load(f)
+        if not results:
+            raise HTTPException(status_code=404, detail=f"Canvas grading results not found for job {job_id}")
         
-        return results
+        # Format results to match expected structure
+        formatted_results = []
+        for result in results:
+            formatted_results.append({
+                "user_id": result.get("metadata", {}).get("canvas_student_id"),
+                "user_name": result.get("student_name"),
+                "score": result.get("score"),
+                "total_points": result.get("total_points", 100),
+                "percentage": result.get("percentage"),
+                "grade_letter": result.get("grade_letter"),
+                "feedback": result.get("overall_feedback"),
+                "status": "graded",
+                "rubric_breakdown": result.get("criteria_scores", []),
+                "submission_content": result.get("submission_text", ""),
+                "canvas_submission_id": result.get("metadata", {}).get("canvas_submission_id")
+            })
+        
+        return {
+            "job_id": job_id,
+            "results": formatted_results,
+            "count": len(formatted_results)
+        }
     except HTTPException:
         raise
     except Exception as e:

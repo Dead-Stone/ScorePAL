@@ -213,3 +213,81 @@ def _calculate_grade_letter(percentage: float) -> str:
     else:
         return "F"
 
+
+async def save_canvas_job_metadata(
+    job_id: str,
+    status: str,
+    course_id: Optional[int] = None,
+    assignment_id: Optional[int] = None,
+    created_at: Optional[datetime] = None,
+    completed_at: Optional[datetime] = None,
+    error: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Save or update canvas grading job metadata in MongoDB."""
+    try:
+        from services.mongodb_service import get_canvas_jobs_collection
+        collection = await get_canvas_jobs_collection()
+        
+        job_doc = {
+            "job_id": job_id,
+            "status": status,
+            "type": "canvas_assignment",
+            "created_at": created_at or datetime.utcnow(),
+            "course_id": course_id,
+            "assignment_id": assignment_id,
+            "metadata": metadata or {}
+        }
+        
+        if completed_at:
+            job_doc["completed_at"] = completed_at
+        if error:
+            job_doc["error"] = error
+        
+        await collection.update_one(
+            {"job_id": job_id},
+            {"$set": job_doc},
+            upsert=True
+        )
+        
+        logger.info(f"Saved canvas job metadata for job {job_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving canvas job metadata: {e}", exc_info=True)
+        return False
+
+
+async def get_canvas_job_metadata(job_id: str) -> Optional[Dict[str, Any]]:
+    """Get canvas grading job metadata from MongoDB."""
+    try:
+        from services.mongodb_service import get_canvas_jobs_collection
+        collection = await get_canvas_jobs_collection()
+        job = await collection.find_one({"job_id": job_id})
+        
+        if job:
+            job["id"] = str(job.get("_id", ""))
+            if "_id" in job:
+                del job["_id"]
+        return job
+    except Exception as e:
+        logger.error(f"Error getting canvas job metadata: {e}", exc_info=True)
+        return None
+
+
+async def get_canvas_job_results(job_id: str) -> List[Dict[str, Any]]:
+    """Get all grading results for a canvas job from MongoDB."""
+    try:
+        collection = await get_results_collection()
+        cursor = collection.find({
+            "metadata.grading_job_id": job_id
+        }).sort("graded_at", -1)
+        
+        results = []
+        async for doc in cursor:
+            doc["id"] = str(doc["_id"])
+            del doc["_id"]
+            results.append(doc)
+        return results
+    except Exception as e:
+        logger.error(f"Error getting canvas job results: {e}", exc_info=True)
+        return []

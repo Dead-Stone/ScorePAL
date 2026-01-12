@@ -535,7 +535,7 @@ export default function RegisterPage() {
                         });
                         const data = await response.json();
                         if (response.ok) {
-                          router.replace('/auth/login?message=Email verified! Please sign in.');
+                          router.replace('/auth/login?message=' + encodeURIComponent('Email verified! Please sign in.'));
                         } else {
                           setError(data.detail || 'Invalid code. Please try again.');
                         }

@@ -77,9 +77,28 @@ async def update_canvas_settings(
     try:
         collection = await get_user_settings_collection()
         
+        # Check if user has a different LMS configured and clear it
+        existing_settings = await collection.find_one({"user_id": user.id})
+        if existing_settings and existing_settings.get("lms_type") and existing_settings.get("lms_type") != "canvas":
+            # Clear other LMS configuration
+            await collection.update_one(
+                {"user_id": user.id},
+                {
+                    "$unset": {
+                        "moodle_api_key": "",
+                        "moodle_url": "",
+                        "moodle_key_configured": "",
+                        "blackboard_api_key": "",
+                        "blackboard_url": "",
+                        "blackboard_key_configured": "",
+                    }
+                }
+            )
+        
         # Prepare update data
         update_data = {
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.utcnow(),
+            "lms_type": "canvas"  # Set LMS type to canvas
         }
         
         if settings_update.canvas_api_key is not None:
@@ -113,6 +132,40 @@ async def update_canvas_settings(
     except Exception as e:
         logger.error(f"Error updating Canvas settings: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error updating settings: {str(e)}")
+
+
+@router.delete("/canvas")
+async def delete_canvas_settings(
+    user: User = Depends(current_active_user)
+):
+    """
+    Delete user's Canvas API settings and clear LMS type.
+    """
+    try:
+        collection = await get_user_settings_collection()
+        
+        # Clear Canvas settings and LMS type
+        await collection.update_one(
+            {"user_id": user.id},
+            {
+                "$unset": {
+                    "canvas_api_key": "",
+                    "canvas_url": "",
+                    "canvas_key_configured": "",
+                    "canvas_key_valid": "",
+                    "canvas_key_last_tested": "",
+                    "lms_type": ""
+                }
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": "Canvas settings deleted successfully"
+        }
+    except Exception as e:
+        logger.error(f"Error deleting Canvas settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting settings: {str(e)}")
 
 
 @router.post("/canvas/test")
@@ -168,7 +221,8 @@ async def test_canvas_key(
                     {
                         "$set": {
                             "canvas_key_valid": True,
-                            "canvas_key_last_tested": datetime.utcnow()
+                            "canvas_key_last_tested": datetime.utcnow(),
+                            "lms_type": "canvas"  # Ensure LMS type is set
                         }
                     }
                 )
@@ -1376,13 +1430,23 @@ async def get_student_courses(
                     detail="Failed to retrieve Canvas user ID from profile"
                 )
             
-            # Get all courses for the user (Canvas API doesn't reliably support enrollment_type filter)
-            # For students, this will typically return only their enrolled courses anyway
+            # Get all courses for the user, including concluded/past courses
+            # Canvas API: state[] parameter can be: available, completed, created, deleted, or all
+            # Try with state[]=all first to get all courses including concluded ones
             courses_response = requests.get(
-                f"{canvas_url}/api/v1/users/{canvas_user_id}/courses?per_page=100&include[]=total_scores&include[]=enrollments",
+                f"{canvas_url}/api/v1/users/{canvas_user_id}/courses?per_page=100&include[]=total_scores&include[]=enrollments&state[]=all",
                 headers=headers,
                 timeout=30
             )
+            
+            # If state[]=all doesn't work, try individual states
+            if courses_response.status_code != 200:
+                logger.warning(f"Failed with state[]=all, trying individual states. Status: {courses_response.status_code}")
+                courses_response = requests.get(
+                    f"{canvas_url}/api/v1/users/{canvas_user_id}/courses?per_page=100&include[]=total_scores&include[]=enrollments&state[]=available&state[]=completed&state[]=created",
+                    headers=headers,
+                    timeout=30
+                )
             
             if courses_response.status_code != 200:
                 error_detail = f"Failed to fetch courses (Status {courses_response.status_code})"
@@ -1423,11 +1487,16 @@ async def get_student_courses(
                     # (for students, Canvas typically only returns their courses anyway)
                     courses.append(course)
             
+            # Log for debugging
+            logger.info(f"Found {len(courses)} courses for Canvas user {canvas_user_id} (from {len(all_courses)} total)")
+            
             return {
                 "status": "success",
                 "courses": courses,
                 "count": len(courses),
-                "canvas_user_id": canvas_user_id
+                "canvas_user_id": canvas_user_id,
+                "total_fetched": len(all_courses),
+                "message": f"Found {len(courses)} student courses. If courses are missing, they may be concluded or unpublished."
             }
             
         except HTTPException:

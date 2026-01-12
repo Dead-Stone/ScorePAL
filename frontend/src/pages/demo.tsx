@@ -220,9 +220,15 @@ export default function DemoPage() {
               <img
                 src="/scorePAL-logo-2.svg"
                 alt="ScorePAL Logo"
-                width={32}
-                height={32}
-                className="rounded-lg"
+                width={96}
+                height={96}
+                className="flex-shrink-0"
+                style={{ 
+                  width: '96px', 
+                  height: '96px', 
+                  objectFit: 'contain',
+                  display: 'block'
+                }}
               />
             </Link>
             <Link href="/">

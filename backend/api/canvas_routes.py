@@ -689,6 +689,25 @@ async def grade_selected_submissions(request: Request):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         grading_job_id = str(uuid.uuid4())
         
+        # Store job metadata in MongoDB
+        try:
+            from services.results_service import save_canvas_job_metadata
+            await save_canvas_job_metadata(
+                job_id=grading_job_id,
+                status="processing",
+                course_id=sync_summary.get("course_id"),
+                assignment_id=sync_summary.get("assignment_id"),
+                metadata={
+                    "sync_job_id": sync_job_id,
+                    "selected_user_ids": selected_user_ids,
+                    "rubric_id": rubric_id,
+                    "strictness": strictness
+                }
+            )
+            logger.info(f"Stored canvas job metadata for job {grading_job_id}")
+        except Exception as e:
+            logger.warning(f"Could not store canvas job metadata: {e}")
+        
         # Create top-level folder for this grading attempt
         base_results_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "grading_results")
         attempt_folder_name = f"grading_attempt_{timestamp}_{grading_job_id[:8]}"
@@ -1470,6 +1489,7 @@ async def grade_selected_submissions(request: Request):
                                 "submission_text": result.get("submission_content", ""),
                                 "ai_model_used": GEMINI_GRADING_MODEL,
                                 "metadata": {
+                                    "grading_job_id": grading_job_id,
                                     "canvas_course_id": course_id,
                                     "canvas_assignment_id": canvas_assignment_id,
                                     "canvas_student_id": str(result.get("user_id", "")),
@@ -1502,6 +1522,20 @@ async def grade_selected_submissions(request: Request):
                 
         except Exception as e:
             logger.warning(f"Error saving Canvas results to MongoDB: {e}")
+        
+        # Update job status to completed
+        try:
+            from services.results_service import save_canvas_job_metadata
+            await save_canvas_job_metadata(
+                job_id=grading_job_id,
+                status="completed",
+                course_id=sync_summary.get("course_id"),
+                assignment_id=sync_summary.get("assignment_id"),
+                completed_at=datetime.utcnow()
+            )
+            logger.info(f"Updated canvas job status to completed for job {grading_job_id}")
+        except Exception as e:
+            logger.warning(f"Could not update canvas job status: {e}")
         
         return {
             "status": "success",

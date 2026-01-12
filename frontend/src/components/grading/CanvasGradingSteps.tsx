@@ -23,10 +23,6 @@ import {
   Grid,
   Chip,
   Slider,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Table,
   TableBody,
   TableCell,
@@ -42,10 +38,9 @@ import {
   PlayArrow as PlayArrowIcon,
   CheckCircle as CheckCircleIcon,
   Assessment as AssessmentIcon,
-  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
-import Link from 'next/link';
 import apiClient from '@/utils/apiClient';
+import { extractErrorMessage } from '@/utils/errorUtils';
 
 interface CanvasGradingStepsProps {
   onComplete?: (data: {
@@ -85,7 +80,6 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
   const [syncJobId, setSyncJobId] = useState<string | null>(null);
   const [gradingResults, setGradingResults] = useState<any[]>([]);
   const [savedCount, setSavedCount] = useState(0);
-  const [showResultsDialog, setShowResultsDialog] = useState(false);
   const [isGrading, setIsGrading] = useState(false);
 
   useEffect(() => {
@@ -120,7 +114,7 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
         setCourses(response.data.courses);
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to fetch courses');
+      setError(extractErrorMessage(err, 'Failed to fetch courses'));
     } finally {
       setLoading(false);
     }
@@ -141,8 +135,7 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
       }
     } catch (err: any) {
       console.error('Error fetching assignments:', err);
-      const errorMessage = err.response?.data?.detail || err.response?.data?.message || 'Failed to fetch assignments';
-      setError(errorMessage);
+      setError(extractErrorMessage(err, 'Failed to fetch assignments'));
       setAssignments([]);
     } finally {
       setLoading(false);
@@ -168,8 +161,7 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
       }
     } catch (err: any) {
       console.error('Error fetching submissions:', err);
-      const errorMessage = err.response?.data?.detail || err.response?.data?.message || 'Failed to fetch submissions';
-      setError(errorMessage);
+      setError(extractErrorMessage(err, 'Failed to fetch submissions'));
       setSubmissions([]);
     } finally {
       setLoading(false);
@@ -196,8 +188,7 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
       }
     } catch (err: any) {
       console.error('Error syncing submissions:', err);
-      const errorMessage = err.response?.data?.detail || err.response?.data?.message || 'Failed to sync submissions';
-      setError(errorMessage);
+      setError(extractErrorMessage(err, 'Failed to sync submissions'));
       throw err;
     } finally {
       setLoading(false);
@@ -247,7 +238,6 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
         setSavedCount(savedToMongo);
         setGradingResults(response.data.results || []);
         setActiveStep(activeStep + 1); // Move to results step
-        setShowResultsDialog(true);
         
         // Call onComplete callback if provided
         if (onComplete) {
@@ -274,8 +264,7 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
       }
     } catch (err: any) {
       console.error('Error performing grading:', err);
-      const errorMessage = err.response?.data?.detail || err.response?.data?.message || 'Failed to grade submissions';
-      setError(errorMessage);
+      setError(extractErrorMessage(err, 'Failed to grade submissions'));
     } finally {
       setIsGrading(false);
     }
@@ -323,7 +312,6 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
     setSyncJobId(null);
     setGradingResults([]);
     setSavedCount(0);
-    setShowResultsDialog(false);
   };
 
   const toggleSubmission = (submissionId: string) => {
@@ -588,37 +576,85 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
             View Results
           </StepLabel>
           <StepContent>
-            <Paper sx={{ p: 4, textAlign: 'center' }}>
-              <CheckCircleIcon sx={{ fontSize: 60, color: 'success.main', mb: 2 }} />
-              <Typography variant="h6" gutterBottom>
-                Grading Complete!
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                {savedCount > 0 
-                  ? `Successfully graded ${gradingResults.length} submission(s). ${savedCount} result(s) saved to Results page.`
-                  : `Successfully graded ${gradingResults.length} submission(s). Results are being processed.`}
-              </Typography>
-              {error && (
-                <Alert severity="error" sx={{ mt: 2, mb: 2 }}>{error}</Alert>
-              )}
-              <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
-                <Button 
-                  onClick={() => setShowResultsDialog(true)} 
-                  variant="contained"
-                >
-                  View Results
-                </Button>
-                {savedCount > 0 && (
-                  <Button 
-                    component={Link}
-                    href="/results"
-                    variant="outlined"
-                    startIcon={<VisibilityIcon />}
-                  >
-                    Go to Results Page
-                  </Button>
+            <Paper sx={{ p: 4 }}>
+              <Box sx={{ textAlign: 'center', mb: 3 }}>
+                <CheckCircleIcon sx={{ fontSize: 60, color: 'success.main', mb: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  Grading Complete!
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                  {savedCount > 0 
+                    ? `Successfully graded ${gradingResults.length} submission(s). ${savedCount} result(s) saved.`
+                    : `Successfully graded ${gradingResults.length} submission(s). Results are being processed.`}
+                </Typography>
+                {error && (
+                  <Alert severity="error" sx={{ mt: 2, mb: 2 }}>{error}</Alert>
                 )}
-                <Button onClick={handleReset} variant="outlined">
+              </Box>
+              
+              {/* Inline Results Display */}
+              {gradingResults.length > 0 && (
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="h6" gutterBottom>
+                    Grading Results
+                  </Typography>
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell><strong>Student</strong></TableCell>
+                          <TableCell align="right"><strong>Score</strong></TableCell>
+                          <TableCell align="right"><strong>Percentage</strong></TableCell>
+                          <TableCell><strong>Status</strong></TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {gradingResults
+                          .sort((a, b) => {
+                            const scoreA = a.score || a.grade || 0;
+                            const scoreB = b.score || b.grade || 0;
+                            return scoreB - scoreA;
+                          })
+                          .map((result, index) => {
+                            const score = result.score || result.grade || 0;
+                            const percentage = result.percentage || (score > 0 ? Math.round((score / 100) * 100) : 0);
+                            const status = result.error ? 'error' : 'success';
+                            
+                            return (
+                              <TableRow key={index} hover>
+                                <TableCell>
+                                  {result.user_name || `Student ${result.user_id || 'Unknown'}`}
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Chip
+                                    label={score.toFixed(1)}
+                                    color={
+                                      percentage >= 90 ? 'success' :
+                                      percentage >= 70 ? 'info' :
+                                      percentage >= 50 ? 'warning' : 'error'
+                                    }
+                                    size="small"
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{percentage}%</TableCell>
+                                <TableCell>
+                                  {result.error ? (
+                                    <Chip label="Error" color="error" size="small" />
+                                  ) : (
+                                    <Chip label="Graded" color="success" size="small" />
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              )}
+              
+              <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button onClick={handleReset} variant="contained">
                   Grade Another
                 </Button>
               </Box>
@@ -627,100 +663,6 @@ export const CanvasGradingSteps: React.FC<CanvasGradingStepsProps> = ({
         </Step>
       </Stepper>
 
-      {/* Results Dialog */}
-      <Dialog
-        open={showResultsDialog}
-        onClose={() => setShowResultsDialog(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Grading Results
-          {savedCount > 0 && (
-            <Chip 
-              label={`${savedCount} saved`} 
-              color="success" 
-              size="small" 
-              sx={{ ml: 2 }} 
-            />
-          )}
-        </DialogTitle>
-        <DialogContent>
-          <Alert severity="success" sx={{ mb: 2 }}>
-            Successfully graded {gradingResults.length} submission(s).
-            {savedCount > 0 && ` ${savedCount} result(s) have been saved to the Results page.`}
-          </Alert>
-          
-          {gradingResults.length > 0 && (
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Student</TableCell>
-                    <TableCell align="right">Score</TableCell>
-                    <TableCell align="right">Percentage</TableCell>
-                    <TableCell>Status</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {gradingResults
-                    .sort((a, b) => {
-                      const scoreA = a.score || a.grade || 0;
-                      const scoreB = b.score || b.grade || 0;
-                      return scoreB - scoreA;
-                    })
-                    .map((result, index) => {
-                      const score = result.score || result.grade || 0;
-                      const percentage = result.percentage || (score > 0 ? Math.round((score / 100) * 100) : 0);
-                      const status = result.error ? 'error' : 'success';
-                      
-                      return (
-                        <TableRow key={index}>
-                          <TableCell>
-                            {result.user_name || `Student ${result.user_id || 'Unknown'}`}
-                          </TableCell>
-                          <TableCell align="right">
-                            <Chip
-                              label={score.toFixed(1)}
-                              color={
-                                percentage >= 90 ? 'success' :
-                                percentage >= 70 ? 'info' :
-                                percentage >= 50 ? 'warning' : 'error'
-                              }
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell align="right">{percentage}%</TableCell>
-                          <TableCell>
-                            {result.error ? (
-                              <Chip label="Error" color="error" size="small" />
-                            ) : (
-                              <Chip label="Graded" color="success" size="small" />
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </DialogContent>
-        <DialogActions>
-          {savedCount > 0 && (
-            <Button
-              component={Link}
-              href="/results"
-              startIcon={<VisibilityIcon />}
-            >
-              View All Results
-            </Button>
-          )}
-          <Button onClick={() => setShowResultsDialog(false)}>
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };

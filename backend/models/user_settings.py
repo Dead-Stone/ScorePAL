@@ -15,6 +15,9 @@ class UserSettings(BaseModel):
     id: Optional[str] = Field(default=None, alias="_id")
     user_id: str  # Reference to user
     
+    # LMS Integration Settings - Only one LMS type per user
+    lms_type: Optional[str] = None  # 'canvas', 'moodle', 'blackboard', etc.
+    
     # Canvas Integration Settings
     canvas_api_key: Optional[str] = None  # Encrypted in practice
     canvas_url: Optional[str] = None  # Canvas instance URL
@@ -22,8 +25,9 @@ class UserSettings(BaseModel):
     canvas_key_last_tested: Optional[datetime] = None
     canvas_key_valid: bool = False
     
-    # Other integration settings can be added here
+    # Other LMS integration settings can be added here
     # e.g., moodle_api_key, blackboard_api_key, etc.
+    # But only one lms_type should be set at a time
     
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)

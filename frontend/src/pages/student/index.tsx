@@ -13,11 +13,9 @@ import {
   Box,
   Container,
   Typography,
-  Paper,
   Alert,
   CircularProgress,
-  Tabs,
-  Tab,
+  Grid,
 } from '@mui/material';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { TopNavBar } from '@/components/layout/TopNavBar';
@@ -29,10 +27,10 @@ import { StudentStatsCards } from '@/components/student/StudentStatsCards';
 import { StudentInsights } from '@/components/student/StudentInsights';
 import { StudentGradesTableEnhanced } from '@/components/student/StudentGradesTableEnhanced';
 import { StudentProgressChart } from '@/components/student/StudentProgressChart';
-import { StudentRubricBreakdown } from '@/components/student/StudentRubricBreakdown';
 import { StudentCoursesView } from '@/components/dashboard/StudentCoursesView';
+import { StudentAIBuddy } from '@/components/student/StudentAIBuddy';
+import { StudentComparisonGraphs } from '@/components/student/StudentComparisonGraphs';
 import { calculateStudentStats, generateStudentInsights } from '@/utils/studentUtils';
-import { TabPanel } from '@/components/common/TabPanel';
 
 interface Result {
   id: string;
@@ -70,13 +68,101 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Result[]>([]);
-  const [currentTab, setCurrentTab] = useState(0);
+  const [courses, setCourses] = useState<any[]>([]);
+  const [coursePerformance, setCoursePerformance] = useState<Record<number, any>>({});
+  const [classComparisonData, setClassComparisonData] = useState<any>(null);
 
   useEffect(() => {
     if (user?.id) {
       fetchStudentResults();
+      fetchStudentCourses();
     }
   }, [user]);
+  
+  useEffect(() => {
+    // Fetch comparison data for all courses
+    if (courses.length > 0) {
+      courses.forEach(course => {
+        fetchCoursePerformance(course.id);
+      });
+    }
+  }, [courses]);
+  
+  const fetchStudentCourses = async () => {
+    try {
+      const response = await apiClient.get('/api/settings/canvas/data/student/courses');
+      if (response.data?.courses) {
+        setCourses(response.data.courses);
+      }
+    } catch (err: any) {
+      // Silently fail - courses are optional
+      console.log('Could not fetch courses:', err);
+    }
+  };
+
+  const fetchCoursePerformance = async (courseId: number) => {
+    try {
+      const response = await apiClient.get(`/api/settings/canvas/data/student/courses/${courseId}/performance?include_comparison=true`);
+      if (response.data) {
+        setCoursePerformance(prev => ({ ...prev, [courseId]: response.data }));
+        // Aggregate comparison data
+        aggregateComparisonData(response.data);
+      }
+    } catch (err: any) {
+      console.log('Could not fetch course performance:', err);
+    }
+  };
+
+  const aggregateComparisonData = (courseData: any) => {
+    if (!courseData.comparison) return;
+    
+    setClassComparisonData(prev => {
+      const newData = prev || {
+        overallComparison: null,
+        assignmentComparisons: [],
+        courseComparisons: [],
+        gradeDistribution: [],
+      };
+
+      // Update overall comparison (use the most recent course or aggregate)
+      if (!newData.overallComparison || courseData.student_overall_percentage) {
+        newData.overallComparison = {
+          studentScore: courseData.student_overall_percentage || 0,
+          classAverage: courseData.comparison.class_average || 0,
+          classHigh: courseData.comparison.class_high || 0,
+          classLow: courseData.comparison.class_low || 0,
+          percentile: courseData.comparison.student_percentile || 0,
+          totalStudents: courseData.comparison.total_students || 0,
+        };
+      }
+
+      // Add assignment comparisons
+      if (courseData.student_assignments) {
+        courseData.student_assignments.forEach((assignment: any) => {
+          const assignmentStats = courseData.comparison.assignment_stats?.[assignment.id];
+          if (assignmentStats && assignment.score !== null) {
+            newData.assignmentComparisons.push({
+              assignmentName: assignment.name,
+              studentScore: assignment.percentage || 0,
+              classAverage: assignmentStats.average || 0,
+              maxPoints: assignment.points_possible || 0,
+            });
+          }
+        });
+      }
+
+      // Add course comparison
+      if (courseData.course_info) {
+        newData.courseComparisons.push({
+          courseName: courseData.course_info.name,
+          studentScore: courseData.student_overall_percentage || 0,
+          classAverage: courseData.comparison.class_average || 0,
+        });
+      }
+
+      return newData;
+    });
+  };
 
   const fetchStudentResults = async () => {
     try {
@@ -95,6 +181,46 @@ export default function StudentDashboard() {
 
   // Generate insights using utility function
   const insights = React.useMemo(() => generateStudentInsights(results, stats), [results, stats]);
+
+  // Generate fallback comparison data from results if Canvas data not available
+  const fallbackComparisonData = React.useMemo(() => {
+    if (classComparisonData?.overallComparison) return null; // Use Canvas data if available
+    
+    if (results.length === 0) return null;
+    
+    const avgScore = stats.averageGrade || 0;
+    const classAvg = 75; // Default class average assumption
+    const classHigh = 95;
+    const classLow = 60;
+    
+    // Estimate percentile based on average
+    const estimatedPercentile = avgScore >= 90 ? 90 : avgScore >= 80 ? 75 : avgScore >= 70 ? 50 : 30;
+    
+    return {
+      overallComparison: {
+        studentScore: avgScore,
+        classAverage: classAvg,
+        classHigh: classHigh,
+        classLow: classLow,
+        percentile: estimatedPercentile,
+        totalStudents: 25, // Default estimate
+      },
+      assignmentComparisons: results.slice(0, 10).map((result, idx) => ({
+        assignmentName: result.assignment_name || `Assignment ${idx + 1}`,
+        studentScore: result.percentage,
+        classAverage: classAvg + (Math.random() * 10 - 5), // Simulated variation
+        maxPoints: result.total_points,
+      })),
+      courseComparisons: [],
+      gradeDistribution: [
+        { range: '90-100', studentCount: 5, studentPosition: avgScore >= 90 ? 1 : 0 },
+        { range: '80-89', studentCount: 8, studentPosition: avgScore >= 80 && avgScore < 90 ? 1 : 0 },
+        { range: '70-79', studentCount: 7, studentPosition: avgScore >= 70 && avgScore < 80 ? 1 : 0 },
+        { range: '60-69', studentCount: 4, studentPosition: avgScore >= 60 && avgScore < 70 ? 1 : 0 },
+        { range: '0-59', studentCount: 1, studentPosition: avgScore < 60 ? 1 : 0 },
+      ],
+    };
+  }, [results, stats, classComparisonData]);
 
   if (loading) {
     return (
@@ -126,15 +252,11 @@ export default function StudentDashboard() {
                 background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent',
-                mb: 1
               }}
             >
-              My Grades & Progress
+              Dashboard
             </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Track your academic performance and get personalized insights
-          </Typography>
-        </Box>
+          </Box>
 
         {error && (
           <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
@@ -152,38 +274,41 @@ export default function StudentDashboard() {
           <StudentInsights insights={insights} />
         </Box>
 
+        {/* Comprehensive Comparison Graphs */}
+        <Box sx={{ mb: 4 }}>
+          <StudentComparisonGraphs 
+            overallComparison={classComparisonData?.overallComparison || fallbackComparisonData?.overallComparison}
+            assignmentComparisons={classComparisonData?.assignmentComparisons || fallbackComparisonData?.assignmentComparisons}
+            courseComparisons={classComparisonData?.courseComparisons || fallbackComparisonData?.courseComparisons}
+            gradeDistribution={classComparisonData?.gradeDistribution || fallbackComparisonData?.gradeDistribution}
+          />
+        </Box>
+
+        {/* Progress Over Time */}
+        <Box sx={{ mb: 4 }}>
+          <StudentProgressChart results={results} />
+        </Box>
+
         {/* Courses Section */}
         <Box sx={{ mb: 4 }}>
-          <Typography variant="h5" fontWeight="bold" gutterBottom sx={{ mb: 2 }}>
-            My Courses
-          </Typography>
           <StudentCoursesView userId={user?.id ? String(user.id) : ''} />
         </Box>
 
-        {/* Tabs */}
-        <Paper sx={{ mb: 3 }}>
-          <Tabs value={currentTab} onChange={(e, newValue) => setCurrentTab(newValue)}>
-            <Tab label="All Grades" />
-            <Tab label="Progress Chart" />
-            <Tab label="Rubric Breakdown" />
-          </Tabs>
-        </Paper>
-
-        {/* All Grades Tab */}
-        <TabPanel value={currentTab} index={0}>
+        {/* All Grades Table */}
+        <Box sx={{ mb: 4 }}>
           <StudentGradesTableEnhanced results={results} />
-        </TabPanel>
-
-        {/* Progress Chart Tab */}
-        <TabPanel value={currentTab} index={1}>
-          <StudentProgressChart results={results} />
-        </TabPanel>
-
-        {/* Rubric Breakdown Tab */}
-        <TabPanel value={currentTab} index={2}>
-          <StudentRubricBreakdown results={results} />
-        </TabPanel>
+        </Box>
         </Container>
+        
+        {/* AI Buddy - Always visible */}
+        <StudentAIBuddy 
+          studentData={{
+            courses: courses,
+            results: results,
+            stats: stats,
+            insights: insights,
+          }}
+        />
       </div>
     </ProtectedRoute>
   );

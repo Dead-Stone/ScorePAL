@@ -9,16 +9,6 @@
 
 import React, { useState, useEffect } from 'react';
 import { GetStaticProps } from 'next';
-import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Grid,
-  Button,
-  Alert,
-  CircularProgress,
-} from '@mui/material';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { TopNavBar } from '@/components/layout/TopNavBar';
 import { useAuth } from '@/contexts/AuthContext';
@@ -28,7 +18,10 @@ import apiClient from '@/utils/apiClient';
 import { RubricCard } from '@/components/rubrics/RubricCard';
 import { RubricForm } from '@/components/rubrics/RubricForm';
 import { RubricViewDialog } from '@/components/rubrics/RubricViewDialog';
-import AddIcon from '@mui/icons-material/Add';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Plus, Loader2, AlertCircle, FileText } from 'lucide-react';
 
 // Configure axios
 axios.defaults.baseURL = API_BASE_URL;
@@ -139,11 +132,11 @@ export default function RubricsPage() {
       <ProtectedRoute allowedRoles={['teacher', 'grader', 'admin']}>
         <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
           <TopNavBar />
-          <Container maxWidth="xl" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
-            <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-              <CircularProgress />
-            </Box>
-          </Container>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          </div>
         </div>
       </ProtectedRoute>
     );
@@ -153,91 +146,75 @@ export default function RubricsPage() {
     <ProtectedRoute allowedRoles={['teacher', 'grader', 'admin']}>
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
         <TopNavBar />
-        <Container maxWidth="xl" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
-          {/* Header */}
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
-            <Box>
-              <Typography 
-                variant="h3" 
-                fontWeight="bold" 
-                gutterBottom
-                sx={{ 
-                  background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  mb: 1
-                }}
-              >
-                Rubrics Management
-              </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Create and manage grading rubrics for consistent evaluation
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleOpenCreate}
-          >
-            Create Rubric
-          </Button>
-        </Box>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
-
-        {/* Rubrics Grid */}
-        {rubrics.length === 0 ? (
-          <Paper sx={{ p: 6, textAlign: 'center' }}>
-            <Typography variant="h6" gutterBottom>
-              No rubrics yet
-            </Typography>
-            <Typography variant="body2" color="text.secondary" paragraph>
-              Create your first rubric to get started with consistent grading.
-            </Typography>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pt-28">
+          {/* Action Button */}
+          <div className="flex justify-end mb-6">
             <Button
-              variant="contained"
-              startIcon={<AddIcon />}
               onClick={handleOpenCreate}
-              sx={{ mt: 2 }}
+              className="bg-blue-600 hover:bg-blue-700 text-white h-9"
             >
-              Create Your First Rubric
+              <Plus className="w-4 h-4 mr-2" />
+              Create Rubric
             </Button>
-          </Paper>
-        ) : (
-          <Grid container spacing={3}>
-            {rubrics.map((rubric) => (
-              <Grid item xs={12} md={6} lg={4} key={rubric.id}>
+          </div>
+
+          {error && (
+            <Alert className="mb-4 border-red-200 bg-red-50">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-sm">{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* Rubrics Grid */}
+          {rubrics.length === 0 ? (
+            <Card className="border-0 shadow-md">
+              <CardContent className="p-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8 text-blue-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">No rubrics yet</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Create your first rubric to get started with consistent grading.
+                </p>
+                <Button
+                  onClick={handleOpenCreate}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create Your First Rubric
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {rubrics.map((rubric) => (
                 <RubricCard
+                  key={rubric.id}
                   rubric={rubric}
                   onView={handleOpenView}
                   onEdit={handleOpenEdit}
                   onDelete={handleDelete}
                 />
-              </Grid>
-            ))}
-          </Grid>
-        )}
+              ))}
+            </div>
+          )}
 
-        {/* Create/Edit Dialog */}
-        <RubricForm
-          open={openDialog}
-          onClose={() => setOpenDialog(false)}
-          onSave={handleSave}
-          editingRubric={editingRubric || undefined}
-        />
+          {/* Create/Edit Dialog */}
+          <RubricForm
+            open={openDialog}
+            onClose={() => setOpenDialog(false)}
+            onSave={handleSave}
+            editingRubric={editingRubric || undefined}
+          />
 
-        {/* View Dialog */}
-        <RubricViewDialog
-          open={openViewDialog}
-          onClose={() => setOpenViewDialog(false)}
-          rubric={viewingRubric}
-          onEdit={() => editingRubric && handleOpenEdit(editingRubric)}
-        />
-        </Container>
+          {/* View Dialog */}
+          <RubricViewDialog
+            open={openViewDialog}
+            onClose={() => setOpenViewDialog(false)}
+            rubric={viewingRubric}
+            onEdit={() => editingRubric && handleOpenEdit(editingRubric)}
+          />
+        </div>
       </div>
     </ProtectedRoute>
   );

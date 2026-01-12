@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Box, CircularProgress } from '@mui/material';
+import { Loader2 } from 'lucide-react';
 import { registerChartJS } from '@/utils/chartRegistry';
 import { logger } from '@/utils/logger';
 
@@ -29,9 +29,9 @@ export const ChartWrapper: React.FC<ChartWrapperProps> = ({ children, minHeight 
 
   if (!ready) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="100%" minHeight={minHeight}>
-        <CircularProgress size={24} />
-      </Box>
+      <div className="flex items-center justify-center h-full" style={{ minHeight: `${minHeight}px` }}>
+        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
     );
   }
   return <>{children}</>;

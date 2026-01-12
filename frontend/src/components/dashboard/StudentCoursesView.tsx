@@ -43,6 +43,42 @@ interface Course {
   enrollment_state?: string;
 }
 
+interface Assignment {
+  id: number;
+  name: string;
+  due_at?: string;
+  points_possible?: number;
+  score?: number;
+  percentage?: number;
+  grade?: string;
+  submitted_at?: string;
+  graded_at?: string;
+  workflow_state?: string;
+  late?: boolean;
+  missing?: boolean;
+}
+
+interface CoursePerformance {
+  course_info: {
+    id: number;
+    name: string;
+    course_code: string;
+    term?: string;
+  };
+  student_assignments: Assignment[];
+  student_total_points: number;
+  student_total_possible: number;
+  student_overall_percentage?: number;
+  student_average?: number;
+  comparison?: {
+    class_average?: number;
+    class_high?: number;
+    class_low?: number;
+    student_percentile?: number;
+    total_students?: number;
+  };
+}
+
 interface StudentCoursesViewProps {
   userId: string;
 }
@@ -52,6 +88,8 @@ export const StudentCoursesView: React.FC<StudentCoursesViewProps> = ({ userId }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedCourse, setExpandedCourse] = useState<number | null>(null);
+  const [coursePerformance, setCoursePerformance] = useState<Record<number, CoursePerformance>>({});
+  const [loadingPerformance, setLoadingPerformance] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     fetchCourses();
@@ -63,21 +101,99 @@ export const StudentCoursesView: React.FC<StudentCoursesViewProps> = ({ userId }
       setError(null);
       const response = await apiClient.get('/api/settings/canvas/data/student/courses');
       if (response.data?.courses) {
-        setCourses(response.data.courses);
+        // Process courses to extract grades from enrollments if needed
+        const processedCourses = response.data.courses.map((course: any) => {
+          // Extract grades from enrollments if available
+          const enrollments = course.enrollments || [];
+          const studentEnrollment = enrollments.find((e: any) => e.type === 'StudentEnrollment');
+          
+          if (studentEnrollment?.grades) {
+            return {
+              ...course,
+              current_score: studentEnrollment.grades.current_score,
+              final_score: studentEnrollment.grades.final_score,
+              current_grade: studentEnrollment.grades.current_grade,
+              final_grade: studentEnrollment.grades.final_grade,
+            };
+          }
+          return course;
+        });
+        setCourses(processedCourses);
+        
+        // Show helpful message if courses seem missing
+        if (response.data.message && processedCourses.length === 0) {
+          setError(response.data.message);
+        } else if (processedCourses.length === 0 && response.data.total_fetched === 0) {
+          setError('No courses found. Make sure you are enrolled in courses and they are published in Canvas.');
+        }
       }
     } catch (err: any) {
       if (err.response?.status === 400) {
         setError('Canvas API key not configured. Please configure it in settings.');
       } else {
-        setError(err.response?.data?.detail || 'Failed to load courses');
+        const errorMsg = err.response?.data?.detail || 'Failed to load courses';
+        // Add helpful context
+        if (errorMsg.includes('permission') || errorMsg.includes('403')) {
+          setError(`${errorMsg} Make sure your Canvas API key has permission to read courses and enrollments.`);
+        } else {
+          setError(`${errorMsg} If courses are missing, they may be concluded, unpublished, or you may not be enrolled. Check Canvas directly to verify.`);
+        }
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleCourse = (courseId: number) => {
-    setExpandedCourse(expandedCourse === courseId ? null : courseId);
+  const toggleCourse = async (courseId: number) => {
+    if (expandedCourse === courseId) {
+      setExpandedCourse(null);
+    } else {
+      setExpandedCourse(courseId);
+      // Fetch performance data when expanding
+      if (!coursePerformance[courseId] && !loadingPerformance[courseId]) {
+        await fetchCoursePerformance(courseId);
+      }
+    }
+  };
+
+  const fetchCoursePerformance = async (courseId: number) => {
+    try {
+      setLoadingPerformance(prev => ({ ...prev, [courseId]: true }));
+      const response = await apiClient.get(`/api/settings/canvas/data/student/courses/${courseId}/performance?include_comparison=true`);
+      if (response.data) {
+        setCoursePerformance(prev => ({ ...prev, [courseId]: response.data }));
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch course performance:', err);
+    } finally {
+      setLoadingPerformance(prev => ({ ...prev, [courseId]: false }));
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const getStatusColor = (state?: string, late?: boolean, missing?: boolean) => {
+    if (missing) return 'error';
+    if (late) return 'warning';
+    if (state === 'graded') return 'success';
+    if (state === 'submitted') return 'info';
+    return 'default';
+  };
+
+  const getStatusLabel = (assignment: Assignment) => {
+    if (assignment.missing) return 'Missing';
+    if (assignment.late) return 'Late';
+    if (assignment.workflow_state === 'graded') return 'Graded';
+    if (assignment.workflow_state === 'submitted') return 'Submitted';
+    if (assignment.workflow_state === 'unsubmitted') return 'Not Submitted';
+    return 'Unknown';
   };
 
   const getGradeColor = (grade?: string) => {
@@ -184,9 +300,161 @@ export const StudentCoursesView: React.FC<StudentCoursesViewProps> = ({ userId }
             />
             <Collapse in={expandedCourse === course.id} timeout="auto" unmountOnExit>
               <CardContent>
-                <Typography variant="body2" color="text.secondary">
-                  Course details and assignments will be shown here
-                </Typography>
+                {loadingPerformance[course.id] ? (
+                  <Box display="flex" justifyContent="center" py={3}>
+                    <CircularProgress size={24} />
+                  </Box>
+                ) : coursePerformance[course.id] ? (
+                  <Box>
+                    {/* Performance Summary */}
+                    {coursePerformance[course.id].student_overall_percentage !== null && (
+                      <Box mb={3}>
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} sm={4}>
+                            <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'primary.light', color: 'primary.contrastText' }}>
+                              <Typography variant="body2">Overall Score</Typography>
+                              <Typography variant="h5" fontWeight="bold">
+                                {coursePerformance[course.id].student_overall_percentage?.toFixed(1)}%
+                              </Typography>
+                            </Paper>
+                          </Grid>
+                          {coursePerformance[course.id].student_average && (
+                            <Grid item xs={12} sm={4}>
+                              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'info.light', color: 'info.contrastText' }}>
+                                <Typography variant="body2">Average</Typography>
+                                <Typography variant="h5" fontWeight="bold">
+                                  {coursePerformance[course.id].student_average?.toFixed(1)}%
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                          {coursePerformance[course.id].comparison?.student_percentile && (
+                            <Grid item xs={12} sm={4}>
+                              <Paper sx={{ p: 2, textAlign: 'center', bgcolor: 'success.light', color: 'success.contrastText' }}>
+                                <Typography variant="body2">Percentile</Typography>
+                                <Typography variant="h5" fontWeight="bold">
+                                  {coursePerformance[course.id].comparison?.student_percentile}th
+                                </Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+
+                    {/* Assignments Table */}
+                    <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 2 }}>
+                      Assignments
+                    </Typography>
+                    {coursePerformance[course.id].student_assignments.length > 0 ? (
+                      <TableContainer component={Paper} variant="outlined">
+                        <Table>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell><strong>Assignment</strong></TableCell>
+                              <TableCell><strong>Due Date</strong></TableCell>
+                              <TableCell align="right"><strong>Points</strong></TableCell>
+                              <TableCell align="right"><strong>Score</strong></TableCell>
+                              <TableCell align="right"><strong>Grade</strong></TableCell>
+                              <TableCell align="center"><strong>Status</strong></TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {coursePerformance[course.id].student_assignments.map((assignment) => (
+                              <TableRow key={assignment.id} hover>
+                                <TableCell>
+                                  <Box>
+                                    <Typography variant="body2" fontWeight="medium">
+                                      {assignment.name}
+                                    </Typography>
+                                    {assignment.submitted_at && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Submitted: {formatDate(assignment.submitted_at)}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>{formatDate(assignment.due_at)}</TableCell>
+                                <TableCell align="right">
+                                  {assignment.points_possible ? `${assignment.points_possible}` : 'N/A'}
+                                </TableCell>
+                                <TableCell align="right">
+                                  {assignment.score !== null && assignment.score !== undefined ? (
+                                    <Typography variant="body2" fontWeight="medium">
+                                      {assignment.score.toFixed(1)}
+                                      {assignment.percentage && (
+                                        <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                          ({assignment.percentage.toFixed(1)}%)
+                                        </Typography>
+                                      )}
+                                    </Typography>
+                                  ) : (
+                                    <Typography variant="body2" color="text.secondary">-</Typography>
+                                  )}
+                                </TableCell>
+                                <TableCell align="right">
+                                  {assignment.grade ? (
+                                    <Chip label={assignment.grade} size="small" color={getGradeColor(assignment.grade)} />
+                                  ) : (
+                                    <Typography variant="body2" color="text.secondary">-</Typography>
+                                  )}
+                                </TableCell>
+                                <TableCell align="center">
+                                  <Chip
+                                    label={getStatusLabel(assignment)}
+                                    size="small"
+                                    color={getStatusColor(assignment.workflow_state, assignment.late, assignment.missing)}
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    ) : (
+                      <Alert severity="info">No assignments found for this course.</Alert>
+                    )}
+
+                    {/* Class Comparison */}
+                    {coursePerformance[course.id].comparison && (
+                      <Box mt={3}>
+                        <Typography variant="h6" gutterBottom>
+                          Class Comparison
+                        </Typography>
+                        <Grid container spacing={2}>
+                          {coursePerformance[course.id].comparison?.class_average !== null && (
+                            <Grid item xs={12} sm={4}>
+                              <Paper sx={{ p: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Class Average</Typography>
+                                <Typography variant="h6">{coursePerformance[course.id].comparison?.class_average?.toFixed(1)}%</Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                          {coursePerformance[course.id].comparison?.class_high !== null && (
+                            <Grid item xs={12} sm={4}>
+                              <Paper sx={{ p: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Highest Score</Typography>
+                                <Typography variant="h6">{coursePerformance[course.id].comparison?.class_high?.toFixed(1)}%</Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                          {coursePerformance[course.id].comparison?.total_students && (
+                            <Grid item xs={12} sm={4}>
+                              <Paper sx={{ p: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Total Students</Typography>
+                                <Typography variant="h6">{coursePerformance[course.id].comparison?.total_students}</Typography>
+                              </Paper>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </Box>
+                    )}
+                  </Box>
+                ) : (
+                  <Alert severity="info">
+                    Click to load course details and assignments from Canvas.
+                  </Alert>
+                )}
               </CardContent>
             </Collapse>
           </Card>

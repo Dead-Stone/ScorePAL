@@ -3,7 +3,7 @@ Authentication Routes for ScorePAL with MongoDB
 Handles login, registration, password reset, and user management with production-level security
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Optional, List
 from datetime import datetime, timedelta
@@ -38,7 +38,7 @@ from models.user import generate_secure_token
 # Create router
 router = APIRouter()
 
-# Email configuration (you should set these in environment variables)
+# Email configuration (set these in environment variables)
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = "your-email@gmail.com"  # Set in environment
@@ -46,32 +46,43 @@ SMTP_PASSWORD = "your-app-password"      # Set in environment
 
 def send_email(to_email: str, subject: str, body: str, html_body: str = None):
     """Send email using SMTP"""
+    import os
+    
+    smtp_server = os.getenv("SMTP_SERVER", SMTP_SERVER)
+    smtp_port = int(os.getenv("SMTP_PORT", str(SMTP_PORT)))
+    smtp_username = os.getenv("SMTP_USERNAME", SMTP_USERNAME)
+    smtp_password = os.getenv("SMTP_PASSWORD", SMTP_PASSWORD)
+    
+    # Check if using default/placeholder values
+    is_dev_mode = (
+        smtp_username == "your-email@gmail.com" or 
+        not smtp_password or 
+        smtp_password == "your-app-password"
+    )
+    
+    if is_dev_mode:
+        logger.warning(f"[DEV MODE] Email not configured. Would send to {to_email}: {subject}")
+        logger.warning(f"[DEV MODE] OTP Code: {body.split('code is:')[1].split()[0] if 'code is:' in body else 'N/A'}")
+        logger.warning("[DEV MODE] Configure SMTP_USERNAME and SMTP_PASSWORD in environment variables to enable email sending")
+        return True
+    
     try:
-        import os
-        smtp_server = os.getenv("SMTP_SERVER", SMTP_SERVER)
-        smtp_port = int(os.getenv("SMTP_PORT", str(SMTP_PORT)))
-        smtp_username = os.getenv("SMTP_USERNAME", SMTP_USERNAME)
-        smtp_password = os.getenv("SMTP_PASSWORD", SMTP_PASSWORD)
-        
-        # If using default values, just log (for development)
-        if smtp_username == "your-email@gmail.com" or not smtp_password or smtp_password == "your-app-password":
-            logger.info(f"[DEV] Email would be sent to {to_email}: {subject}")
-            logger.info(f"[DEV] Body: {body}")
-            return True
-        
-        # Actually send email
+        # Create email message
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
         msg['From'] = smtp_username
         msg['To'] = to_email
         
+        # Add text part
         text_part = MIMEText(body, 'plain')
         msg.attach(text_part)
         
+        # Add HTML part if provided
         if html_body:
             html_part = MIMEText(html_body, 'html')
             msg.attach(html_part)
         
+        # Send email via SMTP
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(smtp_username, smtp_password)
@@ -79,13 +90,19 @@ def send_email(to_email: str, subject: str, body: str, html_body: str = None):
         
         logger.info(f"Email sent successfully to {to_email}")
         return True
+        
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP authentication failed: {e}")
+        logger.error("Please check your SMTP_USERNAME and SMTP_PASSWORD in environment variables")
+        logger.error("For Gmail, you need to use an App Password, not your regular password")
+        return False
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error occurred: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Email sending failed: {e}")
-        # In development, still return True to allow testing
-        import os
-        smtp_username = os.getenv("SMTP_USERNAME", SMTP_USERNAME)
-        if smtp_username == "your-email@gmail.com":
-            return True
+        logger.error(f"Unexpected error sending email: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 # Authentication endpoints
@@ -94,6 +111,10 @@ def send_email(to_email: str, subject: str, body: str, html_body: str = None):
 async def register_user(user_data: UserCreate):
     """Register a new user with production-level security and institution validation"""
     try:
+        # Normalize email to lowercase for consistency
+        user_data.email = user_data.email.lower().strip()
+        logger.info(f"Registering user with email: {user_data.email}")
+        
         # Auto-detect institution from email domain if not provided
         if not user_data.institution:
             from utils.institution_utils import detect_institution_from_email
@@ -188,15 +209,22 @@ async def register_user(user_data: UserCreate):
         
         # Store OTP in user document
         from auth.auth_config import get_users_collection
+        from bson import ObjectId
         users_collection = await get_users_collection()
-        await users_collection.update_one(
-            {"_id": user.id},
+        
+        # Convert user.id to ObjectId if it's a string
+        user_id = ObjectId(user.id) if isinstance(user.id, str) else user.id
+        
+        result = await users_collection.update_one(
+            {"_id": user_id},
             {"$set": {
                 "otp_code": otp_code,
                 "otp_expires": otp_expires,
                 "otp_verified": False
             }}
         )
+        
+        logger.info(f"OTP stored for user {user.email}: {otp_code} (matched: {result.matched_count}, modified: {result.modified_count})")
         
         # Send OTP email
         otp_body = f"""Welcome to ScorePAL!
@@ -219,7 +247,9 @@ If you didn't create an account, please ignore this email."""
     </div>
 </body>
 </html>"""
-        send_email(user.email, "Verify your ScorePAL account", otp_body, otp_html)
+        email_sent = send_email(user.email, "Verify your ScorePAL account", otp_body, otp_html)
+        if not email_sent:
+            logger.warning(f"Failed to send OTP email to {user.email}, but user registration succeeded")
         
         return UserRead(
             id=user.id,
@@ -247,7 +277,15 @@ async def send_otp(request: EmailVerificationRequest):
     try:
         from auth.auth_config import get_users_collection
         users_collection = await get_users_collection()
-        user = await users_collection.find_one({"email": request.email})
+        
+        # Normalize email to lowercase
+        email_normalized = request.email.lower().strip()
+        logger.info(f"Sending OTP to email: {email_normalized}")
+        
+        # Try exact match first, then case-insensitive
+        user = await users_collection.find_one({"email": email_normalized})
+        if not user:
+            user = await users_collection.find_one({"email": {"$regex": f"^{email_normalized}$", "$options": "i"}})
         
         if not user:
             return {"message": "If the email exists, an OTP has been sent"}
@@ -256,14 +294,19 @@ async def send_otp(request: EmailVerificationRequest):
         otp_code = str(random.randint(100000, 999999))
         otp_expires = datetime.utcnow() + timedelta(minutes=10)
         
-        await users_collection.update_one(
-            {"_id": user["_id"]},
+        from bson import ObjectId
+        user_id = ObjectId(user["_id"]) if isinstance(user["_id"], str) else user["_id"]
+        
+        result = await users_collection.update_one(
+            {"_id": user_id},
             {"$set": {
                 "otp_code": otp_code,
                 "otp_expires": otp_expires,
                 "otp_verified": False
             }}
         )
+        
+        logger.info(f"OTP sent and stored for {request.email}: {otp_code} (matched: {result.matched_count}, modified: {result.modified_count})")
         
         otp_body = f"""Your ScorePAL verification code is: {otp_code}
 
@@ -280,32 +323,64 @@ This code will expire in 10 minutes."""
     </div>
 </body>
 </html>"""
-        send_email(request.email, "Your ScorePAL Verification Code", otp_body, otp_html)
+        email_sent = send_email(email_normalized, "Your ScorePAL Verification Code", otp_body, otp_html)
+        if not email_sent:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to send OTP email. Please check email configuration or try again later."
+            )
         return {"message": "OTP sent successfully"}
     except Exception as e:
         logger.error(f"Failed to send OTP: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to send OTP: {str(e)}")
 
 @router.post("/verify-otp", tags=["auth"])
-async def verify_otp(email: str, otp_code: str):
+async def verify_otp(
+    email: str = Query(..., description="User email address"),
+    otp_code: str = Query(..., description="OTP verification code")
+):
     """Verify OTP code"""
     try:
         from auth.auth_config import get_users_collection
         users_collection = await get_users_collection()
-        user = await users_collection.find_one({"email": email})
+        
+        # Normalize email to lowercase for matching
+        email_normalized = email.lower().strip()
+        
+        logger.info(f"Verifying OTP for email: {email_normalized}, code: {otp_code}")
+        
+        # Try exact match first (emails should be stored in lowercase)
+        user = await users_collection.find_one({"email": email_normalized})
+        
+        # If not found, try case-insensitive regex match as fallback
+        if not user:
+            user = await users_collection.find_one({"email": {"$regex": f"^{email_normalized}$", "$options": "i"}})
         
         if not user:
+            logger.warning(f"User not found for email: {email_normalized} (original: {email})")
             raise HTTPException(status_code=404, detail="User not found")
         
+        logger.info(f"User found: {user.get('email')}, OTP in DB: {user.get('otp_code')}, OTP provided: {otp_code}")
+        
         if not user.get("otp_code"):
+            logger.warning(f"No OTP found for user: {email_normalized}")
             raise HTTPException(status_code=400, detail="No OTP found. Please request a new one.")
         
-        if user.get("otp_expires") and user["otp_expires"] < datetime.utcnow():
-            raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+        # Check expiration
+        if user.get("otp_expires"):
+            if user["otp_expires"] < datetime.utcnow():
+                logger.warning(f"OTP expired for user: {email_normalized}")
+                raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
         
-        if user.get("otp_code") != otp_code:
+        # Verify OTP code (compare as strings)
+        stored_otp = str(user.get("otp_code", ""))
+        provided_otp = str(otp_code).strip()
+        
+        if stored_otp != provided_otp:
+            logger.warning(f"OTP mismatch for user {email_normalized}: stored={stored_otp}, provided={provided_otp}")
             raise HTTPException(status_code=400, detail="Invalid OTP code")
         
+        # Update user verification status
         await users_collection.update_one(
             {"_id": user["_id"]},
             {"$set": {
@@ -316,11 +391,15 @@ async def verify_otp(email: str, otp_code: str):
             }}
         )
         
+        logger.info(f"OTP verified successfully for user: {email_normalized}")
         return {"message": "Email verified successfully", "verified": True}
+        
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to verify OTP: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to verify OTP: {str(e)}")
 
 @router.post("/login", response_model=LoginResponse, tags=["auth"])

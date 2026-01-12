@@ -91,7 +91,23 @@ class OpenAIProvider(AIProviderInterface):
     async def generate_text(self, prompt: str, **kwargs) -> Dict[str, Any]:
         """Generate text using OpenAI"""
         try:
-            messages = [{"role": "user", "content": prompt}]
+            # Parse messages if prompt contains role markers (System:, User:, Assistant:)
+            if isinstance(prompt, list):
+                messages = prompt
+            elif "System:" in prompt or "User:" in prompt or "Assistant:" in prompt:
+                # Parse formatted prompt with role markers
+                messages = []
+                lines = prompt.split("\n\n")
+                for line in lines:
+                    if line.startswith("System:"):
+                        messages.append({"role": "system", "content": line.replace("System:", "").strip()})
+                    elif line.startswith("User:"):
+                        messages.append({"role": "user", "content": line.replace("User:", "").strip()})
+                    elif line.startswith("Assistant:"):
+                        messages.append({"role": "assistant", "content": line.replace("Assistant:", "").strip()})
+            else:
+                # Default: treat as user message
+                messages = [{"role": "user", "content": prompt}]
             
             response = self.client.chat.completions.create(
                 model=self.model_name,
