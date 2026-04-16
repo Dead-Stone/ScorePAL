@@ -20,14 +20,18 @@ git push origin main
 # https://dashboard.render.com
 
 # 3. Click: New → Web Service
-# - Name: scorepal-backend
-# - Root Dir: backend
-# - Environment: Docker
-# - Plan: Free
-# Click "Create"
+# 4. Select GitHub repo: Dead-Stone/ScorePAL
+# 5. Configure:
+#    - Name: scorepal-backend
+#    - Environment: Docker
+#    - Plan: Free
+#    - Root Directory: (leave blank/default)
+# 6. Click "Create Web Service"
 
 # ⏳ Wait 10-15 minutes for Docker build
 ```
+
+**Note:** Dockerfile is at root level, so leave Root Directory blank
 
 **Check backend logs:**
 - Dashboard → scorepal-backend → Logs tab
