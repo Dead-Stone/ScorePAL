@@ -359,21 +359,21 @@ export default function ResultsDashboard() {
             />
             <StatCard
               title="Average Score"
-              value={`${stats.avgScore}%`}
+              value={`${(stats as any).avgScore}%`}
               icon={<Target className="w-6 h-6 text-emerald-600" />}
               iconBg="icon-container-emerald"
               delay={100}
             />
             <StatCard
               title="Assignments"
-              value={stats.totalAssignments}
+              value={(stats as any).totalAssignments}
               icon={<LayoutGrid className="w-6 h-6 text-violet-600" />}
               iconBg="icon-container-violet"
               delay={200}
             />
             <StatCard
               title="Pass Rate"
-              value={`${stats.passRate || 0}%`}
+              value={`${(stats as any).passRate || 0}%`}
               icon={<TrendingUp className="w-6 h-6 text-amber-600" />}
               iconBg="icon-container-amber"
               delay={300}

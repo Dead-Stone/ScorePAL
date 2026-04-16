@@ -157,7 +157,7 @@ export default function StudentDashboard() {
   const aggregateComparisonData = (courseData: any) => {
     if (!courseData.comparison) return;
     
-    setClassComparisonData(prev => {
+    setClassComparisonData((prev: any) => {
       const newData = prev || {
         overallComparison: null,
         assignmentComparisons: [],
@@ -231,7 +231,7 @@ export default function StudentDashboard() {
     if (classComparisonData?.overallComparison) return null;
     if (results.length === 0) return null;
     
-    const avgScore = stats.averageGrade || 0;
+    const avgScore = (stats as any).averageGrade || 0;
     const classAvg = 75;
     const classHigh = 95;
     const classLow = 60;
@@ -319,7 +319,7 @@ export default function StudentDashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <StatCard
               title="Overall Grade"
-              value={stats.averageGrade ? `${stats.averageGrade.toFixed(1)}%` : 'N/A'}
+              value={(stats as any).averageGrade ? `${(stats as any).averageGrade.toFixed(1)}%` : 'N/A'}
               change={5}
               icon={<Target className="w-6 h-6 text-blue-600" />}
               iconBg="icon-container-blue"
@@ -327,14 +327,14 @@ export default function StudentDashboard() {
             />
             <StatCard
               title="Assignments Completed"
-              value={stats.totalAssignments || 0}
+              value={(stats as any).totalAssignments || 0}
               icon={<CheckCircle2 className="w-6 h-6 text-emerald-600" />}
               iconBg="icon-container-emerald"
               delay={100}
             />
             <StatCard
               title="Best Score"
-              value={stats.highestGrade ? `${stats.highestGrade.toFixed(0)}%` : 'N/A'}
+              value={(stats as any).highestGrade ? `${(stats as any).highestGrade.toFixed(0)}%` : 'N/A'}
               icon={<Award className="w-6 h-6 text-amber-600" />}
               iconBg="icon-container-amber"
               delay={200}
