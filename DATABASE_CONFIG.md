@@ -1,43 +1,63 @@
-# ScorePAL Hybrid Database Configuration
+# ScorePAL Database Configuration
 
-This project uses multiple databases for different purposes:
+## What You Actually Need
 
-## Primary Databases (Choose ONE)
-- **SQLite** - Local development database
-- **PostgreSQL** - Production relational database (RECOMMENDED)
-- **MongoDB** - Flexible NoSQL database
+| Database | Purpose | Required? | Notes |
+|----------|---------|-----------|-------|
+| **PostgreSQL** | Primary data storage | ✅ YES | Use for production (Render) |
+| **SQLite** | Development fallback | ✅ Built-in | Default for local development |
+| **MongoDB** | Document storage | ❌ Optional | Auto-fallback to SQLite if not configured |
+| **Neo4j** | Knowledge Graph | ❌ Optional | Nice-to-have for concept mapping |
 
-## Optional Services
-- **Neo4j** - Knowledge Graph for concept mapping and relationships (optional)
-
-## Quick Selection Guide
-
-| Database | Best For | Setup Time | Production Ready |
-|----------|----------|-----------|-----------------|
-| **SQLite** | Local development only | 0 min | ❌ No |
-| **PostgreSQL** | Production, Render, Railway | 5 min | ✅ Yes (RECOMMENDED) |
-| **MongoDB** | Alternative to PostgreSQL | 10 min | ✅ Yes |
-| **Neo4j** (optional) | Knowledge graph, concepts | 10 min | ✅ Yes (add-on) |
+## Quick Answer
+- **For Render Deployment:** PostgreSQL ONLY ✅
+- **For Local Dev:** SQLite (built-in, no setup needed) ✅
+- **MongoDB:** Not required - skip it ✅
+- **Neo4j:** Already configured, keep it or disable ✅
 
 ---
 
-## Configuration via Environment Variables
+## Why This Architecture?
 
-Set `DATABASE_TYPE` in `.env` to choose your database:
+**Why not just use one database?**
+- SQLAlchemy (PostgreSQL/SQLite) handles: User auth, AI configs, system data
+- MongoDB was planned for flexible document storage but has SQLite fallback
+- MongoDB is completely optional - remove it to simplify
 
+**For Render (production):**
+- ✅ PostgreSQL (required)
+- ✅ Neo4j (optional, already configured)
+- ❌ MongoDB (not needed)
+- ❌ SQLite (don't use in production)
+
+---
+
+## Simple Configuration
+
+### For Render Deployment (Production)
 ```bash
-# Option 1: SQLite (default, local development)
+# Required: PostgreSQL
+DATABASE_TYPE=postgresql
+POSTGRES_URL=postgresql://scorepal_user:password@render-host:5432/scorepal
+
+# Optional: Neo4j (already configured)
+USE_NEO4J=true
+NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your_password
+
+# SKIP: MongoDB - not needed, falls back to SQLite
+```
+
+### For Local Development
+```bash
+# Default: SQLite (already built-in, nothing to install)
 DATABASE_TYPE=sqlite
 DATABASE_URL=sqlite:///./data/database.db
 
-# Option 2: PostgreSQL (production, recommended)
+# Optional: Add PostgreSQL locally
 DATABASE_TYPE=postgresql
-POSTGRES_URL=postgresql://username:password@localhost:5432/scorepal
-
-# Option 3: MongoDB (flexible, cloud-friendly)
-DATABASE_TYPE=mongodb
-MONGODB_URL=mongodb://localhost:27017
-MONGODB_DATABASE=scorepal
+POSTGRES_URL=postgresql://scorepal_user:password@localhost:5432/scorepal
 ```
 
 ---
