@@ -41,7 +41,7 @@ ENV PORT=8000
 
 EXPOSE 8000
 
-WORKDIR /app/backend
+WORKDIR /app
 
-# Start FastAPI
+# Start FastAPI (run from /app so Python can find backend module)
 CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
