@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: scorepal-backend
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    buildCommand: ""
+    startCommand: ""
+    plan: free
+    envVars:
+      - key: DATABASE_TYPE
+        value: postgresql
+      - key: POSTGRES_URL
+        fromDatabase:
+          name: scorepal-postgres
+          property: connectionString
+      - key: USE_NEO4J
+        value: "true"
+      - key: PORT
+        value: "8000"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    healthCheckPath: /docs
+    healthCheckInterval: 30
+
+databases:
+  - name: scorepal-postgres
+    databaseName: scorepal
+    user: scorepal_user
+    plan: free

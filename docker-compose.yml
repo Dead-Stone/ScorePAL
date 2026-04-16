@@ -1,5 +1,11 @@
 version: "3.8"
 
+# NOTE: This docker-compose.yml is for LOCAL DEVELOPMENT ONLY
+# For production deployment:
+# - Frontend: Deploy to Vercel
+# - Backend: Deploy to Render (Docker)
+# See SPLIT_DEPLOYMENT.md for production setup
+
 services:
   scorepal-backend:
     build:

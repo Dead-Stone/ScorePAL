@@ -1,16 +1,10 @@
-FROM python:3.11-slim
+# ScorePAL Backend - Optimized for Render Docker Deployment
+FROM python:3.11
 
 WORKDIR /app
 
-# Fix apt-get for Render (update package lists, fix any issues)
-RUN apt-get update --fix-missing && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install only essential system dependencies (Render-optimized)
+# Install minimal system dependencies required for backend
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
     build-essential \
     libpq-dev \
     libssl-dev \
@@ -19,40 +13,39 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     libpng-dev \
     libfreetype6-dev \
-    libopenblas-dev \
-    liblapack-dev \
-    gfortran \
     tesseract-ocr \
     tesseract-ocr-eng \
     poppler-utils \
-    && rm -rf /var/lib/apt/lists/* && apt-get clean
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copy requirements first for better caching
+# Copy requirements
 COPY requirements.txt .
 
-# Install Python dependencies with increased pip cache and retries
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip cache purge
 
-# Copy application code
+# Copy backend code
 COPY . /app/backend
 
-# Set working directory to backend package
+# Ensure required directories exist
+RUN mkdir -p /app/backend/data \
+    /app/backend/uploads \
+    /app/backend/grading_results \
+    /app/backend/synced_submissions
+
+# Set working directory
 WORKDIR /app/backend
 
-# Ensure directories exist
-RUN mkdir -p data uploads temp grading_results synced_submissions
-
-# Set PYTHONPATH so "backend" package is discoverable
+# Environment variables
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
-# Expose default API port
+# Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/docs', timeout=5)" || exit 1
-
-# Start command using package import so relative imports work
-CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI application
+CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
