@@ -1,8 +1,5 @@
 /**
- * CanvasIntegrationTab - Enhanced Canvas integration tab with quick actions and status
- * 
- * @author Mohana Moganti (@Dead-Stone)
- * @license MIT
+ * CanvasIntegrationTab - Enhanced Canvas integration with instant data loading via SWR
  */
 
 import React, { useState, useEffect } from 'react';
@@ -15,6 +12,7 @@ import {
   Grid,
   Chip,
   Alert,
+  AlertTitle,
   LinearProgress,
   List,
   ListItem,
@@ -23,6 +21,8 @@ import {
   Divider,
   IconButton,
   Tooltip,
+  Skeleton,
+  Fade,
 } from '@mui/material';
 import { useRouter } from 'next/router';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -32,91 +32,117 @@ import PeopleIcon from '@mui/icons-material/People';
 import GradeIcon from '@mui/icons-material/Grade';
 import SettingsIcon from '@mui/icons-material/Settings';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import apiClient from '@/utils/apiClient';
-import { CanvasGradingInterface } from './CanvasGradingInterface';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import CloudOffIcon from '@mui/icons-material/CloudOff';
+import SpeedIcon from '@mui/icons-material/Speed';
+import { useCanvasConfig, useCourses, prefetchCanvasData } from '@/hooks/useCanvasData';
 import { CanvasGradingSteps } from './CanvasGradingSteps';
 
-interface CanvasIntegrationTabProps {}
+interface CanvasStats {
+  courses: number;
+  assignments: number;
+  students: number;
+}
 
-export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
+export const CanvasIntegrationTab: React.FC = () => {
   const router = useRouter();
-  const [canvasConfigured, setCanvasConfigured] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [courses, setCourses] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>(null);
   const [showGradingInterface, setShowGradingInterface] = useState(false);
+  const [stats, setStats] = useState<CanvasStats | null>(null);
+  
+  // SWR hooks for instant data loading
+  const { isConfigured, isLoading: configLoading, error: configError, refresh: refreshConfig } = useCanvasConfig();
+  const { courses, isLoading: coursesLoading, error: coursesError, refresh: refreshCourses } = useCourses();
 
+  // Calculate stats when courses load
   useEffect(() => {
-    checkCanvasStatus();
+    if (courses.length > 0) {
+      const totalAssignments = courses.reduce(
+        (sum: number, course: any) => sum + (course.assignments_count || 0),
+        0
+      );
+      const totalStudents = courses.reduce(
+        (sum: number, course: any) => sum + (course.students_count || 0),
+        0
+      );
+      setStats({
+        courses: courses.length,
+        assignments: totalAssignments,
+        students: totalStudents,
+      });
+    }
+  }, [courses]);
+
+  // Prefetch data on mount for even faster subsequent loads
+  useEffect(() => {
+    prefetchCanvasData();
   }, []);
 
-  const checkCanvasStatus = async () => {
-    try {
-      setLoading(true);
-      // Use the same endpoint as dashboard to check Canvas configuration
-      const response = await apiClient.get('/api/settings/canvas');
-      // Check if Canvas is configured (either valid or just configured)
-      const isValid = response.data.canvas_key_valid || false;
-      const isConfigured = response.data.canvas_key_configured || false;
-      setCanvasConfigured(isValid || isConfigured);
-      
-      if (isValid || isConfigured) {
-        // Try to fetch courses using settings-configured API
-        try {
-          const coursesResponse = await apiClient.get('/api/settings/canvas/data/courses');
-          setCourses(coursesResponse.data.courses || []);
-          
-          // Calculate quick stats
-          if (coursesResponse.data.courses?.length > 0) {
-            const totalAssignments = coursesResponse.data.courses.reduce(
-              (sum: number, course: any) => sum + (course.assignments_count || 0),
-              0
-            );
-            const totalStudents = coursesResponse.data.courses.reduce(
-              (sum: number, course: any) => sum + (course.students_count || 0),
-              0
-            );
-            setStats({
-              courses: coursesResponse.data.courses.length,
-              assignments: totalAssignments,
-              students: totalStudents,
-            });
-          }
-        } catch (err) {
-          console.error('Error fetching courses:', err);
-        }
-      }
-    } catch (err) {
-      console.error('Error checking Canvas status:', err);
-      setCanvasConfigured(false);
-    } finally {
-      setLoading(false);
-    }
+  const handleRefresh = () => {
+    refreshConfig();
+    refreshCourses();
   };
 
-
-  if (loading) {
-    return (
-      <Box textAlign="center" py={4}>
-        <LinearProgress sx={{ mb: 2 }} />
-        <Typography variant="body2" color="text.secondary">
-          Checking Canvas configuration...
-        </Typography>
-      </Box>
-    );
-  }
+  const isLoading = configLoading || (isConfigured && coursesLoading);
+  const hasError = configError || coursesError;
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>
-        Canvas LMS Integration
-      </Typography>
-      <Typography variant="body2" color="text.secondary" paragraph>
-        Connect to Canvas and grade assignments directly from your courses.
-      </Typography>
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+        <Box>
+          <Typography variant="h6" gutterBottom sx={{ mb: 0 }}>
+            Canvas LMS Integration
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Connect to Canvas and grade assignments directly from your courses.
+          </Typography>
+        </Box>
+        {/* Data loaded indicator */}
+        {!isLoading && isConfigured && courses.length > 0 && (
+          <Fade in>
+            <Chip
+              icon={<SpeedIcon />}
+              label="Data loaded"
+              size="small"
+              color="success"
+              variant="outlined"
+            />
+          </Fade>
+        )}
+      </Box>
+
+      {/* Loading Progress - Shows during any loading */}
+      {isLoading && (
+        <LinearProgress 
+          sx={{ 
+            mb: 2, 
+            borderRadius: 1,
+            height: 3,
+            '& .MuiLinearProgress-bar': {
+              transition: 'transform 0.1s ease'
+            }
+          }} 
+        />
+      )}
+
+      {/* Error Alert */}
+      {hasError && !isLoading && (
+        <Alert 
+          severity="error" 
+          sx={{ mb: 3 }}
+          icon={<CloudOffIcon />}
+          action={
+            <Button size="small" onClick={handleRefresh}>
+              Retry
+            </Button>
+          }
+        >
+          <AlertTitle>Connection Error</AlertTitle>
+          {configError?.message || coursesError?.message || 'Failed to connect to Canvas.'}
+        </Alert>
+      )}
 
       {/* Status Card */}
-      <Card sx={{ mb: 3 }}>
+      <Card sx={{ mb: 3, borderRadius: 2 }}>
         <CardContent>
           <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
             <Box display="flex" alignItems="center" gap={2}>
@@ -128,73 +154,155 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
                   width: 40,
                   height: 40,
                   objectFit: 'contain',
+                  borderRadius: 1,
+                }}
+                onError={(e: any) => {
+                  e.target.style.display = 'none';
                 }}
               />
               <Box>
                 <Typography variant="h6">Canvas LMS</Typography>
-                <Chip
-                  label={canvasConfigured ? 'Connected' : 'Not Configured'}
-                  color={canvasConfigured ? 'success' : 'default'}
-                  size="small"
-                  icon={canvasConfigured ? <CheckCircleIcon /> : undefined}
-                />
+                {configLoading ? (
+                  <Skeleton width={100} height={24} />
+                ) : (
+                  <Chip
+                    label={isConfigured ? 'Connected' : 'Not Configured'}
+                    color={isConfigured ? 'success' : 'default'}
+                    size="small"
+                    icon={isConfigured ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
+                  />
+                )}
               </Box>
             </Box>
-            {canvasConfigured && (
-              <Tooltip title="Refresh Status">
-                <IconButton onClick={checkCanvasStatus} size="small">
+            {isConfigured && (
+              <Tooltip title="Refresh Data">
+                <IconButton 
+                  onClick={handleRefresh} 
+                  size="small"
+                  disabled={isLoading}
+                  sx={{
+                    transition: 'transform 0.3s ease',
+                    '&:hover': { transform: 'rotate(180deg)' }
+                  }}
+                >
                   <RefreshIcon />
                 </IconButton>
               </Tooltip>
             )}
           </Box>
 
-          {!canvasConfigured ? (
+          {!isConfigured && !configLoading ? (
             <Alert severity="info" sx={{ mt: 2 }}>
-              Canvas is not configured. Please configure your Canvas API credentials in{' '}
+              <AlertTitle>Canvas Not Configured</AlertTitle>
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                Configure your Canvas API credentials to start grading assignments.
+              </Typography>
               <Button
+                variant="contained"
                 size="small"
                 onClick={() => router.replace('/settings')}
                 startIcon={<SettingsIcon />}
               >
-                Settings
+                Go to Settings
               </Button>
             </Alert>
           ) : (
             <>
-              {stats && (
-                <Grid container spacing={2} sx={{ mt: 2 }}>
-                  <Grid item xs={4}>
-                    <Box textAlign="center">
-                      <Typography variant="h5" fontWeight="bold" color="primary">
-                        {stats.courses}
+              {/* Stats - Show skeleton while loading, then instant display */}
+              <Grid container spacing={2} sx={{ mt: 2 }}>
+                <Grid item xs={4}>
+                  <Box 
+                    textAlign="center" 
+                    sx={{ 
+                      p: 2, 
+                      borderRadius: 2, 
+                      bgcolor: 'primary.50',
+                      border: '1px solid',
+                      borderColor: 'primary.100',
+                      transition: 'all 0.3s ease',
+                      '&:hover': { transform: 'translateY(-2px)', boxShadow: 2 }
+                    }}
+                  >
+                    <SchoolIcon color="primary" sx={{ mb: 0.5 }} />
+                    {coursesLoading ? (
+                      <Skeleton width={40} height={32} sx={{ mx: 'auto' }} />
+                    ) : (
+                      <Typography variant="h5" fontWeight="bold" color="primary.main">
+                        {stats?.courses || courses.length || 0}
                       </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Courses
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Box textAlign="center">
-                      <Typography variant="h5" fontWeight="bold" color="primary">
-                        {stats.assignments}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Assignments
-                      </Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Box textAlign="center">
-                      <Typography variant="h5" fontWeight="bold" color="primary">
-                        {stats.students}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Students
-                      </Typography>
-                    </Box>
-                  </Grid>
+                    )}
+                    <Typography variant="caption" color="text.secondary">
+                      Courses
+                    </Typography>
+                  </Box>
                 </Grid>
+                <Grid item xs={4}>
+                  <Box 
+                    textAlign="center" 
+                    sx={{ 
+                      p: 2, 
+                      borderRadius: 2, 
+                      bgcolor: 'success.50',
+                      border: '1px solid',
+                      borderColor: 'success.100',
+                      transition: 'all 0.3s ease',
+                      '&:hover': { transform: 'translateY(-2px)', boxShadow: 2 }
+                    }}
+                  >
+                    <AssignmentIcon color="success" sx={{ mb: 0.5 }} />
+                    {coursesLoading ? (
+                      <Skeleton width={40} height={32} sx={{ mx: 'auto' }} />
+                    ) : (
+                      <Typography variant="h5" fontWeight="bold" color="success.main">
+                        {stats?.assignments || 0}
+                      </Typography>
+                    )}
+                    <Typography variant="caption" color="text.secondary">
+                      Assignments
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={4}>
+                  <Box 
+                    textAlign="center" 
+                    sx={{ 
+                      p: 2, 
+                      borderRadius: 2, 
+                      bgcolor: 'info.50',
+                      border: '1px solid',
+                      borderColor: 'info.100',
+                      transition: 'all 0.3s ease',
+                      '&:hover': { transform: 'translateY(-2px)', boxShadow: 2 }
+                    }}
+                  >
+                    <PeopleIcon color="info" sx={{ mb: 0.5 }} />
+                    {coursesLoading ? (
+                      <Skeleton width={40} height={32} sx={{ mx: 'auto' }} />
+                    ) : (
+                      <Typography variant="h5" fontWeight="bold" color="info.main">
+                        {stats?.students || 0}
+                      </Typography>
+                    )}
+                    <Typography variant="caption" color="text.secondary">
+                      Students
+                    </Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+
+              {/* No Courses State */}
+              {!coursesLoading && courses.length === 0 && isConfigured && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <AlertTitle>No Courses Found</AlertTitle>
+                  <Typography variant="body2">
+                    You don't have access to any courses yet. This may be because:
+                  </Typography>
+                  <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20 }}>
+                    <li>Your API key doesn't have course access permissions</li>
+                    <li>You are not enrolled in any courses as a Teacher, TA, or Designer</li>
+                    <li>All courses are hidden or unpublished</li>
+                  </ul>
+                </Alert>
               )}
             </>
           )}
@@ -202,7 +310,7 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
       </Card>
 
       {/* Canvas Grading Interface */}
-      {canvasConfigured && showGradingInterface ? (
+      {isConfigured && showGradingInterface ? (
         <Box>
           <Button
             variant="outlined"
@@ -212,17 +320,15 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
             ← Back to Overview
           </Button>
           <CanvasGradingSteps
-            onComplete={async (data) => {
-              // Handle grading completion
-              // This will be integrated with CanvasGradingInterface logic
+            onComplete={async () => {
               setShowGradingInterface(false);
-              checkCanvasStatus();
+              refreshCourses();
             }}
             isLoading={false}
           />
         </Box>
-      ) : canvasConfigured ? (
-        <Card>
+      ) : isConfigured && !hasError ? (
+        <Card sx={{ borderRadius: 2 }}>
           <CardContent>
             <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
               Quick Actions
@@ -233,16 +339,32 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
                 onClick={() => setShowGradingInterface(true)}
                 sx={{
                   borderRadius: 1,
-                  '&:hover': { bgcolor: 'action.hover' },
+                  transition: 'all 0.2s ease',
+                  '&:hover': { bgcolor: 'action.hover', transform: 'translateX(4px)' },
                 }}
+                disabled={courses.length === 0 || coursesLoading}
               >
                 <ListItemIcon>
-                  <GradeIcon color="primary" />
+                  <GradeIcon color={courses.length > 0 ? 'primary' : 'disabled'} />
                 </ListItemIcon>
                 <ListItemText
                   primary="Grade Assignments"
-                  secondary="Select courses and grade submissions"
+                  secondary={
+                    coursesLoading
+                      ? "Loading courses..."
+                      : courses.length > 0 
+                        ? "Select courses and grade submissions"
+                        : "No courses available"
+                  }
                 />
+                {courses.length > 0 && !coursesLoading && (
+                  <Chip 
+                    label={`${courses.length} courses`} 
+                    size="small" 
+                    color="primary" 
+                    variant="outlined"
+                  />
+                )}
               </ListItem>
               <Divider />
               <ListItem
@@ -250,7 +372,8 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
                 onClick={() => router.replace('/dashboard?tab=1')}
                 sx={{
                   borderRadius: 1,
-                  '&:hover': { bgcolor: 'action.hover' },
+                  transition: 'all 0.2s ease',
+                  '&:hover': { bgcolor: 'action.hover', transform: 'translateX(4px)' },
                 }}
               >
                 <ListItemIcon>
@@ -268,4 +391,3 @@ export const CanvasIntegrationTab: React.FC<CanvasIntegrationTabProps> = () => {
     </Box>
   );
 };
-

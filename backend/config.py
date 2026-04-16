@@ -43,8 +43,18 @@ class Settings(BaseSettings):
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     
     # Database settings
+    database_type: str = os.getenv("DATABASE_TYPE", "sqlite")  # Options: sqlite, postgresql, mongodb
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./data/database.db")
     database_echo: bool = os.getenv("DATABASE_ECHO", "false").lower() == "true"
+
+    # PostgreSQL settings
+    postgres_url: str = os.getenv("POSTGRES_URL", "")
+
+    # MongoDB settings
+    mongodb_url: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+    mongodb_database: str = os.getenv("MONGODB_DATABASE", "scorepal")
+
+    # Neo4j settings (Knowledge Graph)
     neo4j_uri: str = os.getenv("NEO4J_URI", "")
     neo4j_user: str = os.getenv("NEO4J_USERNAME", "")
     neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")

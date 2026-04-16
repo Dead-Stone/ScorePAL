@@ -135,7 +135,7 @@ def install_dependencies():
         import uvicorn
         import numpy
         import pandas
-        print("✓ Core Python dependencies are available")
+        print("[OK] Core Python dependencies are available")
     except ImportError as e:
         print(f"⚠️  Missing dependency: {e}")
         print("Please install dependencies manually using:")

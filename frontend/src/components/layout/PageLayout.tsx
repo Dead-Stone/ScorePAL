@@ -1,40 +1,46 @@
 /**
- * PageLayout - Consistent page wrapper component
- * Provides standardized layout structure for all pages
+ * PageLayout - Modern page wrapper component
+ * Provides consistent layout structure for all authenticated pages
  */
 
 import React from 'react';
-import { Container, Box } from '@mui/material';
 import { TopNavBar } from './TopNavBar';
-import { DESIGN_CONSTANTS } from '@/constants/design';
+import { cn } from '@/lib/utils';
 
 interface PageLayoutProps {
   children: React.ReactNode;
-  maxWidth?: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | false;
-  disablePadding?: boolean;
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
   className?: string;
+  noPadding?: boolean;
 }
 
 export const PageLayout: React.FC<PageLayoutProps> = ({
   children,
-  maxWidth = DESIGN_CONSTANTS.spacing.containerMaxWidth,
-  disablePadding = false,
+  maxWidth = 'xl',
   className = '',
+  noPadding = false,
 }) => {
+  const maxWidthClasses = {
+    sm: 'max-w-2xl',
+    md: 'max-w-4xl',
+    lg: 'max-w-5xl',
+    xl: 'max-w-7xl',
+    '2xl': 'max-w-[1400px]',
+    full: 'max-w-full',
+  };
+
   return (
-    <div className={`min-h-screen ${DESIGN_CONSTANTS.colors.background.gradient} ${className}`}>
+    <div className={cn("min-h-screen page-gradient", className)}>
       <TopNavBar />
-      <Container
-        maxWidth={maxWidth}
-        sx={{
-          py: disablePadding ? 0 : DESIGN_CONSTANTS.spacing.pagePadding,
-          pt: disablePadding ? 0 : { xs: 28, sm: 28 }, // Account for nav bar (64px) + tab bar (48px) = 112px = 28 * 4px
-        }}
-      >
-        {children}
-      </Container>
+      <main className={cn(
+        maxWidthClasses[maxWidth],
+        "mx-auto",
+        noPadding ? "" : "px-4 sm:px-6 lg:px-8 pt-24 pb-12"
+      )}>
+        <div className="animate-fade-in">
+          {children}
+        </div>
+      </main>
     </div>
   );
 };
-
-

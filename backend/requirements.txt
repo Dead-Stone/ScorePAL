@@ -6,6 +6,7 @@ pydantic-settings==2.1.0
 
 # Database dependencies
 sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
 motor==3.3.2
 pymongo==4.6.0
 
@@ -44,7 +45,7 @@ pytest==7.4.3
 pytest-asyncio==0.21.1
 httpx==0.25.2
 
-# Optional: Neo4j support
+# Optional: Neo4j support (Knowledge Graph)
 neo4j==5.14.1
 
 # Optional: Additional AI providers

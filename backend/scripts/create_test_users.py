@@ -61,13 +61,13 @@ async def create_test_users():
             user_create = UserCreate(**user_data)
             user = await user_manager.create_user(user_create)
             created_users.append(user)
-            print(f"✅ Created {user.role.value}: {user.email}")
+            print(f"[OK] Created {user.role.value}: {user.email}")
         except Exception as e:
             if "already exists" in str(e):
                 existing_users.append(user_data)
-                print(f"⚠️  {user_data['role'].value} already exists: {user_data['email']}")
+                print(f"[EXISTS] {user_data['role'].value} already exists: {user_data['email']}")
             else:
-                print(f"❌ Error creating {user_data['role'].value}: {e}")
+                print(f"[ERROR] Error creating {user_data['role'].value}: {e}")
     
     print("\n" + "="*60)
     print("TEST USER CREDENTIALS")

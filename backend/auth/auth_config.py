@@ -35,9 +35,10 @@ from models.user import (
 )
 
 # MongoDB configuration
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+MONGODB_URL = os.getenv("MONGODB_URL", "")  # Empty string if not configured
 DATABASE_NAME = os.getenv("MONGODB_DATABASE", "scorepal")
 COLLECTION_NAME = os.getenv("MONGODB_COLLECTION", "users")
+MONGODB_ENABLED = bool(MONGODB_URL)  # Only enabled if URL is set
 
 # Log MongoDB URL (mask password for security)
 import logging
@@ -46,8 +47,11 @@ if MONGODB_URL and "@" in MONGODB_URL:
     masked_url = MONGODB_URL.split("@")[0].split(":")[0] + ":***@" + MONGODB_URL.split("@")[1] if "@" in MONGODB_URL else MONGODB_URL
 else:
     masked_url = MONGODB_URL
-logger.info(f"MongoDB URL configured: {masked_url}")
-logger.info(f"MongoDB Database: {DATABASE_NAME}")
+if MONGODB_ENABLED:
+    logger.info(f"MongoDB URL configured: {masked_url}")
+    logger.info(f"MongoDB Database: {DATABASE_NAME}")
+else:
+    logger.info("MongoDB not configured. Using SQLite fallback.")
 
 # JWT Configuration
 JWT_SECRET = os.getenv("JWT_SECRET", "your-super-secret-jwt-key-change-in-production")
@@ -66,15 +70,32 @@ _database = None
 _users_collection = None
 
 def get_mongodb_client():
-    """Get MongoDB client with lazy initialization"""
-    global _client, _database, _users_collection, MONGODB_URL
-    
+    """Get MongoDB client with lazy initialization. Returns None if MongoDB is not configured."""
+    global _client, _database, _users_collection, MONGODB_URL, MONGODB_ENABLED
+
+    # If MongoDB is not enabled, return None
+    if not MONGODB_ENABLED:
+        return None, None, None
+
     # Re-read MONGODB_URL in case .env was updated
-    current_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-    
+    current_url = os.getenv("MONGODB_URL", "")
+
+    # If URL became empty, reset
+    if not current_url:
+        MONGODB_ENABLED = False
+        if _client is not None:
+            try:
+                _client.close()
+            except:
+                pass
+            _client = None
+            _database = None
+            _users_collection = None
+        return None, None, None
+
     # If URL changed, update the global and reset client
     if current_url != MONGODB_URL:
-        logger.warning(f"MongoDB URL changed from {MONGODB_URL[:30]}... to {current_url[:30]}..., reinitializing client")
+        logger.warning(f"MongoDB URL changed, reinitializing client")
         MONGODB_URL = current_url
         if _client is not None:
             try:
@@ -84,23 +105,30 @@ def get_mongodb_client():
             _client = None
             _database = None
             _users_collection = None
-    
+
     if _client is None:
-        logger.info(f"Initializing MongoDB client with URL: {current_url[:50]}...")
+        logger.info(f"Initializing MongoDB client...")
         try:
-            _client = AsyncIOMotorClient(current_url)
+            _client = AsyncIOMotorClient(current_url, serverSelectionTimeoutMS=3000)
             _database = _client[DATABASE_NAME]
             _users_collection = _database[COLLECTION_NAME]
             logger.info(f"MongoDB client initialized successfully for database: {DATABASE_NAME}")
         except Exception as e:
             logger.error(f"Failed to initialize MongoDB client: {e}")
-            raise
-    
+            logger.warning("Falling back to SQLite storage for user data")
+            _client = None
+            _database = None
+            _users_collection = None
+            MONGODB_ENABLED = False
+            return None, None, None
+
     return _client, _database, _users_collection
 
 async def get_users_collection():
-    """Get users collection with proper async initialization"""
+    """Get users collection with proper async initialization. Returns None if MongoDB is not available."""
     client, database, users_collection = get_mongodb_client()
+    if users_collection is None:
+        logger.warning("Users collection not available - MongoDB not configured or failed to connect")
     return users_collection
 
 # Create indexes for performance and security

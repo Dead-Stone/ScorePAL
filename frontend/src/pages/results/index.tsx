@@ -1,31 +1,12 @@
 /**
- * ScorePAL - Results Dashboard
- * Refactored to use modular components
+ * ScorePAL - Modern Results Dashboard
+ * Comprehensive results management with sleek design
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { GetStaticProps } from 'next';
-import {
-  Box,
-  Container,
-  Typography,
-  CircularProgress,
-  Alert,
-  Button,
-  Chip,
-  Tooltip,
-  LinearProgress,
-  Tabs,
-  Tab,
-} from '@mui/material';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import DownloadIcon from '@mui/icons-material/Download';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import ViewListIcon from '@mui/icons-material/ViewList';
-import GridViewIcon from '@mui/icons-material/GridView';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import InsertChartIcon from '@mui/icons-material/InsertChart';
 
 import { TopNavBar } from '@/components/layout/TopNavBar';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -48,19 +29,77 @@ import { AllResultsTab } from '@/components/results/index/AllResultsTab';
 import { ResultsChartsTab } from '@/components/results/index/ResultsChartsTab';
 import { ResultDetailsDialog } from '@/components/results/index/ResultDetailsDialog';
 import { SavedViewsManager } from '@/components/results/SavedViewsManager';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Loader2,
+  Download,
+  RefreshCw,
+  LayoutGrid,
+  List,
+  BarChart3,
+  AlertCircle,
+  Sparkles,
+  FileText,
+  Target,
+  TrendingUp,
+  Calendar,
+  ChevronDown,
+  Filter,
+  Search,
+  ArrowUpRight,
+  ArrowDownRight,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export const getStaticProps: GetStaticProps = async () => {
-  return {
-    props: {},
-    revalidate: 3600,
-  };
+  return { props: {}, revalidate: 3600 };
 };
+
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  change?: number;
+  icon: React.ReactNode;
+  iconBg: string;
+  delay?: number;
+}
+
+const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon, iconBg, delay = 0 }) => (
+  <div 
+    className="stat-card animate-fade-in-up"
+    style={{ animationDelay: `${delay}ms` }}
+  >
+    <div className="flex items-start justify-between">
+      <div className="flex-1">
+        <p className="data-label mb-2">{title}</p>
+        <p className="data-value-lg">{value}</p>
+        {change !== undefined && (
+          <div className={cn(
+            "flex items-center gap-1 mt-2 text-sm font-medium",
+            change >= 0 ? "text-emerald-600" : "text-rose-600"
+          )}>
+            {change >= 0 ? (
+              <ArrowUpRight className="w-4 h-4" />
+            ) : (
+              <ArrowDownRight className="w-4 h-4" />
+            )}
+            <span>{Math.abs(change)}%</span>
+          </div>
+        )}
+      </div>
+      <div className={cn("icon-container w-14 h-14", iconBg)}>
+        {icon}
+      </div>
+    </div>
+  </div>
+);
 
 export default function ResultsDashboard() {
   const router = useRouter();
   const { user, isAuthenticated } = useAuth();
   
-  // State
   const [results, setResults] = useState<Result[]>([]);
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +107,6 @@ export default function ResultsDashboard() {
   const [error, setError] = useState('');
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   
-  // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedAssignment, setSelectedAssignment] = useState<string>('all');
   const [gradeFilter, setGradeFilter] = useState<string>('all');
@@ -76,10 +114,8 @@ export default function ResultsDashboard() {
   const [scoreRange, setScoreRange] = useState<string>('all');
   const [resultType, setResultType] = useState<'all' | 'single' | 'batch' | 'canvas'>('all');
   
-  // Saved views
   const [savedViewsOpen, setSavedViewsOpen] = useState(false);
   
-  // View
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [activeTab, setActiveTab] = useState(0);
   const [sortField, setSortField] = useState<SortField>('graded_at');
@@ -173,10 +209,8 @@ export default function ResultsDashboard() {
     }
   };
 
-  // Compute stats
   const stats = useMemo(() => calculateStats(results), [results]);
 
-  // Filtered results
   const filteredResults = useMemo(() => {
     return filterResults(results, {
       searchTerm,
@@ -217,7 +251,6 @@ export default function ResultsDashboard() {
     setDetailsOpen(true);
   };
 
-  // Redirect students
   useEffect(() => {
     if (user?.role === 'student') {
       router.replace('/dashboard/student');
@@ -227,13 +260,31 @@ export default function ResultsDashboard() {
   if (user?.role === 'student') {
     return (
       <ProtectedRoute>
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+        <div className="min-h-screen page-gradient">
           <TopNavBar />
-          <Container maxWidth="xl" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
-            <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-              <CircularProgress />
-            </Box>
-          </Container>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
+  if (loading) {
+    return (
+      <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
+        <div className="min-h-screen page-gradient">
+          <TopNavBar />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center animate-pulse">
+                <Sparkles className="w-8 h-8 text-white" />
+              </div>
+              <p className="text-gray-500 font-medium">Loading results...</p>
+            </div>
+          </div>
         </div>
       </ProtectedRoute>
     );
@@ -241,144 +292,208 @@ export default function ResultsDashboard() {
 
   return (
     <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
+      <div className="min-h-screen page-gradient">
         <TopNavBar />
-        <Container maxWidth="xl" sx={{ py: 6, pt: { xs: 12, sm: 12 } }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pt-24">
           {/* Header */}
-          <Box mb={4} display="flex" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" gap={2}>
-            <Box>
-              <Typography 
-                variant="h3" 
-                component="h1" 
-                gutterBottom 
-                fontWeight="bold"
-                sx={{ 
-                  background: 'linear-gradient(135deg, #1D80C3 0%, #4F46E5 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  mb: 1
-                }}
-              >
-                Grading Results
-              </Typography>
-              <Typography variant="subtitle1" color="text.secondary">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8 animate-fade-in">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">
+                Grading <span className="gradient-text">Results</span>
+              </h1>
+              <p className="text-gray-500">
                 {stats.totalSubmissions} submissions across {stats.totalAssignments} assignments
-              </Typography>
-            </Box>
-            <Box display="flex" alignItems="center" gap={1}>
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
               {lastRefreshed && (
-                <Chip 
-                  size="small" 
-                  label={`Updated ${formatLastRefreshed(lastRefreshed)}`} 
-                  variant="outlined"
-                  sx={{ mr: 1 }}
-                />
+                <span className="badge-blue text-xs">
+                  <Calendar className="w-3 h-3 mr-1.5" />
+                  Updated {formatLastRefreshed(lastRefreshed)}
+                </span>
               )}
-              <Tooltip title="Refresh results (clears cache)">
-                <Button
-                  variant="outlined"
-                  size="small"
-                  startIcon={refreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
-                  onClick={() => fetchResults(true)}
-                  disabled={refreshing}
-                >
-                  Refresh
-                </Button>
-              </Tooltip>
               <Button
-                variant="outlined"
-                startIcon={<DownloadIcon />}
-                onClick={() => handleDownloadResults('csv')}
-                size="small"
+                variant="outline"
+                size="sm"
+                onClick={() => fetchResults(true)}
+                disabled={refreshing}
+                className="h-10 px-4 rounded-xl border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-all"
               >
+                <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
+                Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleDownloadResults('csv')}
+                className="h-10 px-4 rounded-xl border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-all"
+              >
+                <Download className="w-4 h-4 mr-2" />
                 Export CSV
               </Button>
-              <Button
-                variant="contained"
-                component={Link}
-                href="/dashboard"
-                startIcon={<InsertChartIcon />}
-              >
-                Dashboard
-              </Button>
-            </Box>
-          </Box>
+              <Link href="/dashboard">
+                <Button className="btn-primary h-10 px-6">
+                  <TrendingUp className="w-4 h-4 mr-2" />
+                  Dashboard
+                </Button>
+              </Link>
+            </div>
+          </div>
 
-          {refreshing && <LinearProgress sx={{ mb: 2 }} />}
-          {error && <Alert severity="error" sx={{ mb: 3 }}>{error}</Alert>}
+          {/* Error Alert */}
+          {error && (
+            <Alert className="mb-6 rounded-xl border-rose-200 bg-rose-50 text-rose-800 animate-fade-in-down">
+              <AlertCircle className="h-5 w-5" />
+              <AlertDescription className="font-medium">{error}</AlertDescription>
+            </Alert>
+          )}
 
-          {/* Stats Overview */}
-          <Box mb={4}>
-            <ResultsStatsCards stats={stats} />
-          </Box>
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <StatCard
+              title="Total Submissions"
+              value={stats.totalSubmissions}
+              icon={<FileText className="w-6 h-6 text-blue-600" />}
+              iconBg="icon-container-blue"
+              delay={0}
+            />
+            <StatCard
+              title="Average Score"
+              value={`${stats.avgScore}%`}
+              icon={<Target className="w-6 h-6 text-emerald-600" />}
+              iconBg="icon-container-emerald"
+              delay={100}
+            />
+            <StatCard
+              title="Assignments"
+              value={stats.totalAssignments}
+              icon={<LayoutGrid className="w-6 h-6 text-violet-600" />}
+              iconBg="icon-container-violet"
+              delay={200}
+            />
+            <StatCard
+              title="Pass Rate"
+              value={`${stats.passRate || 0}%`}
+              icon={<TrendingUp className="w-6 h-6 text-amber-600" />}
+              iconBg="icon-container-amber"
+              delay={300}
+            />
+          </div>
 
           {/* Tabs */}
-          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs value={activeTab} onChange={(e, v) => setActiveTab(v)}>
-              <Tab label="By Assignment" icon={<ViewListIcon />} iconPosition="start" />
-              <Tab label="All Results" icon={<GridViewIcon />} iconPosition="start" />
-              <Tab label="Overview Charts" icon={<BarChartIcon />} iconPosition="start" />
-            </Tabs>
-          </Box>
+          <div className="flex items-center gap-2 p-1.5 bg-gray-100/80 rounded-xl w-fit mb-6 animate-fade-in-up" style={{ animationDelay: '150ms' }}>
+            <button
+              onClick={() => setActiveTab(0)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 0
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <List className="w-4 h-4" />
+              By Assignment
+            </button>
+            <button
+              onClick={() => setActiveTab(1)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 1
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <LayoutGrid className="w-4 h-4" />
+              All Results
+            </button>
+            <button
+              onClick={() => setActiveTab(2)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 2
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <BarChart3 className="w-4 h-4" />
+              Charts
+            </button>
+          </div>
 
           {/* Filters */}
-          <Box mb={3}>
-            <ResultsFilters
-              searchTerm={searchTerm}
-              selectedAssignment={selectedAssignment}
-              gradeFilter={gradeFilter}
-              dateRange={dateRange}
-              scoreRange={scoreRange}
-              resultType={resultType}
-              assignmentGroups={assignmentGroups}
-              filteredResultsCount={filteredResults.length}
-              onSearchChange={setSearchTerm}
-              onAssignmentChange={setSelectedAssignment}
-              onGradeFilterChange={setGradeFilter}
-              onDateRangeChange={setDateRange}
-              onScoreRangeChange={setScoreRange}
-              onResultTypeChange={setResultType}
-            />
-          </Box>
+          <Card className="card-modern mb-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+            <CardContent className="p-4">
+              <ResultsFilters
+                searchTerm={searchTerm}
+                selectedAssignment={selectedAssignment}
+                gradeFilter={gradeFilter}
+                dateRange={dateRange}
+                scoreRange={scoreRange}
+                resultType={resultType}
+                assignmentGroups={assignmentGroups}
+                filteredResultsCount={filteredResults.length}
+                onSearchChange={setSearchTerm}
+                onAssignmentChange={setSelectedAssignment}
+                onGradeFilterChange={setGradeFilter}
+                onDateRangeChange={setDateRange}
+                onScoreRangeChange={setScoreRange}
+                onResultTypeChange={setResultType}
+              />
+            </CardContent>
+          </Card>
 
           {/* Content */}
-          {loading ? (
-            <Box display="flex" justifyContent="center" py={8}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <>
-              {activeTab === 0 && (
-                <AssignmentGroupsTab
-                  assignmentGroups={assignmentGroups}
-                  expandedGroups={expandedGroups}
-                  onToggleGroup={toggleGroup}
-                  onViewResult={openDetails}
-                />
-              )}
-              
-              {activeTab === 1 && (
-                <AllResultsTab
-                  results={filteredResults}
-                  viewMode={viewMode}
-                  sortField={sortField}
-                  sortOrder={sortOrder}
-                  page={page}
-                  resultsPerPage={resultsPerPage}
-                  onSort={handleSort}
-                  onPageChange={setPage}
-                  onViewResult={openDetails}
-                />
-              )}
-              
-              {activeTab === 2 && (
-                <ResultsChartsTab
-                  results={results}
-                  assignmentGroups={assignmentGroups}
-                />
-              )}
-            </>
-          )}
+          <div className="animate-fade-in-up" style={{ animationDelay: '250ms' }}>
+            {activeTab === 0 && (
+              <Card className="card-modern">
+                <CardContent className="p-6">
+                  <AssignmentGroupsTab
+                    assignmentGroups={assignmentGroups}
+                    expandedGroups={expandedGroups}
+                    onToggleGroup={toggleGroup}
+                    onViewResult={openDetails}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            
+            {activeTab === 1 && (
+              <Card className="card-modern">
+                <CardContent className="p-6">
+                  <AllResultsTab
+                    results={filteredResults}
+                    viewMode={viewMode}
+                    sortField={sortField}
+                    sortOrder={sortOrder}
+                    page={page}
+                    resultsPerPage={resultsPerPage}
+                    onSort={handleSort}
+                    onPageChange={setPage}
+                    onViewResult={openDetails}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            
+            {activeTab === 2 && (
+              <Card className="card-modern">
+                <CardHeader className="border-b border-gray-100 bg-gray-50/50">
+                  <CardTitle className="flex items-center gap-3 text-lg font-semibold text-gray-900">
+                    <div className="icon-container-blue w-10 h-10">
+                      <BarChart3 className="w-5 h-5 text-blue-600" />
+                    </div>
+                    Analytics Overview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <ResultsChartsTab
+                    results={results}
+                    assignmentGroups={assignmentGroups}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
           {/* Result Details Dialog */}
           <ResultDetailsDialog
@@ -386,13 +501,6 @@ export default function ResultsDashboard() {
             result={selectedResult}
             onClose={() => setDetailsOpen(false)}
           />
-
-          {/* Footer */}
-          <Box mt={4} display="flex" justifyContent="space-between">
-            <Button variant="outlined" component={Link} href="/">
-              Back to Home
-            </Button>
-          </Box>
 
           {/* Saved Views Manager */}
           <SavedViewsManager
@@ -417,7 +525,7 @@ export default function ResultsDashboard() {
               setViewMode(view.filters.viewMode as ViewMode);
             }}
           />
-        </Container>
+        </div>
       </div>
     </ProtectedRoute>
   );

@@ -207,24 +207,31 @@ async def register_user(user_data: UserCreate):
         otp_code = str(random.randint(100000, 999999))
         otp_expires = datetime.utcnow() + timedelta(minutes=10)
         
-        # Store OTP in user document
-        from auth.auth_config import get_users_collection
+        # Store OTP in user document (if MongoDB is available)
+        from auth.auth_config import get_users_collection, MONGODB_ENABLED
         from bson import ObjectId
-        users_collection = await get_users_collection()
-        
-        # Convert user.id to ObjectId if it's a string
-        user_id = ObjectId(user.id) if isinstance(user.id, str) else user.id
-        
-        result = await users_collection.update_one(
-            {"_id": user_id},
-            {"$set": {
-                "otp_code": otp_code,
-                "otp_expires": otp_expires,
-                "otp_verified": False
-            }}
-        )
-        
-        logger.info(f"OTP stored for user {user.email}: {otp_code} (matched: {result.matched_count}, modified: {result.modified_count})")
+
+        if MONGODB_ENABLED:
+            try:
+                users_collection = await get_users_collection()
+
+                # Convert user.id to ObjectId if it's a string
+                user_id = ObjectId(user.id) if isinstance(user.id, str) else user.id
+
+                result = await users_collection.update_one(
+                    {"_id": user_id},
+                    {"$set": {
+                        "otp_code": otp_code,
+                        "otp_expires": otp_expires,
+                        "otp_verified": False
+                    }}
+                )
+
+                logger.info(f"OTP stored for user {user.email}: {otp_code} (matched: {result.matched_count}, modified: {result.modified_count})")
+            except Exception as e:
+                logger.warning(f"Could not store OTP in MongoDB: {e}. OTP email will still be sent.")
+        else:
+            logger.info(f"MongoDB not available, skipping OTP storage. OTP: {otp_code}")
         
         # Send OTP email
         otp_body = f"""Welcome to ScorePAL!
@@ -275,19 +282,27 @@ If you didn't create an account, please ignore this email."""
 async def send_otp(request: EmailVerificationRequest):
     """Send OTP to email for verification"""
     try:
-        from auth.auth_config import get_users_collection
-        users_collection = await get_users_collection()
-        
+        from auth.auth_config import MONGODB_ENABLED
+
         # Normalize email to lowercase
         email_normalized = request.email.lower().strip()
         logger.info(f"Sending OTP to email: {email_normalized}")
-        
-        # Try exact match first, then case-insensitive
-        user = await users_collection.find_one({"email": email_normalized})
-        if not user:
-            user = await users_collection.find_one({"email": {"$regex": f"^{email_normalized}$", "$options": "i"}})
-        
-        if not user:
+
+        user = None
+        if MONGODB_ENABLED:
+            try:
+                from auth.auth_config import get_users_collection
+                users_collection = await get_users_collection()
+
+                # Try exact match first, then case-insensitive
+                user = await users_collection.find_one({"email": email_normalized})
+                if not user:
+                    user = await users_collection.find_one({"email": {"$regex": f"^{email_normalized}$", "$options": "i"}})
+            except Exception as e:
+                logger.warning(f"Could not query MongoDB for user: {e}")
+
+        # Always return success message to prevent email enumeration
+        if not user and MONGODB_ENABLED:
             return {"message": "If the email exists, an OTP has been sent"}
         
         import random

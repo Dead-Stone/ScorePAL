@@ -6,7 +6,7 @@ Production-level security with password hashing and JWT tokens
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi_users import schemas
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, Field, validator
 import enum
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -25,7 +25,7 @@ class UserRole(str, enum.Enum):
 class User(BaseModel):
     """User model with MongoDB ObjectId and extended fields for ScorePAL"""
     id: Optional[str] = Field(default=None, alias="_id")
-    email: EmailStr
+    email: str
     hashed_password: str
     is_active: bool = True
     is_superuser: bool = False
@@ -131,7 +131,7 @@ class UserRead(BaseModel):
 
 class UserCreate(BaseModel):
     """Schema for creating new users"""
-    email: EmailStr
+    email: str
     password: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -156,7 +156,7 @@ class UserUpdate(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     """Schema for password reset request"""
-    email: EmailStr
+    email: str
 
 class PasswordResetConfirm(BaseModel):
     """Schema for password reset confirmation"""
@@ -170,11 +170,11 @@ class PasswordResetConfirm(BaseModel):
 
 class EmailVerificationRequest(BaseModel):
     """Schema for email verification request"""
-    email: EmailStr
+    email: str
 
 class LoginRequest(BaseModel):
     """Schema for login request"""
-    email: EmailStr
+    email: str
     password: str
 
 # Additional Pydantic models for frontend
