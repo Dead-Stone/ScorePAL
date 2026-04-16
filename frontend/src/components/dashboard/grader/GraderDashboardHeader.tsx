@@ -51,10 +51,10 @@ export const GraderDashboardHeader: React.FC<GraderDashboardHeaderProps> = ({
               <InputLabel>Select Course</InputLabel>
               <Select
                 value={selectedCourseId || ''}
-                onChange={(e) => onCourseChange(e.target.value as number)}
+                onChange={(e) => onCourseChange(e.target.value ? (e.target.value as unknown as number) : 0)}
                 label="Select Course"
               >
-                <MenuItem value={null}>All Courses</MenuItem>
+                <MenuItem value="">All Courses</MenuItem>
                 {courses.map((course) => (
                   <MenuItem key={course.id} value={course.id}>
                     {course.course_code} - {course.name}

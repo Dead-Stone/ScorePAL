@@ -240,7 +240,7 @@ export default function Dashboard() {
     try {
       const details = await fetchCourseDetails(courseId);
       startTransition(() => {
-        setCourseDetails(details);
+        setCourseDetails(details as any);
       });
       if (isGrader && details) {
         await loadStudents(courseId);
@@ -386,11 +386,13 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-8">
               {/* Stats Grid */}
-              {stats && !loadingGradings && (
+              {stats && !loadingGradings && (() => {
+                const s = stats as any;
+                return (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <StatCard
                     title="Total Submissions"
-                    value={stats.totalSubmissions}
+                    value={s.totalSubmissions}
                     change={12}
                     icon={<FileText className="w-6 h-6 text-blue-600" />}
                     iconBg="icon-container-blue"
@@ -398,7 +400,7 @@ export default function Dashboard() {
                   />
                   <StatCard
                     title="Average Score"
-                    value={`${stats.avgScore}%`}
+                    value={`${s.avgScore}%`}
                     change={5}
                     icon={<Target className="w-6 h-6 text-emerald-600" />}
                     iconBg="icon-container-emerald"
@@ -406,20 +408,21 @@ export default function Dashboard() {
                   />
                   <StatCard
                     title="Assignments"
-                    value={stats.assignmentsGraded}
+                    value={s.assignmentsGraded}
                     icon={<BookOpen className="w-6 h-6 text-violet-600" />}
                     iconBg="icon-container-violet"
                     delay={200}
                   />
                   <StatCard
                     title="Graded Today"
-                    value={stats.gradedToday || 0}
+                    value={s.gradedToday || 0}
                     icon={<CheckCircle2 className="w-6 h-6 text-amber-600" />}
                     iconBg="icon-container-amber"
                     delay={300}
                   />
                 </div>
-              )}
+                );
+              })()}
 
               {/* Main Content Grid */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

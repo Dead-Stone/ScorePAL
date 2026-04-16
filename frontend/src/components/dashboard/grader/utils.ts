@@ -50,5 +50,5 @@ export const groupGradingsByAssignment = (recentGradings: any[]): [string, any[]
     return acc;
   }, {} as Record<string, any[]>);
 
-  return Object.entries(grouped).sort((a, b) => b[1].length - a[1].length);
+  return (Object.entries(grouped) as [string, any[]][]).sort((a, b) => b[1].length - a[1].length);
 };

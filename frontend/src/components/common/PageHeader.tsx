@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { Box, Typography } from '@mui/material';
-import { DESIGN_CONSTANTS } from '@/constants/design';
+import { DESIGN_CONSTANTS, getGradientText } from '@/constants/design';
 
 interface PageHeaderProps {
   title: string;
@@ -33,7 +33,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
           variant="h3"
           fontWeight="bold"
           gutterBottom
-          sx={gradient ? DESIGN_CONSTANTS.typography.gradientText : {}}
+          sx={gradient ? getGradientText() : {}}
         >
           {title}
         </Typography>

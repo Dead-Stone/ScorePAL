@@ -20,6 +20,7 @@ import {
   Card,
   CardContent,
   Typography,
+  Chip,
 } from '@mui/material';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import { Result, SortField, SortOrder, ViewMode } from './types';

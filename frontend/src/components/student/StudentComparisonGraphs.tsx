@@ -386,8 +386,8 @@ export const StudentComparisonGraphs: React.FC<StudentComparisonGraphsProps> = (
               />
               <CardContent>
                 <ChartWrapper>
-                  <BarChart 
-                    data={distributionChartData} 
+                  <BarChart
+                    data={distributionChartData as any}
                     options={chartOptions}
                     height={300}
                   />
