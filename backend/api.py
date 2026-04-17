@@ -42,25 +42,25 @@ instead of the legacy `preprocessing_v2` / `grading_v2` modules.
 """
 
 # Import our existing services
-from services.file_preprocessor import FilePreprocessor
-from services.grading_service import GradingService
-from utils.neo4j_connector import Neo4jConnector
-from utils.directory_utils import ensure_directory_structure
-from rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
-from canvas_service import CanvasGradingService
-from config import get_settings  # Use absolute import
-from multi_agent_grading import MultiAgentGradingSystem
-from chat_api import router as chat_router
+from .services.file_preprocessor import FilePreprocessor
+from .services.grading_service import GradingService
+from .utils.neo4j_connector import Neo4jConnector
+from .utils.directory_utils import ensure_directory_structure
+from .rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
+from .canvas_service import CanvasGradingService
+from .config import get_settings
+from .multi_agent_grading import MultiAgentGradingSystem
+from .chat_api import router as chat_router
 
-from ai_extraction_service import ai_extraction_service, ExtractionResult
-from rubric_generation import get_rubric_from_text
-from auth.auth_config import require_roles
-from models.user import User, UserRole
+from .ai_extraction_service import ai_extraction_service, ExtractionResult
+from .rubric_generation import get_rubric_from_text
+from .auth.auth_config import require_roles
+from .models.user import User, UserRole
 
 # Import MongoDB services
-from services.results_service import save_grading_result
-from services.mongodb_service import get_submissions_collection, get_assignments_collection
-from models.submission import Submission, SubmissionCreate
+from .services.results_service import save_grading_result
+from .services.mongodb_service import get_submissions_collection, get_assignments_collection
+from .models.submission import Submission, SubmissionCreate
 
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
@@ -120,8 +120,11 @@ app.include_router(rubric_router, tags=["rubrics"])
 app.include_router(rubric_router, prefix="/api", tags=["rubrics"])
 
 # Import and include the knowledge graph router
-from .knowledge_graph_api import router as knowledge_graph_router
-app.include_router(knowledge_graph_router)
+try:
+    from .knowledge_graph_api import router as knowledge_graph_router
+    app.include_router(knowledge_graph_router)
+except ImportError as e:
+    logger.warning(f"Could not import knowledge graph router: {e}")
 
 # Include the chat router
 app.include_router(chat_router)
@@ -153,7 +156,7 @@ except ImportError as e:
 
 # Include analytics routes
 try:
-    from api.analytics_routes import router as analytics_router
+    from .api.analytics_routes import router as analytics_router
     app.include_router(analytics_router)
     logger.info("Analytics routes included successfully")
 except ImportError as e:
@@ -161,7 +164,7 @@ except ImportError as e:
 
 # Include settings routes (Canvas/API key configuration)
 try:
-    from api.settings_routes import router as settings_router
+    from .api.settings_routes import router as settings_router
     # settings_router already has prefix="/api/settings"
     app.include_router(settings_router)
     logger.info("Settings routes included successfully")
@@ -170,7 +173,7 @@ except ImportError as e:
 
 # Include credits routes
 try:
-    from api.credits_routes import router as credits_router
+    from .api.credits_routes import router as credits_router
     app.include_router(credits_router)
     logger.info("Credits routes included successfully")
 except ImportError as e:
@@ -178,7 +181,7 @@ except ImportError as e:
 
 # Include public grading routes (no authentication required)
 try:
-    from api.grade_public_routes import router as public_grade_router
+    from .api.grade_public_routes import router as public_grade_router
     app.include_router(public_grade_router)
     
     # Institution management routes
@@ -194,7 +197,7 @@ except ImportError as e:
 
 # Include AI configuration routes
 try:
-    from api.ai_config_routes import router as ai_config_router
+    from .api.ai_config_routes import router as ai_config_router
     app.include_router(ai_config_router, prefix="/api/ai-config", tags=["AI Configuration"])
     logger.info("AI configuration routes included successfully")
 except ImportError as e:
@@ -202,15 +205,7 @@ except ImportError as e:
 
 # Include Student AI Assistant routes
 try:
-    from api.student_ai_routes import router as student_ai_router
-    app.include_router(student_ai_router, tags=["Student AI"])
-    logger.info("Student AI assistant routes included successfully")
-except ImportError as e:
-    logger.warning(f"Could not import student AI routes: {e}")
-
-# Include Student AI Assistant routes
-try:
-    from api.student_ai_routes import router as student_ai_router
+    from .api.student_ai_routes import router as student_ai_router
     app.include_router(student_ai_router, tags=["Student AI"])
     logger.info("Student AI assistant routes included successfully")
 except ImportError as e:
@@ -238,11 +233,8 @@ try:
     directories = ensure_directory_structure()
     logger.info("Directory structure ensured")
     
-    # Initialize MongoDB indexes
+    # Initialize MongoDB indexes (will be done on startup event)
     try:
-        from .services.mongodb_service import initialize_indexes
-        import asyncio
-        # Try to initialize indexes (will be done properly on startup event)
         logger.info("MongoDB indexes will be initialized on startup")
     except Exception as e:
         logger.warning(f"Could not prepare MongoDB index initialization: {e}")
