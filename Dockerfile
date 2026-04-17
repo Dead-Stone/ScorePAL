@@ -44,4 +44,4 @@ EXPOSE 8000
 WORKDIR /app
 
 # Start FastAPI (run from /app so Python can find backend module)
-CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

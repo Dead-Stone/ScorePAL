@@ -16,7 +16,7 @@ for path in (root_dir, current_dir):
     if path_str not in sys.path:
         sys.path.insert(0, path_str)
 
-api_file = current_dir / "api.py"
+api_file = current_dir / "main.py"
 
 module_name = "backend._api_entrypoint"
 spec = importlib.util.spec_from_file_location(module_name, api_file)

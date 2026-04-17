@@ -36,8 +36,8 @@ RUN mkdir -p /app/backend/data \
     /app/backend/grading_results \
     /app/backend/synced_submissions
 
-# Set working directory
-WORKDIR /app/backend
+# Set working directory to project root so 'backend' is a proper package
+WORKDIR /app
 
 # Environment variables
 ENV PYTHONPATH=/app
@@ -47,5 +47,5 @@ ENV PORT=8000
 # Expose port
 EXPOSE 8000
 
-# Start FastAPI application
-CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Start FastAPI - use backend.main to avoid conflict with backend/api/ package directory
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
