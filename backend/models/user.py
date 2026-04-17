@@ -5,7 +5,6 @@ Production-level security with password hashing and JWT tokens
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from fastapi_users import schemas
 from pydantic import BaseModel, Field, validator
 import enum
 from typing import Optional, Dict, Any
