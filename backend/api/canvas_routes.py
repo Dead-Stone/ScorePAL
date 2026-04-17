@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, root_validator, validator
 
 GEMINI_GRADING_MODEL = os.getenv("GEMINI_GRADING_MODEL", "gemini-2.5-flash")
 
-from ..canvas_service import CanvasGradingService
+from ..services.canvas_service import CanvasGradingService
 from ..config import get_settings
 from ..utils.canvas_connector import CanvasConnector
 from ..services.grading_service import GradingService
@@ -28,7 +28,7 @@ def extract_text_from_pdf(file_path: str) -> str:
     return preprocessor.extract_text_from_file(file_path)
 
 # Import rubric functionality directly
-from ..rubric_api import RUBRICS, load_rubrics_from_disk
+from .rubric_routes import RUBRICS, load_rubrics_from_disk
 
 # Import MongoDB services
 from ..services.results_service import save_grading_result

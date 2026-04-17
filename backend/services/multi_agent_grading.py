@@ -17,8 +17,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path
 
-from .services.grading_service import GradingService
-from .utils.knowledge_graph import KnowledgeGraph
+from .grading_service import GradingService
+from ..utils.knowledge_graph import KnowledgeGraph
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

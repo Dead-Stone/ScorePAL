@@ -13,8 +13,8 @@ from pathlib import Path
 from datetime import datetime
 import os
 
-from .auth.auth_config import current_active_user, require_roles
-from .models.user import User, UserRole
+from ..auth.auth_config import current_active_user, require_roles
+from ..models.user import User, UserRole
 
 router = APIRouter(prefix="/rubrics", tags=["rubrics"])
 logger = logging.getLogger(__name__)

@@ -13,7 +13,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 
-from ..image_extraction_service import ImageExtractionService
+from ..services.image_extraction_service import ImageExtractionService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

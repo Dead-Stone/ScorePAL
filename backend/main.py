@@ -46,14 +46,14 @@ from .services.file_preprocessor import FilePreprocessor
 from .services.grading_service import GradingService
 from .utils.neo4j_connector import Neo4jConnector
 from .utils.directory_utils import ensure_directory_structure
-from .rubric_api import router as rubric_router, RUBRICS, save_rubrics_to_disk
-from .canvas_service import CanvasGradingService
+from .api.rubric_routes import router as rubric_router, RUBRICS, save_rubrics_to_disk
+from .services.canvas_service import CanvasGradingService
 from .config import get_settings
-from .multi_agent_grading import MultiAgentGradingSystem
-from .chat_api import router as chat_router
+from .services.multi_agent_grading import MultiAgentGradingSystem
+from .api.chat_routes import router as chat_router
 
-from .ai_extraction_service import ai_extraction_service, ExtractionResult
-from .rubric_generation import get_rubric_from_text
+from .services.ai_extraction_service import ai_extraction_service, ExtractionResult
+from .services.rubric_generation import get_rubric_from_text
 from .auth.auth_config import require_roles
 from .models.user import User, UserRole
 
@@ -119,7 +119,7 @@ app.include_router(rubric_router, prefix="/api", tags=["rubrics"])
 
 # Import and include the knowledge graph router
 try:
-    from .knowledge_graph_api import router as knowledge_graph_router
+    from .api.knowledge_graph_routes import router as knowledge_graph_router
     app.include_router(knowledge_graph_router)
 except ImportError as e:
     logger.warning(f"Could not import knowledge graph router: {e}")
@@ -1987,7 +1987,7 @@ async def get_submission_files(assignment_id: str):
         raise HTTPException(status_code=500, detail=f"Error getting file information: {str(e)}")
 
 # Import Canvas-related modules
-from .canvas_service import CanvasGradingService
+from .services.canvas_service import CanvasGradingService
 from .utils.canvas_connector import CanvasConnector
 
 # Add new Canvas endpoints
@@ -3374,7 +3374,7 @@ async def extract_enhanced_content(file: UploadFile = File(...)):
         logger.info(f"Processing enhanced extraction for: {file.filename}")
         
         # Import the enhanced extraction functions
-        from .extraction_service_v2 import (
+        from .services.extraction_service_v2 import (
             extract_networking_homework_content,
             extract_academic_content_enhanced,
             enhance_networking_content
@@ -3438,7 +3438,7 @@ async def extract_networking_content(file: UploadFile = File(...)):
         logger.info(f"Processing networking extraction for: {file.filename}")
         
         # Import the networking extraction function
-        from .extraction_service_v2 import extract_networking_homework_content
+        from .services.extraction_service_v2 import extract_networking_homework_content
         
         # Extract content using specialized networking extraction
         extracted_content = extract_networking_homework_content(temp_file_path)
@@ -3528,7 +3528,7 @@ async def extract_with_ai(
         else:
             # Use traditional OCR extraction
             try:
-                from .extraction_service_v2 import extract_academic_content_enhanced
+                from .services.extraction_service_v2 import extract_academic_content_enhanced
                 
                 content = extract_academic_content_enhanced(temp_file_path)
                 

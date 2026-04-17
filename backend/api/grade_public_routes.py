@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from ..services.file_preprocessor import FilePreprocessor
-from ..multi_agent_grading import MultiAgentGradingSystem
+from ..services.multi_agent_grading import MultiAgentGradingSystem
 
 logger = logging.getLogger(__name__)
 
