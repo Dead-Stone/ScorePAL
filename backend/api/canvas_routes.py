@@ -13,16 +13,13 @@ import requests
 from fastapi import APIRouter, HTTPException, status, Request, Form, Body, Depends, BackgroundTasks
 from pydantic import BaseModel, Field, root_validator, validator
 
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GEMINI_GRADING_MODEL = os.getenv("GEMINI_GRADING_MODEL", "gemini-2.5-flash")
 
-from canvas_service import CanvasGradingService
-from config import get_settings
-from utils.canvas_connector import CanvasConnector
-from services.grading_service import GradingService
-from services.file_preprocessor import FilePreprocessor
+from ..canvas_service import CanvasGradingService
+from ..config import get_settings
+from ..utils.canvas_connector import CanvasConnector
+from ..services.grading_service import GradingService
+from ..services.file_preprocessor import FilePreprocessor
 
 # Helper function for PDF text extraction
 def extract_text_from_pdf(file_path: str) -> str:
@@ -31,12 +28,12 @@ def extract_text_from_pdf(file_path: str) -> str:
     return preprocessor.extract_text_from_file(file_path)
 
 # Import rubric functionality directly
-from rubric_api import RUBRICS, load_rubrics_from_disk
+from ..rubric_api import RUBRICS, load_rubrics_from_disk
 
 # Import MongoDB services
-from services.results_service import save_grading_result
-from services.mongodb_service import get_submissions_collection, get_assignments_collection
-from services.analytics_service import compute_assignment_analytics
+from ..services.results_service import save_grading_result
+from ..services.mongodb_service import get_submissions_collection, get_assignments_collection
+from ..services.analytics_service import compute_assignment_analytics
 
 settings = get_settings()
 

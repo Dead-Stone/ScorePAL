@@ -6,9 +6,9 @@ Provides analytics endpoints with role-based access control.
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Query
-from models.user import User, UserRole
-from auth.auth_config import current_active_user
-from services.analytics_service import (
+from ..models.user import User, UserRole
+from ..auth.auth_config import current_active_user
+from ..services.analytics_service import (
     compute_assignment_analytics,
     compute_student_analytics,
     compute_rubric_analytics,
@@ -18,8 +18,8 @@ from services.analytics_service import (
     compute_grader_assignment_analytics,
     compute_canvas_course_analytics
 )
-from services.mongodb_service import get_results_collection, get_assignments_collection
-from utils.permissions import require_role, can_view_analytics, anonymize_student_data
+from ..services.mongodb_service import get_results_collection, get_assignments_collection
+from ..utils.permissions import require_role, can_view_analytics, anonymize_student_data
 
 logger = logging.getLogger(__name__)
 

@@ -8,12 +8,12 @@ from typing import List, Optional
 from datetime import datetime
 from bson import ObjectId
 
-from models.institution import (
+from ..models.institution import (
     Institution, InstitutionCreate, InstitutionUpdate, InstitutionRead,
     InstitutionStatus, InstitutionMember
 )
-from models.user import User, UserRole
-from auth.auth_config import (
+from ..models.user import User, UserRole
+from ..auth.auth_config import (
     current_active_user, require_admin, require_teacher_or_admin,
     get_users_collection, get_mongodb_client
 )

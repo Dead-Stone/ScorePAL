@@ -31,8 +31,8 @@ except ImportError:
     JOSE_AVAILABLE = False
     logger.warning("python-jose not available - LTI JWT verification will be limited")
 
-from auth.auth_config import current_active_user
-from models.user import User
+from ..auth.auth_config import current_active_user
+from ..models.user import User
 
 logger = logging.getLogger(__name__)
 

@@ -17,9 +17,9 @@ import json
 import re
 import requests
 
-from utils.canvas_connector import CanvasConnector
-from services.file_preprocessor import FilePreprocessor
-from services.grading_service import GradingService
+from .utils.canvas_connector import CanvasConnector
+from .services.file_preprocessor import FilePreprocessor
+from .services.grading_service import GradingService
 
 logger = logging.getLogger(__name__)
 

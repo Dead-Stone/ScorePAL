@@ -8,8 +8,8 @@ from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
 
-from utils.knowledge_graph import KnowledgeGraph
-from auth.auth_config import current_active_user
+from .utils.knowledge_graph import KnowledgeGraph
+from .auth.auth_config import current_active_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

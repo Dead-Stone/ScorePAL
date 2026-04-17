@@ -8,17 +8,17 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 from datetime import datetime
 
-from models.user import User, UserRole
-from auth.auth_config import current_active_user
-from services.results_service import (
+from ..models.user import User, UserRole
+from ..auth.auth_config import current_active_user
+from ..services.results_service import (
     get_grading_result,
     get_results_by_assignment,
     get_results_by_student,
     get_result_by_submission,
     save_grading_result
 )
-from services.mongodb_service import get_results_collection
-from utils.permissions import (
+from ..services.mongodb_service import get_results_collection
+from ..utils.permissions import (
     require_role,
     can_view_result,
     filter_results_by_role,

@@ -7,8 +7,8 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from bson import ObjectId
-from models.grading_result import GradingResult, GradingResultCreate, CriterionScore
-from services.mongodb_service import get_results_collection, get_submissions_collection
+from ..models.grading_result import GradingResult, GradingResultCreate, CriterionScore
+from ..services.mongodb_service import get_results_collection, get_submissions_collection
 import json
 
 logger = logging.getLogger(__name__)

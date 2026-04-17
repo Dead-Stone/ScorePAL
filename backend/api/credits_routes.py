@@ -8,9 +8,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 from pydantic import BaseModel
-from models.user import User
-from auth.auth_config import current_active_user, require_admin
-from auth.auth_config import get_users_collection
+from ..models.user import User
+from ..auth.auth_config import current_active_user, require_admin
+from ..auth.auth_config import get_users_collection
 from bson import ObjectId
 
 logger = logging.getLogger(__name__)

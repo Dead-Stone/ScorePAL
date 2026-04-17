@@ -14,13 +14,13 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from models.user import (
+from ..models.user import (
     User, UserCreate, UserRead, UserUpdate, UserRole, UserProfile, UserStats,
     PasswordResetRequest, PasswordResetConfirm, EmailVerificationRequest, LoginRequest,
     LoginResponse, PasswordResetResponse
 )
-from models.institution import Institution, InstitutionStatus
-from auth.auth_config import (
+from ..models.institution import Institution, InstitutionStatus
+from ..auth.auth_config import (
     user_manager, 
     current_active_user, 
     current_verified_user,
@@ -33,7 +33,7 @@ from auth.auth_config import (
     EMAIL_VERIFICATION_EXPIRY_HOURS,
     JWT_EXPIRATION_HOURS
 )
-from models.user import generate_secure_token
+from ..models.user import generate_secure_token
 
 # Create router
 router = APIRouter()

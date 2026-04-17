@@ -29,7 +29,7 @@ if backend_env.exists():
     load_dotenv(backend_env, override=True)
 
 # Import models
-from models.user import (
+from ..models.user import (
     User, UserCreate, UserRead, UserUpdate, UserRole, 
     hash_password, verify_password, generate_secure_token, validate_password_strength
 )

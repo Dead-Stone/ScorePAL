@@ -39,8 +39,8 @@ try:
 except ImportError:
     COHERE_AVAILABLE = False
 
-from models.ai_config import AIProvider, AIModelConfig, ModelSelectionRequest
-from utils.encryption import encrypt_api_key, decrypt_api_key
+from ..models.ai_config import AIProvider, AIModelConfig, ModelSelectionRequest
+from ..utils.encryption import encrypt_api_key, decrypt_api_key
 
 logger = logging.getLogger(__name__)
 

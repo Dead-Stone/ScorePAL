@@ -3,8 +3,8 @@ Utility functions for institution detection and management
 """
 
 from typing import Optional
-from models.institution import Institution
-from api.institution_routes import get_institutions_collection
+from ..models.institution import Institution
+from ..api.institution_routes import get_institutions_collection
 
 
 async def detect_institution_from_email(email: str) -> Optional[dict]:

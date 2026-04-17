@@ -4,7 +4,7 @@ Permission utilities for role-based access control in ScorePAL.
 
 from typing import List, Optional, Dict, Any
 from fastapi import HTTPException, status
-from models.user import User, UserRole
+from ..models.user import User, UserRole
 from motor.motor_asyncio import AsyncIOMotorCollection
 from bson import ObjectId
 import logging

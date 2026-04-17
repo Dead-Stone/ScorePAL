@@ -8,8 +8,8 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from statistics import mean, median, mode, stdev
 from collections import Counter
-from services.mongodb_service import get_results_collection, get_analytics_collection, get_assignments_collection
-from models.analytics_cache import AnalyticsCache, ClassStats, RubricPerformance, StudentRanking
+from ..services.mongodb_service import get_results_collection, get_analytics_collection, get_assignments_collection
+from ..models.analytics_cache import AnalyticsCache, ClassStats, RubricPerformance, StudentRanking
 from bson import ObjectId
 
 logger = logging.getLogger(__name__)

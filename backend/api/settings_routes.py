@@ -12,12 +12,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 import requests
 import httpx
-from models.user import User
-from models.user_settings import UserSettings, UserSettingsUpdate, CanvasKeyTestResponse
-from auth.auth_config import current_active_user, require_teacher_or_admin, require_grader_or_admin
-from services.mongodb_service import get_user_settings_collection
+from ..models.user import User
+from ..models.user_settings import UserSettings, UserSettingsUpdate, CanvasKeyTestResponse
+from ..auth.auth_config import current_active_user, require_teacher_or_admin, require_grader_or_admin
+from ..services.mongodb_service import get_user_settings_collection
 from bson import ObjectId
-from utils.cache_service import (
+from ..utils.cache_service import (
     cache, 
     CACHE_TTL_CONFIG, 
     CACHE_TTL_COURSES, 

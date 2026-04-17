@@ -7,10 +7,10 @@ import logging
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from pydantic import BaseModel
-from auth.auth_config import current_active_user
-from models.user import User
-from services.mock_test_generator import mock_test_generator
-from services.mongodb_service import get_user_settings_collection
+from ..auth.auth_config import current_active_user
+from ..models.user import User
+from ..services.mock_test_generator import mock_test_generator
+from ..services.mongodb_service import get_user_settings_collection
 
 logger = logging.getLogger(__name__)
 

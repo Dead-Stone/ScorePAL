@@ -10,14 +10,14 @@ import json
 from datetime import datetime
 from bson import ObjectId
 
-from models.ai_config import (
+from ..models.ai_config import (
     AIProvider, ModelCapability
 )
-from models.user import User
-from auth.auth_config import current_active_user
-from services.universal_ai_service import universal_ai_service
-from services.mongodb_service import get_ai_configs_collection
-from utils.encryption import encrypt_api_key, decrypt_api_key
+from ..models.user import User
+from ..auth.auth_config import current_active_user
+from ..services.universal_ai_service import universal_ai_service
+from ..services.mongodb_service import get_ai_configs_collection
+from ..utils.encryption import encrypt_api_key, decrypt_api_key
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
