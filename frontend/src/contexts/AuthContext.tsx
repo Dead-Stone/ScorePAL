@@ -81,7 +81,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       }
 
-      // Using centralized API config - change in /src/config/api.js for all endpoints
         // Create abort controller for timeout (compatible with all browsers)
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -140,8 +139,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const authToken = token || localStorage.getItem('access_token');
       if (!authToken) return;
 
-      // Using centralized API config - change in /src/config/api.js for all endpoints
-      // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me/stats`, {
       const response = await fetch(`${API_ENDPOINTS.AUTH.ME}/stats`, {
         headers: {
           'Authorization': `Bearer ${authToken}`,
@@ -309,8 +306,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const token = localStorage.getItem('access_token');
       if (!token) return false;
 
-      // Using centralized API config - change in /src/config/api.js for all endpoints
-      // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me/profile`, {
       const response = await fetch(`${API_ENDPOINTS.AUTH.ME}/profile`, {
         method: 'PUT',
         headers: {
@@ -336,8 +331,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const token = localStorage.getItem('access_token');
       if (!token) throw new Error('Not authenticated');
 
-      // Using centralized API config - change in /src/config/api.js for all endpoints
-      // const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me/can-grade`, {
       const response = await fetch(`${API_ENDPOINTS.AUTH.ME}/can-grade`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -364,7 +357,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const token = localStorage.getItem('access_token');
       if (!token) return;
 
-      // Using centralized API config - change in /src/config/api.js for all endpoints
       // await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me/increment-grading`, {
       await fetch(`${API_ENDPOINTS.AUTH.ME}/increment-grading`, {
         method: 'POST',

@@ -66,18 +66,8 @@ class GradingWorker:
             image_enhanced = False
             
             if file_path and os.path.exists(file_path):
-                try:
-                    from enhanced_image_extraction import enhance_submission_with_images
-                    context = f"Assignment: {assignment_id}, Student: {student_name}"
-                    enhanced_submission = enhance_submission_with_images(
-                        submission_text, file_path, context
-                    )
-                    image_enhanced = enhanced_submission != submission_text
-                    if image_enhanced:
-                        logger.info(f"Enhanced submission for {student_name} with AI vision analysis")
-                except Exception as img_error:
-                    logger.warning(f"Image enhancement failed for {student_name}: {img_error}")
-                    # Continue with original submission if image enhancement fails
+                # Image enhancement removed; use original submission text
+                pass
             
             # Import the rubric-based grading function
             from api.canvas_routes import grade_submission_with_strict_rubric

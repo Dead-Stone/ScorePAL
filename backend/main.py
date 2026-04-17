@@ -70,8 +70,6 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 load_dotenv()
 
-# Import system modules for health checks
-import time
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -3376,7 +3374,7 @@ async def extract_enhanced_content(file: UploadFile = File(...)):
         logger.info(f"Processing enhanced extraction for: {file.filename}")
         
         # Import the enhanced extraction functions
-        from extraction_service_v2 import (
+        from .extraction_service_v2 import (
             extract_networking_homework_content,
             extract_academic_content_enhanced,
             enhance_networking_content
@@ -3440,7 +3438,7 @@ async def extract_networking_content(file: UploadFile = File(...)):
         logger.info(f"Processing networking extraction for: {file.filename}")
         
         # Import the networking extraction function
-        from extraction_service_v2 import extract_networking_homework_content
+        from .extraction_service_v2 import extract_networking_homework_content
         
         # Extract content using specialized networking extraction
         extracted_content = extract_networking_homework_content(temp_file_path)
@@ -3530,7 +3528,7 @@ async def extract_with_ai(
         else:
             # Use traditional OCR extraction
             try:
-                from backend.extraction_service_v2 import extract_academic_content_enhanced
+                from .extraction_service_v2 import extract_academic_content_enhanced
                 
                 content = extract_academic_content_enhanced(temp_file_path)
                 

@@ -1,8 +1,10 @@
 """
-App entry point for Railway deployment.
-This file exposes the FastAPI app for Railway's auto-detection.
+App entry point for Railway/local deployment.
+Loads the FastAPI app from main.py via importlib to avoid the naming conflict
+between backend/main.py (module file) and backend/api/ (package directory).
 """
 
+import os
 import sys
 import importlib.util
 from pathlib import Path
@@ -10,11 +12,9 @@ from pathlib import Path
 current_dir = Path(__file__).parent
 root_dir = current_dir.parent
 
-# Ensure both the project root and backend package dir are importable
-for path in (root_dir, current_dir):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
+# Ensure project root is on sys.path so 'backend' is importable as a package
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 
 api_file = current_dir / "main.py"
 
