@@ -22,7 +22,7 @@ export default async function handler(req, res) {
       processedApiKey = `Bearer ${processedApiKey}`;
     }
 
-    // Forward request to backend
+    // Forward request to backend with extended timeout for sync operations
     const response = await axios.post(
       `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/canvas/get-submissions`,
       {
@@ -34,6 +34,7 @@ export default async function handler(req, res) {
         headers: {
           'Content-Type': 'application/json',
         },
+        timeout: 300000, // 5 minutes timeout for sync operations
       }
     );
 
@@ -43,6 +44,14 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('Error fetching Canvas submissions:', error);
+    
+    // Handle timeout errors specifically
+    if (error.code === 'ECONNABORTED') {
+      return res.status(408).json({
+        status: 'timeout',
+        message: 'The sync operation is taking longer than expected. Please try again in a few minutes.',
+      });
+    }
     
     return res.status(error.response?.status || 500).json({
       status: 'error',

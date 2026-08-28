@@ -1,52 +1,42 @@
-import React, { useState } from 'react';
+/**
+ * ScorePAL - AI-Powered Academic Grading Assistant
+ * Main Application Layout & Theme Configuration
+ * 
+ * @author Mohana Moganti (@Dead-Stone)
+ * @license MIT
+ * @repository https://github.com/Dead-Stone/ScorePAL
+ */
+
+import React, { Suspense } from 'react';
 import Head from 'next/head';
 import { AppProps } from 'next/app';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
+import dynamic from 'next/dynamic';
+import '../styles/globals.css';
+import { AuthProvider } from '../contexts/AuthContext';
 import {
   Box,
-  Drawer,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  ListItemButton,
-  Divider,
-  IconButton,
-  useMediaQuery,
-  Paper,
-  ListSubheader,
-  Tooltip,
-  Chip,
   Button,
 } from '@mui/material';
 import Link from 'next/link';
-import MenuIcon from '@mui/icons-material/Menu';
-import HomeIcon from '@mui/icons-material/Home';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import CreateIcon from '@mui/icons-material/Create';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import HelpIcon from '@mui/icons-material/Help';
 import GitHubIcon from '@mui/icons-material/GitHub';
-import BusinessIcon from '@mui/icons-material/Business';
-import GradingIcon from '@mui/icons-material/Grading';
-import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import { useRouter } from 'next/router';
+import { useAuth } from '../contexts/AuthContext';
 
-// Create a theme instance
+// Create a theme instance with brand colors
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#1976d2', // blue
-      light: '#63a4ff',
-      dark: '#004ba0',
+      main: '#1D80C3', // ScorePAL brand blue
+      light: '#4F9DD6',
+      dark: '#1565A0',
       contrastText: '#fff',
     },
     secondary: {
-      main: '#ff4081', // pink accent
-      light: '#ff79b0',
-      dark: '#c60055',
+      main: '#4F46E5', // ScorePAL brand indigo
+      light: '#6366F1',
+      dark: '#4338CA',
       contrastText: '#fff',
     },
     background: {
@@ -129,28 +119,36 @@ const theme = createTheme({
   },
 });
 
-const drawerWidth = 150;
 
-const navigationItems = [
-  { text: 'Home', icon: <HomeIcon />, path: '/' },
-  { text: 'Grade', icon: <Box component="img" src="/grade-logo.png" alt="Grade Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/grade' },
-  { text: 'Results', icon: <GradingIcon />, path: '/results' },
-  { text: 'Rubrics', icon: <Box component="img" src="/rubric-logo.png" alt="Rubric Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/rubric' },
-  { text: 'Canvas', icon: <Box component="img" src="/canvas-logo.jpg" alt="Canvas Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/canvas' },
-  { text: 'Moodle', icon: <Box component="img" src="/moodle-logo.png" alt="Moodle Logo" sx={{ height: 24, width: 24, objectFit: 'contain' }} />, path: '/moodle-integration' },
-];
 
-export default function MyApp({ Component, pageProps }: AppProps) {
+function AppContent({ Component, pageProps }: AppProps) {
   const router = useRouter();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const [mobileOpen, setMobileOpen] = useState(false);
+  
+  // Enable instant prefetching for smooth transitions
+  React.useEffect(() => {
+    // Prefetch all routes on mount for instant navigation
+    const prefetchRoutes = [
+      '/dashboard',
+      '/grade',
+      '/settings',
+      '/profile',
+      '/results',
+      '/help',
+      '/auth/login',
+      '/auth/register',
+    ];
+    
+    prefetchRoutes.forEach((route) => {
+      router.prefetch(route).catch(() => {
+        // Silently fail - prefetching is optional
+      });
+    });
+  }, [router]);
 
-  const handleDrawerToggle = () => {
-    setMobileOpen(!mobileOpen);
-  };
 
-  // Pages that should not use the layout (like auth pages)
-  const noLayoutPaths = ['/login', '/register'];
+
+  // Pages that should not use the layout (like auth pages and landing)
+  const noLayoutPaths = ['/landing', '/auth/login', '/auth/register', '/auth/forgot-password', '/', '/demo'];
   const shouldUseLayout = !noLayoutPaths.includes(router.pathname);
 
   const FloatingButtons = () => (
@@ -158,27 +156,10 @@ export default function MyApp({ Component, pageProps }: AppProps) {
       position: 'fixed',
       top: 16,
       right: 16,
-      zIndex: 1200,
+      zIndex: 9998, // Below nav but above other content
       display: 'flex',
       gap: 1,
     }}>
-      <Button
-        variant="contained"
-        sx={{
-          bgcolor: 'rgba(255, 255, 255, 0.8)',
-          color: 'primary.main',
-          minWidth: 40,
-          width: 40,
-          height: 40,
-          borderRadius: '50%',
-          p: 0,
-          '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
-        }}
-        component={Link}
-        href="/help"
-      >
-        <HelpIcon />
-      </Button>
       <Button
         variant="contained"
         sx={{
@@ -191,7 +172,7 @@ export default function MyApp({ Component, pageProps }: AppProps) {
           p: 0,
           '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.9)' },
         }}
-        href="https://github.com/your-repo"
+        href="https://github.com/Dead-Stone"
         target="_blank"
         rel="noopener noreferrer"
       >
@@ -200,140 +181,47 @@ export default function MyApp({ Component, pageProps }: AppProps) {
     </Box>
   );
 
-  const drawer = (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'background.default', borderRight: '1px solid #e0e0e0', boxShadow: 2, width: 0, minWidth: drawerWidth }}>
-      <Box sx={{ p: 2, display: 'flex', alignItems: 'center', justifyContent: 'fill', minHeight: 8 }}>
-        <img
-          src="/scorePAL-logo.png"
-          alt="ScorePAL Logo"
-          style={{
-            height: 128,
-            width: 128,
-            objectFit: 'contain',
-            display: 'block',
-            background: 'transparent',
-          }}
-        />
-      </Box>
-      <Divider sx={{ my: 1 }} />
-      <List
-        sx={{ pr: 0.5 }}
-      >
-        {navigationItems.map((item) => (
-          <ListItem key={item.text} disablePadding sx={{ minHeight: 32 }}>
-            <Tooltip title={(item.text === 'Results' || item.text === 'Moodle') ? 'Coming Soon' : item.text} placement="right" arrow disableInteractive={false}>
-              <Box sx={{ flexGrow: 1, display: 'flex' }}>
-            <ListItemButton 
-              component={Link} 
-              href={item.path}
-                  disabled={(item.text === 'Results' || item.text === 'Moodle')}
-              selected={router.pathname === item.path || router.pathname.startsWith(`${item.path}/`)}
-              sx={{
-                    borderRadius: 2,
-                    mx: 1,
-                    my: 0.5,
-                    ...(item.text === 'Results' || item.text === 'Moodle' ? { color: 'text.disabled' } : {}),
-                '&.Mui-selected': {
-                      backgroundColor: 'primary.100',
-                      color: 'primary.main',
-                      fontWeight: 'bold',
-                      '& .MuiListItemIcon-root': { color: 'primary.main' },
-                    },
-                  '&:hover': {
-                      bgcolor: 'action.hover',
-                },
-              }}
-            >
-                  <ListItemIcon sx={{ minWidth: 40, color: (item.text === 'Results' || item.text === 'Moodle') ? 'text.disabled' : 'text.secondary' }}>
-                {item.icon}
-              </ListItemIcon>
-                  <ListItemText primary={item.text} sx={{ '& .MuiListItemText-primary': { fontSize: 12, fontWeight: 'bold' } }} />
-            </ListItemButton>
-              </Box>
-            </Tooltip>
-          </ListItem>
-        ))}
-      </List>
-      <Box sx={{ flexGrow: 1 }} />
-      <Divider sx={{ my: 1 }} />
-    </Box>
-  );
 
   return (
     <>
       <Head>
         <title>ScorePAL - AI-Powered Grading</title>
         <meta name="viewport" content="minimum-scale=1, initial-scale=1, width=device-width" />
+        <link rel="icon" type="image/svg+xml" href="/scorepal-logo-icon-only.svg" />
+        <link rel="alternate icon" href="/scorepal-logo-icon-only.svg" />
       </Head>
       <ThemeProvider theme={theme}>
         <CssBaseline />
         {shouldUseLayout ? (
-          <Box sx={{ display: 'flex' }}>
-            <Box
-              component="nav"
-              sx={{ width: { md: drawerWidth }, flexShrink: { md: 0 } }}
-            >
-              {/* Mobile drawer */}
-              <Drawer
-                variant="temporary"
-                open={mobileOpen}
-                onClose={handleDrawerToggle}
-                ModalProps={{
-                  keepMounted: true, // Better open performance on mobile
-                }}
-                sx={{
-                  display: { xs: 'block', md: 'none' },
-                  '& .MuiDrawer-paper': { 
-                    boxSizing: 'border-box', 
-                    width: drawerWidth 
-                  },
-                }}
-              >
-                {drawer}
-              </Drawer>
-              
-              {/* Desktop drawer */}
-              <Drawer
-                variant="permanent"
-                sx={{
-                  display: { xs: 'none', md: 'block' },
-                  '& .MuiDrawer-paper': { 
-                    boxSizing: 'border-box', 
-                    width: drawerWidth,
-                    borderRight: 'none',
-                    boxShadow: 'none',
-                  },
-                }}
-                open
-              >
-                {drawer}
-              </Drawer>
-            </Box>
-            <Box
-              component="main"
-              sx={{
-                flexGrow: 1,
-                width: { md: `calc(100% - ${drawerWidth}px)` },
-                minHeight: '100vh',
-                backgroundColor: 'background.default',
-                marginTop: 0,
-                borderRadius: theme.shape.borderRadius * 4,
-                boxShadow: theme.shadows[1],
-                ml: { md: 4 },
-                mr: { md: 4 },
-                mt: 4,
-                mb: 4,
-                p: 4,
-              }}
-            >
+          <Box
+            component="main"
+            sx={{
+              width: '100%',
+              minHeight: '100vh',
+              backgroundColor: 'background.default',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <Suspense fallback={null}>
               <Component {...pageProps} />
-            </Box>
+            </Suspense>
           </Box>
         ) : (
-          <Component {...pageProps} />
+          <Suspense fallback={null}>
+            <Component {...pageProps} />
+          </Suspense>
         )}
         <FloatingButtons />
       </ThemeProvider>
     </>
+  );
+}
+
+export default function MyApp(props: AppProps) {
+  return (
+    <AuthProvider>
+      <AppContent {...props} />
+    </AuthProvider>
   );
 } 

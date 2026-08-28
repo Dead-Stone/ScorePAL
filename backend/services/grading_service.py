@@ -1,7 +1,6 @@
 import re
 import os
 import logging
-import google.generativeai as genai
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -11,46 +10,26 @@ class GradingService:
         """Initialize the grading service with API key."""
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if self.api_key:
-            genai.configure(api_key=self.api_key)
+            from google import genai
+            self.client = genai.Client(api_key=self.api_key)
         else:
             logger.warning("No Gemini API key provided. Grading service will not function properly.")
+            self.client = None
     
     async def generate_text(self, system_prompt, user_prompt):
         """Generate text using Gemini API."""
         try:
-            if not self.api_key:
+            if not self.api_key or not self.client:
                 raise ValueError("No API key configured for Gemini")
             
-            # Configure the model
-            generation_config = {
-                "temperature": 0.4,
-                "top_p": 0.95,
-                "top_k": 40,
-                "max_output_tokens": 2048,
-            }
+            # Combine system and user prompts
+            full_prompt = f"{system_prompt}\n\n{user_prompt}"
             
-            safety_settings = [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
-            ]
-            
-            # Create the model
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-pro",
-                generation_config=generation_config,
-                safety_settings=safety_settings
+            # Use new Client pattern with free model
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=full_prompt
             )
-            
-            # Create the conversation with system prompt
-            convo = model.start_chat(history=[
-                {"role": "user", "parts": [system_prompt]},
-                {"role": "model", "parts": ["I understand. I'll act as an educational grading assistant and evaluate student submissions based on the criteria you've provided."]}
-            ])
-            
-            # Send the user prompt with the submission
-            response = convo.send_message(user_prompt)
             
             return response.text
             

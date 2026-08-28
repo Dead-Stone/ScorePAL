@@ -1,6 +1,7 @@
 """
-App entry point for Railway deployment.
-This file exposes the FastAPI app for Railway's auto-detection.
+App entry point for Railway/local deployment.
+Loads the FastAPI app from main.py via importlib to avoid the naming conflict
+between backend/main.py (module file) and backend/api/ (package directory).
 """
 
 import os
@@ -8,21 +9,22 @@ import sys
 import importlib.util
 from pathlib import Path
 
-# Add current directory to path
-current_dir = Path(__file__).parent.absolute()
-sys.path.insert(0, str(current_dir))
+current_dir = Path(__file__).parent
+root_dir = current_dir.parent
 
-def create_app():
-    """Create and return the FastAPI app."""
-    # Load the api.py file as a module
-    api_file = current_dir / "api.py"
-    spec = importlib.util.spec_from_file_location("api_module", api_file)
-    api_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(api_module)
-    return api_module.app
+# Ensure project root is on sys.path so 'backend' is importable as a package
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 
-# Create the app instance
-app = create_app()
+api_file = current_dir / "main.py"
+
+module_name = "backend._api_entrypoint"
+spec = importlib.util.spec_from_file_location(module_name, api_file)
+api_module = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = api_module
+spec.loader.exec_module(api_module)
+
+app = api_module.app
 
 if __name__ == "__main__":
     import uvicorn

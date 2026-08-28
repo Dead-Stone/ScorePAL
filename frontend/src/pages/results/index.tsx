@@ -1,352 +1,532 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Grid,
-  Card,
-  CardContent,
-  CardActions,
-  Button,
-  CircularProgress,
-  Divider,
-  Chip,
-  Avatar,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  IconButton,
-  Tooltip,
-} from '@mui/material';
-import { styled } from '@mui/material/styles';
+/**
+ * ScorePAL - Modern Results Dashboard
+ * Comprehensive results management with sleek design
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { GetStaticProps } from 'next';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import axios from 'axios';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import DownloadIcon from '@mui/icons-material/Download';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import EventIcon from '@mui/icons-material/Event';
-import PeopleIcon from '@mui/icons-material/People';
 
-// Configure axios
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-axios.defaults.headers.common['Accept'] = 'application/json';
+import { TopNavBar } from '@/components/layout/TopNavBar';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
+import apiClient from '@/utils/apiClient';
+import { Result, AssignmentGroup, SortField, SortOrder, ViewMode } from '@/components/results/index/types';
+import {
+  getResultsCache,
+  setResultsCache,
+  clearResultsCache,
+  groupResultsByAssignment,
+  calculateStats,
+  formatLastRefreshed,
+} from '@/components/results/index/utils';
+import { filterResults, downloadResults as downloadResultsUtil } from '@/components/results/index/filterUtils';
+import { ResultsStatsCards } from '@/components/results/index/ResultsStatsCards';
+import { ResultsFilters } from '@/components/results/index/ResultsFilters';
+import { AssignmentGroupsTab } from '@/components/results/index/AssignmentGroupsTab';
+import { AllResultsTab } from '@/components/results/index/AllResultsTab';
+import { ResultsChartsTab } from '@/components/results/index/ResultsChartsTab';
+import { ResultDetailsDialog } from '@/components/results/index/ResultDetailsDialog';
+import { SavedViewsManager } from '@/components/results/SavedViewsManager';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Loader2,
+  Download,
+  RefreshCw,
+  LayoutGrid,
+  List,
+  BarChart3,
+  AlertCircle,
+  Sparkles,
+  FileText,
+  Target,
+  TrendingUp,
+  Calendar,
+  ChevronDown,
+  Filter,
+  Search,
+  ArrowUpRight,
+  ArrowDownRight,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-// Types
-interface Assignment {
-  id: string;
-  name: string;
-  created_at: string;
-  submission_count: number;
-  average_score?: number;
-  passing_count?: number;
-  has_results: boolean;
+export const getStaticProps: GetStaticProps = async () => {
+  return { props: {}, revalidate: 3600 };
+};
+
+interface StatCardProps {
+  title: string;
+  value: string | number;
+  change?: number;
+  icon: React.ReactNode;
+  iconBg: string;
+  delay?: number;
 }
 
-// Styled components
-const GradientCard = styled(Card)(({ theme }) => ({
-  background: `linear-gradient(135deg, ${theme.palette.primary.light} 0%, ${theme.palette.primary.main} 100%)`,
-  color: theme.palette.primary.contrastText,
-  transition: 'all 0.3s ease-in-out',
-  '&:hover': {
-    transform: 'translateY(-5px)',
-    boxShadow: theme.shadows[10],
-  },
-}));
+const StatCard: React.FC<StatCardProps> = ({ title, value, change, icon, iconBg, delay = 0 }) => (
+  <div 
+    className="stat-card animate-fade-in-up"
+    style={{ animationDelay: `${delay}ms` }}
+  >
+    <div className="flex items-start justify-between">
+      <div className="flex-1">
+        <p className="data-label mb-2">{title}</p>
+        <p className="data-value-lg">{value}</p>
+        {change !== undefined && (
+          <div className={cn(
+            "flex items-center gap-1 mt-2 text-sm font-medium",
+            change >= 0 ? "text-emerald-600" : "text-rose-600"
+          )}>
+            {change >= 0 ? (
+              <ArrowUpRight className="w-4 h-4" />
+            ) : (
+              <ArrowDownRight className="w-4 h-4" />
+            )}
+            <span>{Math.abs(change)}%</span>
+          </div>
+        )}
+      </div>
+      <div className={cn("icon-container w-14 h-14", iconBg)}>
+        {icon}
+      </div>
+    </div>
+  </div>
+);
 
-const StatCard = styled(Card)(({ theme }) => ({
-  height: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'space-between',
-  transition: 'all 0.2s ease',
-  '&:hover': {
-    transform: 'translateY(-4px)',
-    boxShadow: theme.shadows[8],
-  },
-}));
-
-// Main component
-export default function RecentResults() {
+export default function ResultsDashboard() {
   const router = useRouter();
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const { user, isAuthenticated } = useAuth();
+  
+  const [results, setResults] = useState<Result[]>([]);
+  const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [stats, setStats] = useState({
-    totalAssignments: 0,
-    totalSubmissions: 0,
-    averageScore: 0,
-  });
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedAssignment, setSelectedAssignment] = useState<string>('all');
+  const [gradeFilter, setGradeFilter] = useState<string>('all');
+  const [dateRange, setDateRange] = useState<'all' | '7days' | '30days' | '90days'>('all');
+  const [scoreRange, setScoreRange] = useState<string>('all');
+  const [resultType, setResultType] = useState<'all' | 'single' | 'batch' | 'canvas'>('all');
+  
+  const [savedViewsOpen, setSavedViewsOpen] = useState(false);
+  
+  const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  const [activeTab, setActiveTab] = useState(0);
+  const [sortField, setSortField] = useState<SortField>('graded_at');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [page, setPage] = useState(1);
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+  const [selectedResult, setSelectedResult] = useState<Result | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  
+  const resultsPerPage = 10;
 
   useEffect(() => {
-    const fetchAssignments = async () => {
-      try {
-        setLoading(true);
-        const response = await axios.get('/assignments');
-        if (response.data && Array.isArray(response.data.assignments)) {
-          const assignmentsWithResults = response.data.assignments.filter(
-            (a: Assignment) => a.has_results
-          );
-          setAssignments(assignmentsWithResults);
-          
-          // Calculate stats
-          if (assignmentsWithResults.length > 0) {
-            const totalSubmissions = assignmentsWithResults.reduce(
-              (sum: number, a: Assignment) => sum + a.submission_count, 0
-            );
-            
-            const averageScores = assignmentsWithResults
-              .filter((a: Assignment) => a.average_score !== undefined)
-              .map((a: Assignment) => a.average_score as number);
-              
-            const overallAverage = averageScores.length > 0
-              ? averageScores.reduce((sum: number, score: number) => sum + score, 0) / averageScores.length
-              : 0;
-            
-            setStats({
-              totalAssignments: assignmentsWithResults.length,
-              totalSubmissions,
-              averageScore: overallAverage,
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Error fetching assignments:', err);
-        setError('Failed to load assignments. Please try again later.');
-      } finally {
-        setLoading(false);
+    if (!isAuthenticated) {
+      router.push('/auth/login');
+      return;
+    }
+    initializeResults();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleGradingComplete = () => {
+      setTimeout(() => {
+        fetchResults(true);
+      }, 2000);
+    };
+
+    window.addEventListener('gradingCompleted', handleGradingComplete);
+    return () => {
+      window.removeEventListener('gradingCompleted', handleGradingComplete);
+    };
+  }, [isAuthenticated]);
+
+  const initializeResults = async () => {
+    setLoading(true);
+    
+    const cached = getResultsCache();
+    if (cached && cached.results.length > 0) {
+      setResults(cached.results);
+      const grouped = groupResultsByAssignment(cached.results);
+      setAssignmentGroups(grouped);
+      if (grouped.length > 0) {
+        setExpandedGroups([grouped[0].assignment_id]);
       }
-    };
-
-    fetchAssignments();
-  }, []);
-
-  const formatDate = (dateString: string) => {
-    const options: Intl.DateTimeFormatOptions = { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    };
-    return new Date(dateString).toLocaleDateString(undefined, options);
+      setLastRefreshed(new Date(cached.timestamp));
+      setLoading(false);
+      return;
+    }
+    
+    await fetchResults();
   };
 
-  const downloadResults = async (assignmentId: string) => {
+  const fetchResults = async (isRefresh = false) => {
     try {
-      const response = await axios.get(`/grading-results/${assignmentId}`, {
-        responseType: 'blob'
+      if (isRefresh) {
+        setRefreshing(true);
+        clearResultsCache();
+      } else {
+        setLoading(true);
+      }
+      setError('');
+      
+      const response = await apiClient.get('/api/results', {
+        params: { limit: 1000 }
       });
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `results_${assignmentId}.json`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      if (response.data?.results) {
+        const fetchedResults: Result[] = response.data.results;
+        setResults(fetchedResults);
+        setResultsCache(fetchedResults);
+        setLastRefreshed(new Date());
+        
+        const grouped = groupResultsByAssignment(fetchedResults);
+        setAssignmentGroups(grouped);
+        
+        if (grouped.length > 0 && expandedGroups.length === 0) {
+          setExpandedGroups([grouped[0].assignment_id]);
+        }
+      }
+    } catch (err: any) {
+      if (err.response?.status === 401) {
+        setError('Please log in to view results.');
+        router.push('/auth/login');
+      } else {
+        setError('Failed to load results. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const stats = useMemo(() => calculateStats(results), [results]);
+
+  const filteredResults = useMemo(() => {
+    return filterResults(results, {
+      searchTerm,
+      selectedAssignment,
+      gradeFilter,
+      dateRange,
+      scoreRange,
+      resultType,
+    }, sortField, sortOrder);
+  }, [results, searchTerm, selectedAssignment, gradeFilter, dateRange, scoreRange, resultType, sortField, sortOrder]);
+
+  const toggleGroup = (id: string) => {
+    setExpandedGroups(prev =>
+      prev.includes(id) ? prev.filter(g => g !== id) : [...prev, id]
+    );
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const handleDownloadResults = async (format: 'json' | 'csv' = 'json') => {
+    try {
+      const dataToExport = selectedAssignment === 'all' ? results : filteredResults;
+      downloadResultsUtil(dataToExport, format);
     } catch (err) {
-      console.error('Error downloading results:', err);
       setError('Failed to download results');
     }
   };
 
+  const openDetails = (result: Result) => {
+    setSelectedResult(result);
+    setDetailsOpen(true);
+  };
+
+  useEffect(() => {
+    if (user?.role === 'student') {
+      router.replace('/dashboard/student');
+    }
+  }, [user, router]);
+
+  if (user?.role === 'student') {
+    return (
+      <ProtectedRoute>
+        <div className="min-h-screen page-gradient">
+          <TopNavBar />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
+  if (loading) {
+    return (
+      <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
+        <div className="min-h-screen page-gradient">
+          <TopNavBar />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center animate-pulse">
+                <Sparkles className="w-8 h-8 text-white" />
+              </div>
+              <p className="text-gray-500 font-medium">Loading results...</p>
+            </div>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Box mb={4}>
-        <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
-          Recently Graded Assignments
-        </Typography>
-        <Typography variant="subtitle1" color="text.secondary">
-          View and analyze your recent grading results
-        </Typography>
-      </Box>
+    <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
+      <div className="min-h-screen page-gradient">
+        <TopNavBar />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pt-24">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8 animate-fade-in">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-1">
+                Grading <span className="gradient-text">Results</span>
+              </h1>
+              <p className="text-gray-500">
+                {stats.totalSubmissions} submissions across {stats.totalAssignments} assignments
+              </p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              {lastRefreshed && (
+                <span className="badge-blue text-xs">
+                  <Calendar className="w-3 h-3 mr-1.5" />
+                  Updated {formatLastRefreshed(lastRefreshed)}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchResults(true)}
+                disabled={refreshing}
+                className="h-10 px-4 rounded-xl border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-all"
+              >
+                <RefreshCw className={cn("w-4 h-4 mr-2", refreshing && "animate-spin")} />
+                Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleDownloadResults('csv')}
+                className="h-10 px-4 rounded-xl border-gray-200 hover:border-blue-300 hover:bg-blue-50 transition-all"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </Button>
+              <Link href="/dashboard">
+                <Button className="btn-primary h-10 px-6">
+                  <TrendingUp className="w-4 h-4 mr-2" />
+                  Dashboard
+                </Button>
+              </Link>
+            </div>
+          </div>
 
-      {/* Stats Overview */}
-      <Grid container spacing={3} mb={4}>
-        <Grid item xs={12} md={4}>
-          <StatCard>
-            <CardContent>
-              <Box display="flex" alignItems="center" mb={1}>
-                <AssignmentIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6" fontWeight="medium">
-                  Assignments
-                </Typography>
-              </Box>
-              <Typography variant="h3" fontWeight="bold">
-                {stats.totalAssignments}
-              </Typography>
-            </CardContent>
-          </StatCard>
-        </Grid>
-        
-        <Grid item xs={12} md={4}>
-          <StatCard>
-            <CardContent>
-              <Box display="flex" alignItems="center" mb={1}>
-                <PeopleIcon color="secondary" sx={{ mr: 1 }} />
-                <Typography variant="h6" fontWeight="medium">
-                  Submissions
-                </Typography>
-              </Box>
-              <Typography variant="h3" fontWeight="bold">
-                {stats.totalSubmissions}
-              </Typography>
-            </CardContent>
-          </StatCard>
-        </Grid>
-        
-        <Grid item xs={12} md={4}>
-          <StatCard>
-            <CardContent>
-              <Box display="flex" alignItems="center" mb={1}>
-                <TrendingUpIcon color="success" sx={{ mr: 1 }} />
-                <Typography variant="h6" fontWeight="medium">
-                  Average Score
-                </Typography>
-              </Box>
-              <Typography variant="h3" fontWeight="bold">
-                {stats.averageScore.toFixed(1)}%
-              </Typography>
-            </CardContent>
-          </StatCard>
-        </Grid>
-      </Grid>
+          {/* Error Alert */}
+          {error && (
+            <Alert className="mb-6 rounded-xl border-rose-200 bg-rose-50 text-rose-800 animate-fade-in-down">
+              <AlertCircle className="h-5 w-5" />
+              <AlertDescription className="font-medium">{error}</AlertDescription>
+            </Alert>
+          )}
 
-      {/* Main content */}
-      {loading ? (
-        <Box display="flex" justifyContent="center" my={4}>
-          <CircularProgress />
-        </Box>
-      ) : error ? (
-        <Paper sx={{ p: 3, backgroundColor: '#fff8f8' }}>
-          <Typography color="error">{error}</Typography>
-        </Paper>
-      ) : assignments.length === 0 ? (
-        <Paper sx={{ p: 4, textAlign: 'center' }}>
-          <Typography variant="h6" gutterBottom>
-            No graded assignments found
-          </Typography>
-          <Typography color="textSecondary" paragraph>
-            Start by grading some assignments from the home page.
-          </Typography>
-          <Button 
-            variant="contained" 
-            component={Link} 
-            href="/"
-            sx={{ mt: 2 }}
-          >
-            Grade New Assignment
-          </Button>
-        </Paper>
-      ) : (
-        <TableContainer component={Paper} elevation={2}>
-          <Table sx={{ minWidth: 650 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell>Assignment Name</TableCell>
-                <TableCell>Date</TableCell>
-                <TableCell align="center">Submissions</TableCell>
-                <TableCell align="center">Avg. Score</TableCell>
-                <TableCell align="center">Actions</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {assignments.map((assignment) => (
-                <TableRow 
-                  key={assignment.id}
-                  sx={{ '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' } }}
-                >
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      <AssignmentIcon color="primary" sx={{ mr: 1.5 }} />
-                      <Typography fontWeight="medium">
-                        {assignment.name}
-                      </Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      <EventIcon fontSize="small" color="action" sx={{ mr: 1 }} />
-                      {formatDate(assignment.created_at)}
-                    </Box>
-                  </TableCell>
-                  <TableCell align="center">
-                    <Chip 
-                      label={assignment.submission_count} 
-                      size="small"
-                      color="primary"
-                      variant="outlined"
-                    />
-                  </TableCell>
-                  <TableCell align="center">
-                    <Chip 
-                      label={assignment.average_score ? `${assignment.average_score.toFixed(1)}%` : 'N/A'} 
-                      size="small"
-                      color={
-                        !assignment.average_score ? 'default' :
-                        assignment.average_score >= 70 ? 'success' : 
-                        assignment.average_score >= 50 ? 'warning' : 'error'
-                      }
-                    />
-                  </TableCell>
-                  <TableCell align="center">
-                    <Box>
-                      <Tooltip title="View Results">
-                        <IconButton 
-                          color="primary"
-                          onClick={() => router.push(`/results/${assignment.id}`)}
-                        >
-                          <VisibilityIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="View Analytics">
-                        <IconButton 
-                          color="secondary"
-                          onClick={() => router.push(`/analytics/${assignment.id}`)}
-                        >
-                          <BarChartIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Download Results">
-                        <IconButton 
-                          color="default"
-                          onClick={() => downloadResults(assignment.id)}
-                        >
-                          <DownloadIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      )}
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <StatCard
+              title="Total Submissions"
+              value={stats.totalSubmissions}
+              icon={<FileText className="w-6 h-6 text-blue-600" />}
+              iconBg="icon-container-blue"
+              delay={0}
+            />
+            <StatCard
+              title="Average Score"
+              value={`${(stats as any).avgScore}%`}
+              icon={<Target className="w-6 h-6 text-emerald-600" />}
+              iconBg="icon-container-emerald"
+              delay={100}
+            />
+            <StatCard
+              title="Assignments"
+              value={(stats as any).totalAssignments}
+              icon={<LayoutGrid className="w-6 h-6 text-violet-600" />}
+              iconBg="icon-container-violet"
+              delay={200}
+            />
+            <StatCard
+              title="Pass Rate"
+              value={`${(stats as any).passRate || 0}%`}
+              icon={<TrendingUp className="w-6 h-6 text-amber-600" />}
+              iconBg="icon-container-amber"
+              delay={300}
+            />
+          </div>
 
-      <Box mt={4} display="flex" justifyContent="space-between">
-        <Button 
-          variant="outlined"
-          component={Link}
-          href="/"
-        >
-          Back to Home
-        </Button>
-        <Button
-          variant="contained"
-          component={Link}
-          href="/analytics"
-        >
-          Analytics Dashboard
-        </Button>
-      </Box>
-    </Container>
+          {/* Tabs */}
+          <div className="flex items-center gap-2 p-1.5 bg-gray-100/80 rounded-xl w-fit mb-6 animate-fade-in-up" style={{ animationDelay: '150ms' }}>
+            <button
+              onClick={() => setActiveTab(0)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 0
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <List className="w-4 h-4" />
+              By Assignment
+            </button>
+            <button
+              onClick={() => setActiveTab(1)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 1
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <LayoutGrid className="w-4 h-4" />
+              All Results
+            </button>
+            <button
+              onClick={() => setActiveTab(2)}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 2
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <BarChart3 className="w-4 h-4" />
+              Charts
+            </button>
+          </div>
+
+          {/* Filters */}
+          <Card className="card-modern mb-6 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+            <CardContent className="p-4">
+              <ResultsFilters
+                searchTerm={searchTerm}
+                selectedAssignment={selectedAssignment}
+                gradeFilter={gradeFilter}
+                dateRange={dateRange}
+                scoreRange={scoreRange}
+                resultType={resultType}
+                assignmentGroups={assignmentGroups}
+                filteredResultsCount={filteredResults.length}
+                onSearchChange={setSearchTerm}
+                onAssignmentChange={setSelectedAssignment}
+                onGradeFilterChange={setGradeFilter}
+                onDateRangeChange={setDateRange}
+                onScoreRangeChange={setScoreRange}
+                onResultTypeChange={setResultType}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Content */}
+          <div className="animate-fade-in-up" style={{ animationDelay: '250ms' }}>
+            {activeTab === 0 && (
+              <Card className="card-modern">
+                <CardContent className="p-6">
+                  <AssignmentGroupsTab
+                    assignmentGroups={assignmentGroups}
+                    expandedGroups={expandedGroups}
+                    onToggleGroup={toggleGroup}
+                    onViewResult={openDetails}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            
+            {activeTab === 1 && (
+              <Card className="card-modern">
+                <CardContent className="p-6">
+                  <AllResultsTab
+                    results={filteredResults}
+                    viewMode={viewMode}
+                    sortField={sortField}
+                    sortOrder={sortOrder}
+                    page={page}
+                    resultsPerPage={resultsPerPage}
+                    onSort={handleSort}
+                    onPageChange={setPage}
+                    onViewResult={openDetails}
+                  />
+                </CardContent>
+              </Card>
+            )}
+            
+            {activeTab === 2 && (
+              <Card className="card-modern">
+                <CardHeader className="border-b border-gray-100 bg-gray-50/50">
+                  <CardTitle className="flex items-center gap-3 text-lg font-semibold text-gray-900">
+                    <div className="icon-container-blue w-10 h-10">
+                      <BarChart3 className="w-5 h-5 text-blue-600" />
+                    </div>
+                    Analytics Overview
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <ResultsChartsTab
+                    results={results}
+                    assignmentGroups={assignmentGroups}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Result Details Dialog */}
+          <ResultDetailsDialog
+            open={detailsOpen}
+            result={selectedResult}
+            onClose={() => setDetailsOpen(false)}
+          />
+
+          {/* Saved Views Manager */}
+          <SavedViewsManager
+            open={savedViewsOpen}
+            onClose={() => setSavedViewsOpen(false)}
+            currentFilters={{
+              searchTerm,
+              selectedAssignment,
+              gradeFilter,
+              dateRange,
+              sortField,
+              sortOrder,
+              viewMode,
+            }}
+            onLoadView={(view) => {
+              setSearchTerm(view.filters.searchTerm);
+              setSelectedAssignment(view.filters.selectedAssignment);
+              setGradeFilter(view.filters.gradeFilter);
+              setDateRange(view.filters.dateRange as any);
+              setSortField(view.filters.sortField as SortField);
+              setSortOrder(view.filters.sortOrder as SortOrder);
+              setViewMode(view.filters.viewMode as ViewMode);
+            }}
+          />
+        </div>
+      </div>
+    </ProtectedRoute>
   );
-} 
+}

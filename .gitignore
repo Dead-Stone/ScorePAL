@@ -1,7 +1,99 @@
-/.env
-/.venv
+# Environment variables
+.env
+.env.local
+.env.production
+.venv
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+node_modules/
+.next/
+out/
+.npm
+.eslintcache
+*.log
+
+# Data and uploads
 /data
-/Neo4j-f8d136eb-Created-2025-05-27.txt
-/run.py
-/start_new.py
-/test_neo4j.py
+/backend/data
+/backend/uploads
+/backend/synced_submissions
+/backend/grading_results
+/backend/logs
+/backend/cache
+/uploads
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test_*.py
+*_test.py
+*_demo.py
+demo_*.py
+simple_*.py
+extract_*.py
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.txt
+!requirements.txt
+!README*.txt
+
+# Documentation (keep only essential)
+!docs/
+!README.md
+!*.md
+
+# Build artifacts
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Neo4j
+Neo4j-*.txt
+
+# Old/removed files
+app_v2.py
+grading_v2.py
+grading_v3.py
+extraction_service.py
+extraction_service_minimal.py
+preprocessing_v2.py
+celery_worker.py
+agents.py
+
+# Public assets (keep logos, remove test files)
+public/*.json
+!public/scorePAL-logo*.svg
+!public/scorepal-logo*.svg
+public/*.png
+!public/scorePAL-logo.png
+public/saved_results_*.json

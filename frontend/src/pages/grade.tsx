@@ -1,51 +1,42 @@
+/**
+ * ScorePAL - Modern Grading Interface
+ * Sleek, step-based grading experience
+ */
+
 import React, { useState, useEffect } from 'react';
-import {
-  Box,
-  Container,
-  Typography,
-  Paper,
-  Grid,
-  Button,
-  Card,
-  CardContent,
-  CardActions,
-  TextField,
-  Tab,
-  Tabs,
-  CircularProgress,
-  Snackbar,
-  Alert,
-  IconButton,
-  Slider,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  FormHelperText,
-  Divider,
-} from '@mui/material';
-import { styled } from '@mui/material/styles';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import PersonIcon from '@mui/icons-material/Person';
-import GroupIcon from '@mui/icons-material/Group';
-import InfoIcon from '@mui/icons-material/Info';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import DescriptionIcon from '@mui/icons-material/Description';
-import CreateIcon from '@mui/icons-material/Create';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import SchoolIcon from '@mui/icons-material/School';
+import { GetStaticProps } from 'next';
+import { ProtectedRoute } from '../components/ProtectedRoute';
+import { GradePageDocumentation } from '../components/PageDocumentation';
+import { useAuth } from '../contexts/AuthContext';
+import { CanvasIntegrationTab } from '../components/grading/CanvasIntegrationTab';
+import { SingleGradingSteps } from '../components/grading/SingleGradingSteps';
+import { TopNavBar } from '../components/layout/TopNavBar';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
+import { Alert, AlertDescription } from '../components/ui/alert';
+import { 
+  Loader2,
+  AlertCircle,
+  FileUp,
+  Layers,
+  Sparkles,
+  ArrowRight,
+  CheckCircle2,
+  X,
+  Upload,
+  Zap,
+} from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { API_BASE_URL } from '@/config/api';
+import ModelSelectionDialog from '../components/ModelSelectionDialog';
+import { cn } from '@/lib/utils';
 
-// Configure axios with base URL and default headers
-axios.defaults.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+axios.defaults.baseURL = API_BASE_URL;
 axios.defaults.headers.common['Accept'] = 'application/json';
 axios.defaults.headers.post['Content-Type'] = 'application/json';
 
-// Type definitions
 interface Rubric {
   id: string;
   name: string;
@@ -72,67 +63,25 @@ interface GradingScale {
   description: string;
 }
 
-// Styled components
-const VisuallyHiddenInput = styled('input')({
-  clip: 'rect(0 0 0 0)',
-  clipPath: 'inset(50%)',
-  height: 1,
-  overflow: 'hidden',
-  position: 'absolute',
-  bottom: 0,
-  left: 0,
-  whiteSpace: 'nowrap',
-  width: 1,
-});
-
-const DropzoneContainer = styled('div')(({ theme }) => ({
-  border: `2px dashed ${theme.palette.primary.main}`,
-  borderRadius: theme.shape.borderRadius,
-  padding: theme.spacing(4),
-  textAlign: 'center',
-  cursor: 'pointer',
-  marginTop: theme.spacing(2),
-  backgroundColor: theme.palette.background.default,
-  '&:hover': {
-    backgroundColor: theme.palette.action.hover,
-  },
-}));
-
-const GradientPaper = styled(Paper)(({ theme }) => ({
-  borderRadius: '16px',
-  padding: theme.spacing(3),
-  background: `linear-gradient(to right bottom, ${theme.palette.primary.light}, ${theme.palette.primary.main})`,
-  color: theme.palette.primary.contrastText,
-  marginBottom: theme.spacing(4),
-}));
-
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
+interface ModelSelection {
+  model_config_id: string;
+  provider: string;
+  model_name: string;
+  custom_temperature?: number | null;
+  custom_max_tokens?: number | null;
+  use_streaming?: boolean;
 }
 
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
+export const getStaticProps: GetStaticProps = async () => {
+  return { props: {}, revalidate: 3600 };
+};
 
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
-    >
-      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
-    </div>
-  );
-}
-
-// Main component
-export default function Home() {
+export default function GradePage() {
   const router = useRouter();
+  const { user } = useAuth();
   
-  // State for single submission form
+  const [activeTab, setActiveTab] = useState<'single' | 'canvas'>('single');
+  
   const [singleForm, setSingleForm] = useState({
     studentName: '',
     assignmentName: '',
@@ -140,9 +89,9 @@ export default function Home() {
     submission: null as File | null,
     answerKey: null as File | null,
     rubricId: '',
+    generatedRubric: null as any,
   });
   
-  // Loading and notification state
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState({
     open: false,
@@ -150,43 +99,120 @@ export default function Home() {
     severity: 'success' as 'success' | 'error' | 'info' | 'warning',
   });
   
-  // Add a state for strictness
   const [strictness, setStrictness] = useState(0.5);
-  
-  // State for rubrics
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [loadingRubrics, setLoadingRubrics] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<ModelSelection | null>(null);
+  const [modelSelectionOpen, setModelSelectionOpen] = useState(false);
+  const [estimatedTokens, setEstimatedTokens] = useState(0);
   
-  // Fetch rubrics on component mount
+  // Load rubrics with caching for fast subsequent loads
   useEffect(() => {
     const fetchRubrics = async () => {
+      // Check cache first for instant loading
       try {
-        setLoadingRubrics(true);
-        const response = await axios.get('/rubrics');
-        if (response.data && Array.isArray(response.data.rubrics)) {
-          setRubrics(response.data.rubrics);
+        const cached = localStorage.getItem('scorepal_rubrics_cache');
+        const timestamp = localStorage.getItem('scorepal_rubrics_timestamp');
+        
+        if (cached && timestamp) {
+          const age = Date.now() - parseInt(timestamp, 10);
+          // Use cached data if less than 5 minutes old
+          if (age < 300000) {
+            const cachedRubrics = JSON.parse(cached);
+            if (Array.isArray(cachedRubrics)) {
+              setRubrics(cachedRubrics);
+              // Still fetch in background to refresh cache
+              setLoadingRubrics(true);
+            }
+          }
+        } else {
+          setLoadingRubrics(true);
         }
       } catch (error) {
-        console.error('Error fetching rubrics:', error);
-        setNotification({
-          open: true,
-          message: 'Failed to load rubrics. Using default rubric instead.',
-          severity: 'warning',
-        });
+        setLoadingRubrics(true);
+      }
+      
+      try {
+        const response = await axios.get('/rubrics');
+        const rubricsData = Array.isArray(response.data) ? response.data : [];
+        setRubrics(rubricsData);
+        
+        // Cache for next time
+        try {
+          localStorage.setItem('scorepal_rubrics_cache', JSON.stringify(rubricsData));
+          localStorage.setItem('scorepal_rubrics_timestamp', Date.now().toString());
+        } catch (error) {
+          // Storage might be full, silently fail
+        }
+      } catch (error) {
+        // Only show error if we don't have cached data
+        const cached = localStorage.getItem('scorepal_rubrics_cache');
+        if (!cached) {
+          setNotification({
+            open: true,
+            message: 'Failed to load rubrics. Using cached or default rubric instead.',
+            severity: 'warning',
+          });
+        }
       } finally {
         setLoadingRubrics(false);
       }
     };
     
     fetchRubrics();
+    
+    // Prefetch on visibility change (user returns later)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Refresh cache in background
+        axios.get('/rubrics').then(response => {
+          const rubricsData = Array.isArray(response.data) ? response.data : [];
+          setRubrics(rubricsData);
+          try {
+            localStorage.setItem('scorepal_rubrics_cache', JSON.stringify(rubricsData));
+            localStorage.setItem('scorepal_rubrics_timestamp', Date.now().toString());
+          } catch (error) {
+            // Silently fail
+          }
+        }).catch(() => {
+          // Silently fail for background refresh
+        });
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
   
-  // Handle single form field changes
-  const handleSingleFormChange = (field: string, value: any) => {
-    setSingleForm(prev => ({ ...prev, [field]: value }));
+  const estimateTokensForGrading = () => {
+    let totalText = '';
+    if (singleForm.submission) {
+      totalText += `Submission content (estimated): ${singleForm.submission.size / 4} characters\n`;
+    }
+    if (singleForm.answerKey) {
+      totalText += `Answer key content (estimated): ${singleForm.answerKey.size / 4} characters\n`;
+    }
+    if (singleForm.questionPaper) {
+      totalText += `Question content (estimated): ${singleForm.questionPaper.size / 4} characters\n`;
+    }
+    const estimated = Math.ceil(totalText.length / 4);
+    setEstimatedTokens(Math.max(estimated, 500));
   };
   
-  // Dropzone for question paper in single mode
+  const handleSingleFormChange = (field: string, value: any) => {
+    setSingleForm(prev => ({ ...prev, [field]: value }));
+    if (field === 'submission' || field === 'answerKey' || field === 'questionPaper') {
+      estimateTokensForGrading();
+    }
+  };
+  
+  const handleModelSelect = (modelSelection: ModelSelection) => {
+    setSelectedModel(modelSelection);
+    setModelSelectionOpen(false);
+  };
+  
   const questionPaperDropzone = useDropzone({
     accept: {
       'application/pdf': ['.pdf'],
@@ -196,12 +222,11 @@ export default function Home() {
     maxFiles: 1,
     onDrop: acceptedFiles => {
       if (acceptedFiles.length > 0) {
-          handleSingleFormChange('questionPaper', acceptedFiles[0]);
+        handleSingleFormChange('questionPaper', acceptedFiles[0]);
       }
     },
   });
   
-  // Dropzone for answer key
   const answerKeyDropzone = useDropzone({
     accept: {
       'application/pdf': ['.pdf'],
@@ -217,11 +242,8 @@ export default function Home() {
     },
   });
   
-  // Dropzone for submission in single mode
   const submissionDropzone = useDropzone({
-    accept: {
-      'application/pdf': ['.pdf']
-    },
+    accept: { 'application/pdf': ['.pdf'] },
     maxFiles: 1,
     onDrop: acceptedFiles => {
       if (acceptedFiles.length > 0) {
@@ -230,49 +252,27 @@ export default function Home() {
     },
   });
   
-  // Handle submission of single form
   const handleSingleSubmit = async () => {
     try {
-      // Validate form
       if (!singleForm.studentName) {
-        setNotification({
-          open: true,
-          message: 'Please enter a student name',
-          severity: 'error',
-        });
+        setNotification({ open: true, message: 'Please enter a student name', severity: 'error' });
         return;
       }
-      
       if (!singleForm.assignmentName) {
-        setNotification({
-          open: true,
-          message: 'Please enter an assignment name',
-          severity: 'error',
-        });
+        setNotification({ open: true, message: 'Please enter an assignment name', severity: 'error' });
         return;
       }
-      
       if (!singleForm.questionPaper) {
-        setNotification({
-          open: true,
-          message: 'Please upload a question paper',
-          severity: 'error',
-        });
+        setNotification({ open: true, message: 'Please upload a question paper', severity: 'error' });
         return;
       }
-      
       if (!singleForm.submission) {
-        setNotification({
-          open: true,
-          message: 'Please upload a submission',
-          severity: 'error',
-        });
+        setNotification({ open: true, message: 'Please upload a submission', severity: 'error' });
         return;
       }
       
       setIsLoading(true);
       
-      // Create form data
       const formData = new FormData();
       formData.append('student_name', singleForm.studentName);
       formData.append('assignment_name', singleForm.assignmentName);
@@ -285,25 +285,31 @@ export default function Home() {
       }
       
       if (singleForm.rubricId) {
-        formData.append('rubric_id', singleForm.rubricId);
+        if (singleForm.rubricId === 'generated' && singleForm.generatedRubric) {
+          formData.append('rubric_json', JSON.stringify(singleForm.generatedRubric));
+        } else {
+          formData.append('rubric_id', singleForm.rubricId);
+        }
       }
       
-      // Send request
+      if (selectedModel) {
+        formData.append('ai_model_selection', JSON.stringify(selectedModel));
+      }
+      
       const response = await axios.post('/upload-single', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       
-      // Handle response
       if (response.data && response.data.upload_id) {
-        // Navigate to results page
-        router.push(`/results/${response.data.upload_id}`);
+        setNotification({
+          open: true,
+          message: 'Grading completed successfully! Results are displayed below.',
+          severity: 'success',
+        });
       } else {
         throw new Error('Invalid response from server');
       }
     } catch (error) {
-      console.error('Error submitting form:', error);
       setNotification({
         open: true,
         message: 'Failed to submit form. Please try again.',
@@ -314,240 +320,221 @@ export default function Home() {
     }
   };
   
-  // Handle close notification
   const handleCloseNotification = () => {
     setNotification(prev => ({ ...prev, open: false }));
   };
   
+  useEffect(() => {
+    if (user?.role === 'student') {
+      router.replace('/student');
+    }
+  }, [user, router]);
+
+  if (user?.role === 'student') {
+    return (
+      <ProtectedRoute>
+        <div className="min-h-screen page-gradient">
+          <TopNavBar />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pt-24">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          </div>
+        </div>
+      </ProtectedRoute>
+    );
+  }
+
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      {/* Header Section */}
-      <GradientPaper elevation={3}>
-        <Typography variant="h4" component="h1" fontWeight="bold" gutterBottom>
-          ScorePAL: AI-Powered Grading
-        </Typography>
-        <Typography variant="h6" gutterBottom>
-          Grade assignments quickly, consistently, and objectively with AI assistance
-        </Typography>
-        <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-          <Button 
-            variant="contained" 
-            color="secondary" 
-            size="large"
-            sx={{ 
-              color: 'white', 
-              borderRadius: 8, 
-              px: 3,
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              '&:hover': {
-                backgroundColor: 'rgba(255, 255, 255, 0.3)',
-              }
-            }}
-            startIcon={<PersonIcon />}
-          >
-            Single Submission
-          </Button>
-          <Button 
-            variant="outlined" 
-            size="large"
-            onClick={() => router.push('/canvas')}
-            sx={{ 
-              color: 'white', 
-              borderColor: 'rgba(255, 255, 255, 0.5)',
-              borderRadius: 8, 
-              px: 3,
-              '&:hover': {
-                borderColor: 'white',
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-              }
-            }}
-            startIcon={<SchoolIcon />}
-          >
-            Canvas Integration
-          </Button>
-        </Box>
-      </GradientPaper>
-      
-      {/* Main Form - removing tabs */}
-      <Paper elevation={2} sx={{ borderRadius: 3, overflow: 'hidden', mb: 4 }}>
-        {/* Single Submission Form */}
-        <Box sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Grade Individual Submission
-          </Typography>
-          <Typography variant="body2" color="text.secondary" paragraph>
-            Upload a single student submission for quick grading.
-          </Typography>
-          
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <TextField
-                label="Student Name"
-                fullWidth
-                value={singleForm.studentName}
-                onChange={(e) => handleSingleFormChange('studentName', e.target.value)}
-                required
-                margin="normal"
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <TextField
-                label="Assignment Name"
-                fullWidth
-                value={singleForm.assignmentName}
-                onChange={(e) => handleSingleFormChange('assignmentName', e.target.value)}
-                required
-                margin="normal"
-              />
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth margin="normal">
-                <InputLabel id="single-rubric-select-label">Rubric</InputLabel>
-                <Select
-                  labelId="single-rubric-select-label"
-                  id="single-rubric-select"
-                  value={singleForm.rubricId}
-                  label="Rubric"
-                  onChange={(e) => handleSingleFormChange('rubricId', e.target.value)}
-                  disabled={loadingRubrics}
-                  startAdornment={loadingRubrics ? <CircularProgress size={20} sx={{ mr: 1 }} /> : null}
+    <ProtectedRoute allowedRoles={['teacher', 'admin', 'grader']}>
+      <div className="min-h-screen page-gradient">
+        <TopNavBar />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pt-24">
+          {/* Header */}
+          <div className="mb-8 animate-fade-in">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+              Grade <span className="gradient-text">Submissions</span>
+            </h1>
+            <p className="text-gray-500">
+              Upload submissions for AI-powered grading with detailed feedback
+            </p>
+          </div>
+
+          {/* Documentation */}
+          <GradePageDocumentation />
+
+          {/* Notification Alert */}
+          {notification.open && (
+            <Alert className={cn(
+              "mb-6 rounded-xl animate-fade-in-down",
+              notification.severity === 'error' 
+                ? 'border-rose-200 bg-rose-50 text-rose-800' 
+                : notification.severity === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                : notification.severity === 'success'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-blue-200 bg-blue-50 text-blue-800'
+            )}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {notification.severity === 'success' ? (
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5" />
+                  )}
+                  <AlertDescription className="text-sm font-medium">{notification.message}</AlertDescription>
+                </div>
+                <button
+                  onClick={handleCloseNotification}
+                  className="p-1 rounded-lg hover:bg-black/5 transition-colors"
                 >
-                  <MenuItem value="">
-                    <em>Default Rubric</em>
-                  </MenuItem>
-                  {rubrics.map((rubric) => (
-                    <MenuItem key={rubric.id} value={rubric.id}>
-                      {rubric.name} ({rubric.total_points} points)
-                    </MenuItem>
-                  ))}
-                </Select>
-                <FormHelperText>
-                  Select a rubric or use the default
-                  <Button
-                    component={Link}
-                    href="/rubric"
-                    size="small"
-                    sx={{ ml: 1 }}
-                  >
-                    Create New
-                  </Button>
-                </FormHelperText>
-              </FormControl>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <Typography variant="subtitle1" gutterBottom>
-                Grading Strictness
-                <IconButton
-                  size="small"
-                  onClick={() => setNotification({
-                    open: true,
-                    message: "Higher strictness means more rigorous grading with potentially lower scores. Lower strictness is more lenient.",
-                    severity: "info",
-                  })}
-                >
-                  <InfoIcon fontSize="small" />
-                </IconButton>
-              </Typography>
-              <Box sx={{ px: 2 }}>
-                <Slider
-                  value={strictness}
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  marks={[
-                    { value: 0, label: 'Lenient' },
-                    { value: 0.5, label: 'Moderate' },
-                    { value: 1, label: 'Strict' },
-                  ]}
-                  onChange={(_, value) => setStrictness(value as number)}
-                  valueLabelDisplay="auto"
-                  valueLabelFormat={(value) => `${Math.round(value * 100)}%`}
-                />
-              </Box>
-            </Grid>
-            
-            <Grid item xs={12}>
-              <Divider sx={{ my: 1 }} />
-              <Typography variant="subtitle1" gutterBottom fontWeight="medium">
-                Upload Files
-              </Typography>
-            </Grid>
-            
-            <Grid item xs={12} md={4}>
-              <Typography variant="subtitle2" gutterBottom>
-                Question Paper (Required)
-              </Typography>
-              <DropzoneContainer {...questionPaperDropzone.getRootProps()}>
-                <input {...questionPaperDropzone.getInputProps()} />
-                <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                <Typography variant="body2">
-                  {singleForm.questionPaper 
-                    ? `Selected: ${singleForm.questionPaper.name}` 
-                    : 'Drag and drop or click to select question paper (PDF/DOCX)'}
-                </Typography>
-              </DropzoneContainer>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Typography variant="subtitle2" gutterBottom>
-                Student Submission (Required)
-              </Typography>
-              <DropzoneContainer {...submissionDropzone.getRootProps()}>
-                <input {...submissionDropzone.getInputProps()} />
-                <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                <Typography variant="body2">
-                  {singleForm.submission 
-                    ? `Selected: ${singleForm.submission.name}` 
-                    : 'Drag and drop or click to select student submission (PDF only)'}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  Support for DOCX, TXT, and other formats coming soon!
-                </Typography>
-              </DropzoneContainer>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Typography variant="subtitle2" gutterBottom>
-                Answer Key (Optional)
-              </Typography>
-              <DropzoneContainer {...answerKeyDropzone.getRootProps()}>
-                <input {...answerKeyDropzone.getInputProps()} />
-                <CloudUploadIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                <Typography variant="body2">
-                  {singleForm.answerKey 
-                    ? `Selected: ${singleForm.answerKey.name}` 
-                    : 'Drag and drop or click to select answer key (PDF/DOCX/TXT) - Optional'}
-                </Typography>
-              </DropzoneContainer>
-            </Grid>
-          </Grid>
-          
-          <Box sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleSingleSubmit}
-              disabled={isLoading}
-              startIcon={isLoading ? <CircularProgress size={20} /> : <PlayArrowIcon />}
-              sx={{ px: 4, py: 1 }}
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </Alert>
+          )}
+
+          {/* Tab Navigation */}
+          <div className="flex items-center gap-2 p-1.5 bg-gray-100/80 rounded-xl w-fit mb-8 animate-fade-in-up">
+            <button
+              onClick={() => setActiveTab('single')}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 'single'
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
             >
-              {isLoading ? 'Processing...' : 'Grade Submission'}
-            </Button>
-          </Box>
-          </Box>
-      </Paper>
+              <FileUp className="w-4 h-4" />
+              Single Submission
+            </button>
+            <button
+              onClick={() => setActiveTab('canvas')}
+              className={cn(
+                "flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all duration-200",
+                activeTab === 'canvas'
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-gray-600 hover:text-gray-900 hover:bg-white/50"
+              )}
+            >
+              <Layers className="w-4 h-4" />
+              Canvas Integration
+            </button>
+          </div>
       
-      {/* Notification snackbar */}
-      <Snackbar 
-        open={notification.open} 
-        autoHideDuration={6000} 
-        onClose={handleCloseNotification}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert onClose={handleCloseNotification} severity={notification.severity}>
-          {notification.message}
-        </Alert>
-      </Snackbar>
-    </Container>
+          {/* Single Submission Section */}
+          {activeTab === 'single' && (
+            <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+              <Card className="card-modern">
+                <CardHeader className="border-b border-gray-100 bg-gray-50/50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/25">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-xl font-semibold text-gray-900">
+                        AI-Powered Grading
+                      </CardTitle>
+                      <CardDescription className="text-gray-500">
+                        Upload a single submission for detailed AI analysis and feedback
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <SingleGradingSteps
+                    onComplete={async (data) => {
+                      setSingleForm({
+                        studentName: data.studentName,
+                        assignmentName: data.assignmentName,
+                        questionPaper: data.questionPaper,
+                        submission: data.submission,
+                        answerKey: data.answerKey,
+                        rubricId: data.rubricId,
+                        generatedRubric: data.generatedRubric,
+                      });
+                      setStrictness(data.strictness);
+                      if (data.selectedModel) {
+                        setSelectedModel(data.selectedModel);
+                      }
+                      await handleSingleSubmit();
+                    }}
+                    isLoading={isLoading}
+                    rubrics={rubrics}
+                    loadingRubrics={loadingRubrics}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Canvas Integration Section */}
+          {activeTab === 'canvas' && (
+            <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+              <Card className="card-modern">
+                <CardHeader className="border-b border-gray-100 bg-gray-50/50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-500 flex items-center justify-center text-white shadow-lg shadow-teal-500/25">
+                      <Layers className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-xl font-semibold text-gray-900">
+                        Canvas LMS Integration
+                      </CardTitle>
+                      <CardDescription className="text-gray-500">
+                        Connect to Canvas and grade submissions directly from your courses
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <CanvasIntegrationTab />
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Features Section */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+            <div className="p-6 rounded-2xl bg-white/70 border border-gray-100">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center mb-4">
+                <Zap className="w-5 h-5 text-blue-600" />
+              </div>
+              <h3 className="font-semibold text-gray-900 mb-2">Fast Processing</h3>
+              <p className="text-sm text-gray-500">
+                Get detailed grading results in seconds with our advanced AI models
+              </p>
+            </div>
+            <div className="p-6 rounded-2xl bg-white/70 border border-gray-100">
+              <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center mb-4">
+                <Sparkles className="w-5 h-5 text-violet-600" />
+              </div>
+              <h3 className="font-semibold text-gray-900 mb-2">Detailed Feedback</h3>
+              <p className="text-sm text-gray-500">
+                AI-generated feedback with strengths, weaknesses, and suggestions
+              </p>
+            </div>
+            <div className="p-6 rounded-2xl bg-white/70 border border-gray-100">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center mb-4">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              </div>
+              <h3 className="font-semibold text-gray-900 mb-2">Rubric-Based</h3>
+              <p className="text-sm text-gray-500">
+                Consistent grading based on customizable rubrics and criteria
+              </p>
+            </div>
+          </div>
+
+          {/* Model Selection Dialog */}
+          <ModelSelectionDialog
+            open={modelSelectionOpen}
+            onClose={() => setModelSelectionOpen(false)}
+            onSelect={handleModelSelect}
+            currentSelection={selectedModel as any}
+            estimatedTokens={estimatedTokens}
+          />
+        </div>
+      </div>
+    </ProtectedRoute>
   );
-} 
+}

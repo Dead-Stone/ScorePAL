@@ -1,1 +1,1 @@
-# Utils package initialization 
+# ScorePAL Utils Package 

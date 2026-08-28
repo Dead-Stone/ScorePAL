@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ScorePAL — AI-assisted grading runtime",
+    "output": "archify/scorepal-runtime.html",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "grading-path", "label": "Grading path", "focus": ["educator", "frontend", "api", "preprocessor", "grading", "results"], "note": "Follow a submission from the educator interface through preprocessing, grading, and results." },
+      { "id": "grounding-path", "label": "Grounding and models", "focus": ["preprocessor", "grading", "knowledge", "ai", "results"], "note": "Inspect document grounding, model calls, and persisted grading evidence." },
+      { "id": "integrations", "label": "Canvas and data", "focus": ["frontend", "api", "canvas", "results", "knowledge"], "note": "See the LMS integration and the stores behind analytics and knowledge features." }
+    ]
+  },
+  "components": [
+    { "id": "educator", "type": "external", "label": "Educator", "sublabel": "teacher / grader / student", "pos": [38, 300], "size": [150, 68] },
+    { "id": "frontend", "type": "frontend", "label": "Next.js frontend", "sublabel": "TypeScript + MUI", "pos": [250, 300], "size": [150, 68] },
+    { "id": "api", "type": "backend", "label": "FastAPI API", "sublabel": "backend/main.py", "pos": [470, 300], "size": [150, 68] },
+    { "id": "preprocessor", "type": "backend", "label": "File preprocessor", "sublabel": "PDF / DOCX / images / code", "pos": [690, 170], "size": [150, 68] },
+    { "id": "grading", "type": "backend", "label": "Grading services", "sublabel": "rubrics + multi-agent", "pos": [690, 420], "size": [150, 68], "tag": "core workflow" },
+    { "id": "knowledge", "type": "database", "label": "Knowledge stores", "sublabel": "Neo4j + vector / SQL", "pos": [910, 170], "size": [150, 68] },
+    { "id": "results", "type": "database", "label": "Results stores", "sublabel": "MongoDB + analytics", "pos": [910, 420], "size": [150, 68] },
+    { "id": "ai", "type": "external", "label": "AI providers", "sublabel": "Gemini + OpenAI + others", "pos": [1130, 300], "size": [150, 68] },
+    { "id": "canvas", "type": "external", "label": "Canvas LMS", "sublabel": "courses + submissions", "pos": [250, 540], "size": [150, 68] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "ScorePAL application", "wraps": ["frontend", "api", "preprocessor", "grading", "knowledge", "results"] },
+    { "kind": "security-group", "label": "Protected grading workflow", "wraps": ["api", "preprocessor", "grading", "knowledge", "results"] }
+  ],
+  "connections": [
+    { "id": "user-to-ui", "from": "educator", "to": "frontend", "label": "grade / review", "variant": "emphasis", "labelDy": -28 },
+    { "id": "ui-to-api", "from": "frontend", "to": "api", "label": "HTTP API" },
+    { "id": "canvas-to-api", "from": "canvas", "to": "api", "label": "sync submissions", "variant": "dashed", "labelDy": 58 },
+    { "id": "api-to-preprocessor", "from": "api", "to": "preprocessor", "label": "extract text / media", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+    { "id": "api-to-grading", "from": "api", "to": "grading", "label": "rubric job", "variant": "emphasis" },
+    { "id": "preprocessor-to-knowledge", "from": "preprocessor", "to": "knowledge", "label": "context + embeddings", "labelAt": [875, 252] },
+    { "id": "grading-to-ai", "from": "grading", "to": "ai", "label": "score + feedback", "variant": "security" },
+    { "id": "grading-to-knowledge", "from": "grading", "to": "knowledge", "label": "retrieve evidence", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "labelDy": -58 },
+    { "id": "grading-to-results", "from": "grading", "to": "results", "label": "persist result", "labelAt": [875, 502] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Submission to score", "items": ["Next.js collects grading and review actions", "FastAPI routes the workflow into preprocessing and grading services", "Results return to the frontend for review and analytics"] },
+    { "dot": "emerald", "title": "Grounded evaluation", "items": ["PDF, DOCX, image, code, and notebook inputs are preprocessed", "Rubrics, retrieval, and multi-agent services produce explainable feedback", "Neo4j and vector/SQL stores support context and knowledge features"] },
+    { "dot": "amber", "title": "Integrations and operations", "items": ["Canvas can synchronize courses and submissions", "The startup script coordinates the backend and frontend", "AI providers are configured through environment-backed services"] }
+  ]
+}

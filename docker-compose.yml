@@ -1,0 +1,51 @@
+version: "3.8"
+
+# NOTE: This docker-compose.yml is for LOCAL DEVELOPMENT ONLY
+# For production deployment:
+# - Frontend: Deploy to Vercel
+# - Backend: Deploy to Render (Docker)
+# See SPLIT_DEPLOYMENT.md for production setup
+
+services:
+  scorepal-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: scorepal-backend
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8010"]
+    ports:
+      - "8010:8010"
+    env_file:
+      - docker.env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8010
+      PORT: 8010
+      BACKEND_URL: http://scorepal-backend:8010
+      NEXT_PUBLIC_API_URL: http://scorepal-backend:8010
+    volumes:
+      - ./backend/data:/app/backend/data
+      - ./backend/uploads:/app/backend/uploads
+      - ./backend/synced_submissions:/app/backend/synced_submissions
+    restart: unless-stopped
+
+  scorepal-frontend:
+    image: node:20-alpine
+    container_name: scorepal-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
+    env_file:
+      - docker.env
+    environment:
+      NEXT_PUBLIC_API_URL: http://scorepal-backend:8010
+      BACKEND_URL: http://scorepal-backend:8010
+      PORT: 3000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      scorepal-backend:
+        condition: service_started
+    restart: unless-stopped

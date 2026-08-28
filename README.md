@@ -1,131 +1,131 @@
-# ScorePAL
+<div align="center">
 
-ScorePAL (Score Processing and Assessment with AI Learning) is an advanced AI-powered grading system for educators that streamlines the assessment process for written assignments.
+<img src="frontend/public/scorePAL-logo.png" alt="ScorePAL Logo" width="400"/>
 
-## Features
+# ScorePAL - AI-Powered Academic Analytics & Grading Platform
 
-- **AI-Powered Grading**: Uses Google's Gemini AI to provide consistent, objective grading based on customizable rubrics
-- **Single or Batch Grading**: Grade individual submissions or entire classes at once
-- **Customizable Rubrics**: Create and reuse detailed rubrics with specific criteria and scoring levels
-- **Adjustable Strictness**: Control grading severity to match your teaching philosophy
-- **Detailed Feedback**: Provides comprehensive feedback for each criterion and overall assessment
-- **Analytics**: View class performance metrics and grade distributions
-- **Canvas LMS Integration**: Connect to Canvas to automatically grade assignments from your courses
-- **Export Options**: Download results in various formats for record-keeping
+[![GitHub](https://img.shields.io/badge/GitHub-Dead--Stone-black?style=flat-square&logo=github)](https://github.com/Dead-Stone/ScorePAL)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue?style=flat-square&logo=python)](https://python.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Next.js-blue?style=flat-square&logo=typescript)](https://nextjs.org)
+[![Open Source](https://img.shields.io/badge/Status-Open%20Source-success?style=flat-square)](https://github.com/Dead-Stone/ScorePAL)
 
-## Project Structure
+### ✨ Grade intelligently. Analyze comprehensively. Learn continuously.
 
-The project is organized into two main directories:
+</div>
 
-- **backend/**: Contains all Python code for the API server, AI grading logic, and data processing
-- **frontend/**: Contains the Next.js frontend application
+<div align="left">
 
-## Getting Started
+---
 
-### Prerequisites
+## What is ScorePAL?
 
-- Python 3.8+
-- Node.js 14+ and npm
-- Google Gemini API key
-- Canvas LMS API key (optional, for Canvas integration)
+ScorePAL is an open-source academic analytics and grading platform that helps educators grade assignments efficiently using AI, track student performance, and gain insights into learning outcomes. Connect to Canvas LMS, upload submissions, analyze performance trends, and get detailed feedback in minutes instead of hours.
 
-### Installation
+**Completely free. No subscriptions. No premium plans. Just powerful grading tools for educators.**
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/Dead-Stone/ScorePAL.git
-   cd ScorePAL
-   ```
+---
 
-2. Install Python dependencies:
-   ```
-   pip install -r backend/requirements.txt
-   ```
+## What We Do
 
-3. Set up environment variables:
-   Create a `.env` file in the root directory with:
-   ```
-   GEMINI_API_KEY=your_api_key_here
-   ```
+### 🎯 **AI-Powered Grading**
+Grade assignments automatically using AI. Upload student submissions, define your rubric, and get detailed feedback with consistent scoring.
 
-4. Install frontend dependencies:
-   ```
-   cd frontend
-   npm install
-   ```
+### 📋 **Rubric Management**
+- Generate rubrics automatically from question papers using AI
+- Create custom rubrics with multiple performance levels
+- Save and reuse rubrics across assignments
 
-### Running the Application
+### 🎓 **Canvas LMS Integration**
+- Connect directly to your Canvas courses
+- Sync student submissions automatically
+- Grade assignments and post results back to Canvas
+- View student performance analytics
 
-Start the entire application:
-```
+### 📊 **Analytics & Insights**
+- Dashboard with recent gradings and course statistics
+- Compare student performance across the class
+- Track grades, percentiles, and trends
+- Save, filter, and export grading results
+
+### 👥 **Multi-Role Support**
+- **Teachers**: Full access to grading, analytics, and course management
+- **Graders**: Specialized dashboard with comparison tools
+- **Students**: View their own courses, grades, and performance
+
+### 💬 **AI Chat Assistant**
+Get instant help and feedback with role-specific AI chat:
+- **Teachers**: Chat about grading strategies, rubric design, and student performance insights
+- **Graders**: Get guidance on consistent scoring and comparison analysis
+- **Students**: Ask questions about assignments, understand feedback, and get study tips
+
+### 🤖 **Multiple AI Providers**
+Support for OpenAI, Anthropic Claude, Google Gemini, Perplexity, Hugging Face, and Cohere. Choose the AI model that works best for you.
+
+### 📝 **File Support**
+Grade PDF documents, DOCX files, Python code, Jupyter notebooks, and images. Process single submissions or batch grade entire classes.
+
+---
+
+## Quick Start
+
+```bash
+# Clone and setup
+git clone https://github.com/Dead-Stone/ScorePAL.git
+cd ScorePAL
+
+# Install dependencies
+pip install -r backend/requirements.txt
+cd frontend && npm install && cd ..
+
+# Configure environment
+cp env.example .env
+# Add your AI provider API key to .env
+
+# Launch application
 python start.py
 ```
 
-This will launch both the backend API server and the frontend application. The application will be available at http://localhost:3000.
+Visit `http://localhost:3000` and start grading!
 
-To run components individually:
+---
 
-- Backend only: `python -m backend.api`
-- Frontend only: `cd frontend && npm run dev`
+## How It Works
 
-## Usage
+1. **Upload**: Upload question paper and student submission
+2. **Configure**: Select or generate a rubric, choose AI model
+3. **Grade**: AI analyzes the submission and provides detailed feedback
+4. **Review**: View results, compare performance, export data
 
-1. **Home Page**: Choose between single submission or batch grading
-2. **Single Submission**: Upload a question paper, student submission, and optional answer key
-3. **Batch Grading**: Upload a question paper, ZIP file of student submissions, and optional answer key
-4. **Rubrics**: Create and manage rubrics for your assignments
-5. **Canvas Integration**: Connect to Canvas LMS to auto-grade assignments directly from your courses
-6. **Results**: View detailed grading results and analytics
+For Canvas integration, connect your Canvas account and grade directly from your courses.
 
-## Canvas LMS Integration
+---
 
-ScorePAL integrates with Canvas LMS to streamline the grading process:
+## Tech Stack
 
-1. Connect to your Canvas instance using your Canvas URL and API key
-2. Browse your courses and assignments
-3. Select an assignment to auto-grade all student submissions
-4. Review grading results and post grades back to Canvas
+**Frontend**: Next.js, TypeScript, Material-UI  
+**Backend**: Python, FastAPI  
+**AI**: Multiple providers (OpenAI, Anthropic, Google, Perplexity, Hugging Face, Cohere)  
+**Integration**: Canvas LMS API
 
-To use this feature, you'll need:
-- A Canvas instance URL (e.g., https://canvas.instructure.com)
-- An API key from your Canvas account
-- Instructor-level access to the courses you want to grade
+---
 
-## Customizing Rubrics
+## 🤝 Contributing
 
-Rubrics can be customized with:
-- Multiple criteria, each with its own point value and weight
-- Performance levels for each criterion
-- Detailed descriptions for each level
+Contributions are welcome! This is an open-source project built for educators.
 
-You can also adjust the grading strictness to control how rigorously submissions are evaluated.
+---
 
-## File Support
+## 📄 License
 
-ScorePAL supports the following file formats:
-- PDF (.pdf)
-- Word documents (.docx)
-- Text files (.txt)
-- Submissions ZIP (for batch grading)
+MIT License - Free to use for educational purposes.
 
-## Troubleshooting
+---
 
-If you encounter issues:
+## 👤 Author
 
-1. Check your API key in the `.env` file
-2. Ensure all dependencies are installed
-3. Check the console for error messages
-4. Make sure your submission files are in a supported format
-5. For Canvas integration issues, verify your Canvas API key and permissions
+**Mohana Moganti** ([@Dead-Stone](https://github.com/Dead-Stone))
 
-## License
+Built with ❤️ for educators worldwide.
 
-This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgements
-
-- Google Gemini for AI capabilities
-- Canvas LMS for the integration API
-- Next.js and Material UI for the frontend
-- FastAPI for the backend
-- All contributors and educators who provided feedback 
